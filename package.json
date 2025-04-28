@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-auto-note-importer",
+	"name": "auto-note-importer",
 	"version": "0.1.1",
-	"description": "Automatically import notes from an external database like Airtable into your Obsidian Vault.",
+	"description": "Automatically import notes from an external database like Airtable into your Vault.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
