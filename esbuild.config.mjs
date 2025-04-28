@@ -1,7 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
-import { copyFileSync, existsSync } from "fs";
 
 const banner =
 `/*
@@ -38,32 +37,14 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "dist/main.js",
+	outfile: "main.js",
 	minify: prod,
 });
 
-function copyStaticFiles() {
-	// const filesToCopy = ["manifest.json", "styles.css"];
-	const filesToCopy = ["manifest.json"];
-	for (const file of filesToCopy) {
-		if (existsSync(file)) {
-			try {
-				copyFileSync(file, `dist/${file}`);
-				console.log(`✅ ${file} copied to dist/`);
-			} catch (err) {
-				console.error(`❌ Failed to copy ${file}:`, err);
-			}
-		} else {
-			console.warn(`⚠️  ${file} not found, skipping.`);
-		}
-	}
-}
 
 if (prod) {
 	await context.rebuild();
-	copyStaticFiles()
 	process.exit(0);
 } else {
 	await context.watch();
-	copyStaticFiles();
 }
