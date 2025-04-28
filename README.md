@@ -39,6 +39,12 @@ Customize destination folders, apply templates, and manage syncing with flexible
 
 <br>
 
+## Filename Generation
+
+- If the `title` field is missing from a record, the plugin will automatically use the primary field(first column of Airtable) as the note filename.
+
+<br>
+
 ## ⚙️ Settings
 
 ![Plugin Settings Screenshot](assets/settings.png)
@@ -76,9 +82,13 @@ primaryField: First Column of Airtable
 videoId: Video Id
 title: Video Title
 uploadDate: 2025-04-28
-summary: This is a summary of the video content.
+channelName: Youtube Channel Name
+canonicalUrl: https://www.youtube.com/watch?v=videoId
 tags: [tag#1, tag#2]
 categories: [category#1, category#2]
+분류: 경제 | 삶의지혜 | 코딩 | 기타
+description: youtube description text here
+summary: Summary of the video content
 check-read: false
 ---
 
