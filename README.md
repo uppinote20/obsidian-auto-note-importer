@@ -1,94 +1,126 @@
-# Obsidian Sample Plugin
+# Obsidian Auto Note Importer
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Easily import and sync notes from an external database like Airtable into your Obsidian Vault.  
+Customize destination folders, apply templates, and manage syncing with flexible settings.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+<br>
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## ✨ Features
 
-## First time developing plugins?
+- Pulls notes from Airtable (more database support planned)
+- Creates Markdown files with structured YAML metadata
+- Supports manual and scheduled syncing (configurable interval)
+- Customizable:
+  - Destination folder
+  - Note template
+  - Overwrite option
+- Handles missing folders by auto-creating them
+- Minimal setup, zero coding required!
 
-Quick starting guide for new plugin devs:
+<br>
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+## 📦 Installation
 
-## Releasing new releases
+1. Open Obsidian.
+2. Go to **Settings > Community plugins > Browse**.
+3. Search for "**Auto Note Importer**" and install it.
+4. Enable the plugin.
+5. Configure your Airtable PAT and Base/Table settings.
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+<br>
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+## 🚀 Usage
 
-## Adding your plugin to the community plugin list
+- **Manual Sync**:  
+  - Use the Command Palette (`Ctrl+P`) → search for **"Sync Notes Now"** to trigger manual sync.
+- **Auto Sync**:
+  - Set a sync interval (minutes) in settings.  
+  - If set to `0`, auto sync will be disabled (manual only).
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+<br>
 
-## How to use
+## ⚙️ Settings
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+![Plugin Settings Screenshot](assets/settings.png)
 
-## Manually installing the plugin
+| Setting | Description |
+|:---|:---|
+| Airtable Personal Access Token | Personal Access Token for Airtable API |
+| Select Base | Select the Airtable Base to fetch records from |
+| Select Table | Select the Airtable Table inside the Base |
+| New file location | Where imported notes are saved in your Vault |
+| Template file | (Optional) Path to a template Markdown file |
+| Sync Interval (minutes) | Interval (in minutes) for auto-sync (0 = no auto sync) |
+| Allow Overwrite Existing Notes | Whether to overwrite existing notes |
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
 
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
+<br>
 
-## Funding URL
+## 🔄 Example Workflow
 
-You can include funding URLs where people who use your plugin can financially support it.
+1. Use **n8n** to collect and summarize YouTube video information.
+2. Store the processed summaries into **Airtable**.
+3. Launch **Obsidian**, and use this plugin to fetch and create beautiful Markdown notes!
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+<br>
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+
+
+## 📝 Default Note Template Example
+
+If no custom template is provided, notes will be created with the following default structure:
+
+```markdown
+---
+primaryField: First Column of Airtable
+videoId: Video Id
+title: Video Title
+uploadDate: 2025-04-28
+summary: This is a summary of the video content.
+tags: [tag#1, tag#2]
+categories: [category#1, category#2]
+check-read: false
+---
+
+![](https://example.com/thumbnail.jpg)
+
+# 📝 요약
+Summary content or key topics extracted from the script.
+
+# 📜 전체 스크립트
+Full original script text goes here.
 ```
 
-If you have multiple URLs, you can also do:
+<br>
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+## 🛠️ Planned Features
 
-## API Documentation
+- [ ] Support multi-database (Airtable, Supabase, Notion DB, Custom API)
+- [ ] Flexible field mapping (choose which field to treat as unique key)
+- [ ] Improved error handling with retry mechanism
+- [ ] Progress indicator during sync
+- [ ] Internationalization (i18n) support for multiple languages
+- [ ] Advanced overwrite/merge strategies
+- [ ] Pagination support for large Airtable datasets
+- [ ] UI/UX improvements in settings panel
 
-See https://github.com/obsidianmd/obsidian-api
+<br>
+
+## ☕ Support
+
+If you find this plugin useful, you can support the development:
+
+<div style="display: flex; gap: 20px; align-items: center;">
+  <a href="https://ko-fi.com/uppinote" target="_blank">
+    <img src="https://storage.ko-fi.com/cdn/kofi5.png" alt="Buy Me a Coffee at ko-fi.com" style="height:60px; width:217px;">
+  </a>
+  <a href="https://www.buymeacoffee.com/uppinote" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:60px; width:217px;">
+  </a>
+</div>
+
+<br>
+
+## 📄 License
+
+MIT License
