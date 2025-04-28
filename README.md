@@ -1,6 +1,6 @@
 # Obsidian Auto Note Importer
 
-Easily import and sync notes from an external database like Airtable into your Obsidian Vault.  
+Easily import and sync notes from an external database like Airtable into your Vault.  
 Customize destination folders, apply templates, and manage syncing with flexible settings.
 
 <br>
