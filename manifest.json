@@ -1,11 +1,14 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
-	"version": "1.0.0",
+	"id": "obsidian-auto-note-importer",
+	"name": "Auto Note Importer",
+	"version": "0.1.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"description": "Automatically import notes from an external database like Airtable into your Obsidian Vault.",
+	"author": "uppinote",
+	"authorUrl": "https://github.com/upnote2020/obsidian-auto-note-importer",
+	"fundingUrl": {
+        "Buy Me a Coffee": "https://www.buymeacoffee.com/uppinote",
+        "ko-fi": "https://ko-fi.com/uppinote"
+    },
+	"isDesktopOnly": true
 }
