@@ -9,8 +9,8 @@ class FolderSuggest extends AbstractInputSuggest<string> {
     super(app, inputEl);
     this.el = inputEl;
     this.folderPaths = app.vault.getAllLoadedFiles()
-      .filter(f => f instanceof TFolder)
-      .map(f => (f as TFolder).path);
+      .filter((f): f is TFolder => f instanceof TFolder)
+      .map(f => f.path)
   }
 
   public override getSuggestions(query: string): string[] {
@@ -36,8 +36,8 @@ class FileSuggest extends AbstractInputSuggest<string> {
     super(app, inputEl);
     this.el = inputEl;
     this.filePaths = app.vault.getAllLoadedFiles()
-      .filter(f => f instanceof TFile)
-      .map(f => (f as TFile).path);
+    .filter((f): f is TFile => f instanceof TFile)
+    .map(f => f.path)
   }
 
   public override getSuggestions(query: string): string[] {
