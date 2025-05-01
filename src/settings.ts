@@ -5,9 +5,11 @@ class FolderSuggest extends AbstractInputSuggest<string> {
   private folderPaths: string[];
   private el: HTMLInputElement;
 
+  // Creates an instance of FolderSuggest.
   constructor(app: App, inputEl: HTMLInputElement) {
     super(app, inputEl);
     this.el = inputEl;
+    // Filter out files and get only folder paths
     this.folderPaths = app.vault.getAllLoadedFiles()
       .filter((f): f is TFolder => f instanceof TFolder)
       .map(f => f.path)
@@ -32,9 +34,11 @@ class FileSuggest extends AbstractInputSuggest<string> {
   private filePaths: string[];
   private el: HTMLInputElement;
 
+  // Creates an instance of FileSuggest.
   constructor(app: App, inputEl: HTMLInputElement) {
     super(app, inputEl);
     this.el = inputEl;
+    // Filter out folders and get only file paths
     this.filePaths = app.vault.getAllLoadedFiles()
     .filter((f): f is TFile => f instanceof TFile)
     .map(f => f.path)
@@ -55,6 +59,7 @@ class FileSuggest extends AbstractInputSuggest<string> {
   }
 }
 
+// Defines the structure for the plugin's settings.
 export interface AutoNoteImporterSettings {
   apiKey: string;
   baseId: string;
@@ -63,8 +68,11 @@ export interface AutoNoteImporterSettings {
   templatePath: string;
   syncInterval: number;
   allowOverwrite: boolean;
+  primaryFieldName: string;
+  filenameFieldName: string;
 }
 
+// Default values for the plugin settings.
 export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   apiKey: "",
   baseId: "",
@@ -73,11 +81,15 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   templatePath: "",
   syncInterval: 0,
   allowOverwrite: false,
+  primaryFieldName: "",
+  filenameFieldName: "title",
 };
 
+// Represents the settings tab for the Auto Note Importer plugin in Obsidian's settings panel.
 export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: AutoNoteImporterPlugin;
 
+  // Creates an instance of the setting tab.
   constructor(app: App, plugin: AutoNoteImporterPlugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -113,6 +125,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     return json.tables.map((t: any) => ({ id: t.id, name: t.name }));
   }
 
+  // Renders the settings UI elements within the container element.
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -120,31 +133,50 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Airtable Personal Access Token")
-      .setDesc("Enter your Airtable Personal Access Token. You can create one in your Airtable account settings.")
-      .addText(text => text
-        .setPlaceholder("your-pat-token")
-        .setValue(this.plugin.settings.apiKey)
-        .onChange(async (value) => {
-          this.plugin.settings.apiKey = value;
-          await this.plugin.saveSettings();
-          this.display();
-        }));
+      .setDesc("Enter your Airtable Personal Access Token.")
+      .addText(text => {
+        text
+          .setPlaceholder("your-pat-token")
+          .setValue(this.plugin.settings.apiKey)
+          .onChange(async (value) => {
+            this.plugin.settings.apiKey = value;
+            await this.plugin.saveSettings();
+            this.display();
+          });
+        text.inputEl.type = 'password';
+      });
 
     if (this.plugin.settings.apiKey) {
       new Setting(containerEl)
         .setName("Select Base")
         .setDesc("Choose the Airtable Base you want to import notes from.")
         .addDropdown(async dropdown => {
-          const bases = await this.fetchBases(this.plugin.settings.apiKey);
-          bases.forEach(base => {
-            dropdown.addOption(base.id, base.name);
-          });
-          dropdown.setValue(this.plugin.settings.baseId);
-          dropdown.onChange(async (value) => {
-            this.plugin.settings.baseId = value;
-            await this.plugin.saveSettings();
-            this.display();
-          });
+          // const bases = await this.fetchBases(this.plugin.settings.apiKey);
+          // bases.forEach(base => {
+          //   dropdown.addOption(base.id, base.name);
+          // });
+          // dropdown.setValue(this.plugin.settings.baseId);
+          // dropdown.onChange(async (value) => {
+          //   this.plugin.settings.baseId = value;
+          //   await this.plugin.saveSettings();
+          //   this.display();
+          // });
+          try {
+            dropdown.addOption("", "-- Select Base. --");
+            const bases = await this.fetchBases(this.plugin.settings.apiKey);
+            bases.forEach(base => {
+              dropdown.addOption(base.id, base.name);
+            });
+            dropdown.setValue(this.plugin.settings.baseId);
+            dropdown.onChange(async (value) => {
+              this.plugin.settings.baseId = value;
+              this.plugin.settings.tableId = "";
+              await this.plugin.saveSettings();
+              this.display();
+            });
+          } catch (error) {
+            new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable Bases. ${error.message || 'Check PAT or network.'}`);
+          }
         });
 
       if (this.plugin.settings.baseId) {
@@ -152,19 +184,55 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .setName("Select Table")
           .setDesc("Choose the specific Table within the selected Base.")
           .addDropdown(async dropdown => {
-            const tables = await this.fetchTables(this.plugin.settings.apiKey, this.plugin.settings.baseId);
-            tables.forEach(table => {
-              dropdown.addOption(table.id, table.name);
-            });
-            dropdown.setValue(this.plugin.settings.tableId);
-            dropdown.onChange(async (value) => {
-              this.plugin.settings.tableId = value;
-              await this.plugin.saveSettings();
-            });
+            // const tables = await this.fetchTables(this.plugin.settings.apiKey, this.plugin.settings.baseId);
+            // tables.forEach(table => {
+            //   dropdown.addOption(table.id, table.name);
+            // });
+            // dropdown.setValue(this.plugin.settings.tableId);
+            // dropdown.onChange(async (value) => {
+            //   this.plugin.settings.tableId = value;
+            //   await this.plugin.saveSettings();
+            // });
+            try {
+              dropdown.addOption("", "-- Select Table --");
+              const tables = await this.fetchTables(this.plugin.settings.apiKey, this.plugin.settings.baseId);
+              tables.forEach(table => {
+                dropdown.addOption(table.id, table.name);
+              });
+              dropdown.setValue(this.plugin.settings.tableId);
+              dropdown.onChange(async (value) => {
+                this.plugin.settings.tableId = value;
+                await this.plugin.saveSettings();
+              });
+            } catch (error) {
+              new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable Tables. ${error.message || 'Check Base ID or network.'}`);
+            }
           });
       }
     }
 
+    new Setting(containerEl)
+      .setName("Primary Field Name")
+      .setDesc("Enter the exact name of the Airtable field to use as the unique identifier for notes (for duplicate checking). Leave empty to use the first field.")
+      .addText(text => text
+        .setPlaceholder("e.g., Unique ID or leave empty")
+        .setValue(this.plugin.settings.primaryFieldName)
+        .onChange(async (value) => {
+          this.plugin.settings.primaryFieldName = value.trim();
+          await this.plugin.saveSettings();
+        }));
+  
+    new Setting(containerEl)
+      .setName("Filename Field Name")
+      .setDesc("Enter the exact name of the Airtable field to use for the note's filename.")
+      .addText(text => text
+        .setPlaceholder("e.g., title")
+        .setValue(this.plugin.settings.filenameFieldName)
+        .onChange(async (value) => {
+          this.plugin.settings.filenameFieldName = value.trim();
+          await this.plugin.saveSettings();
+        }));
+  
     new Setting(containerEl)
       .setName("New file location")
       .setDesc("Example: folder1/folder2")
