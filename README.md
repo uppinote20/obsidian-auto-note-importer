@@ -43,6 +43,12 @@ Customize destination folders, apply templates, and manage syncing with flexible
 
 <br>
 
+📺 **Watch the 30-second install guide:**
+
+<video src="https://github.com/user-attachments/assets/9944368b-1ec2-496a-a216-3c01edb54589" controls width="100%"></video>
+
+<br>
+
 ## Filename Generation
 - By default, notes are saved using the value from the Airtable field specified in the **Filename Field Name** setting (defaults to `title`).
 - If the field specified in **Filename Field Name** is missing or empty in a record, or if the setting itself is empty, the plugin will use the value from the **Primary Field** as the note filename.
