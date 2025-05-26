@@ -129,11 +129,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Auto Note Importer Settings" });
-
+    
     new Setting(containerEl)
-      .setName("Airtable Personal Access Token")
-      .setDesc("Enter your Airtable Personal Access Token.")
+      .setName("Airtable personal access token")
+      .setDesc("Enter your Airtable personal access token.")
       .addText(text => {
         text
           .setPlaceholder("your-pat-token")
@@ -148,21 +147,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     if (this.plugin.settings.apiKey) {
       new Setting(containerEl)
-        .setName("Select Base")
-        .setDesc("Choose the Airtable Base you want to import notes from.")
+        .setName("Select base")
+        .setDesc("Choose the Airtable base you want to import notes from.")
         .addDropdown(async dropdown => {
-          // const bases = await this.fetchBases(this.plugin.settings.apiKey);
-          // bases.forEach(base => {
-          //   dropdown.addOption(base.id, base.name);
-          // });
-          // dropdown.setValue(this.plugin.settings.baseId);
-          // dropdown.onChange(async (value) => {
-          //   this.plugin.settings.baseId = value;
-          //   await this.plugin.saveSettings();
-          //   this.display();
-          // });
           try {
-            dropdown.addOption("", "-- Select Base. --");
+            dropdown.addOption("", "-- Select base. --");
             const bases = await this.fetchBases(this.plugin.settings.apiKey);
             bases.forEach(base => {
               dropdown.addOption(base.id, base.name);
@@ -181,20 +170,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
       if (this.plugin.settings.baseId) {
         new Setting(containerEl)
-          .setName("Select Table")
-          .setDesc("Choose the specific Table within the selected Base.")
+          .setName("Select table")
+          .setDesc("Choose the specific table within the selected base.")
           .addDropdown(async dropdown => {
-            // const tables = await this.fetchTables(this.plugin.settings.apiKey, this.plugin.settings.baseId);
-            // tables.forEach(table => {
-            //   dropdown.addOption(table.id, table.name);
-            // });
-            // dropdown.setValue(this.plugin.settings.tableId);
-            // dropdown.onChange(async (value) => {
-            //   this.plugin.settings.tableId = value;
-            //   await this.plugin.saveSettings();
-            // });
             try {
-              dropdown.addOption("", "-- Select Table --");
+              dropdown.addOption("", "-- Select table --");
               const tables = await this.fetchTables(this.plugin.settings.apiKey, this.plugin.settings.baseId);
               tables.forEach(table => {
                 dropdown.addOption(table.id, table.name);
@@ -212,7 +192,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     new Setting(containerEl)
-      .setName("Primary Field Name")
+      .setName("Primary field name")
       .setDesc("Enter the exact name of the Airtable field to use as the unique identifier for notes (for duplicate checking). Leave empty to use the first field.")
       .addText(text => text
         .setPlaceholder("e.g., Unique ID or leave empty")
@@ -223,7 +203,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }));
   
     new Setting(containerEl)
-      .setName("Filename Field Name")
+      .setName("Filename field name")
       .setDesc("Enter the exact name of the Airtable field to use for the note's filename.")
       .addText(text => text
         .setPlaceholder("e.g., title")
@@ -262,7 +242,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Sync Interval (minutes)")
+      .setName("Sync interval (minutes)")
       .setDesc("How often to sync notes (in minutes).")
       .addText(text => {
         const input = text
@@ -283,7 +263,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Allow Overwrite Existing Notes")
+      .setName("Allow overwrite existing notes")
       .setDesc("If enabled, existing notes will be overwritten when syncing.")
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.allowOverwrite)

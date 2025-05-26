@@ -1,8 +1,8 @@
-# Obsidian Auto Note Importer
+# Auto Note Importer
 
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/uppinote20/obsidian-auto-note-importer/release.yml?logo=github)
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/uppinote20/obsidian-auto-note-importer?sort=semver)
-<!-- ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/uppinote20/obsidian-auto-note-importer/total) -->
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/uppinote20/obsidian-auto-note-importer/total)
 
 Easily import and sync notes from an external database like Airtable into your Vault.  
 Customize destination folders, apply templates, and manage syncing with flexible settings.
