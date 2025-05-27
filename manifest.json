@@ -1,7 +1,7 @@
 {
 	"id": "auto-note-importer",
 	"name": "Auto Note Importer",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"minAppVersion": "0.15.0",
 	"description": "Automatically import notes from an external database like Airtable into your Vault.",
 	"author": "uppinote",
