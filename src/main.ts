@@ -25,7 +25,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
     
     this.addCommand({
       id: "sync-notes-now",
-      name: "Sync Notes Now",
+      name: "Sync notes now",
       callback: async () => {
         new Notice("Auto Note Importer: ⏳ Syncing notes...");
         await this.syncNotes();

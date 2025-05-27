@@ -164,7 +164,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               this.display();
             });
           } catch (error) {
-            new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable Bases. ${error.message || 'Check PAT or network.'}`);
+            new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable bases. ${error.message || 'Check PAT or network.'}`);
           }
         });
 
@@ -185,7 +185,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
                 await this.plugin.saveSettings();
               });
             } catch (error) {
-              new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable Tables. ${error.message || 'Check Base ID or network.'}`);
+              new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable tables. ${error.message || 'Check base ID or network.'}`);
             }
           });
       }

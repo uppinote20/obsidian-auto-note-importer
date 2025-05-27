@@ -19,7 +19,7 @@ export async function fetchNotes(settings: AutoNoteImporterSettings): Promise<Re
   const { apiKey, baseId, tableId } = settings;
 
   if (!apiKey || !baseId || !tableId) {
-    throw new Error("Airtable API Key, Base ID, and Table ID must be set.");
+    throw new Error("Airtable API key, base ID, and table ID must be set.");
   }
 
   let allNotes: RemoteNote[] = [];
