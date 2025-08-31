@@ -69,59 +69,174 @@ export function parseTemplate(template: string, note: RemoteNote): string {
 		// 3. Handle Boolean values
 		if (typeof value === "boolean") return String(value);
 
-		// 4. Handle generic Object values (that are not arrays or null)
+		// 4. Handle Number values (avoid double quoting)
+		if (typeof value === "number" && isFinite(value)) return String(value);
+
+		// 5. Handle generic Object values (that are not arrays or null)
 		if (typeof value === "object") return "[Object]";
 
-		// 5. Handle all other types (String, Number)
+		// 6. Handle all other types (String) with Bases optimization
 		const stringValue = String(value);
 		const inFrontmatter = fmEnd !== -1 && offset < fmEnd;
 
-		if (inFrontmatter && stringValue.includes("\n")) {
-			const lineStart = originalString.lastIndexOf("\n", offset) + 1;
-			const before = originalString.slice(lineStart, offset);
-			// Placeholder가 들여쓰기 외에 다른 문자 없이 라인 시작 부분에 있을 때만 처리
-			if (/^\s*$/.test(before)) {
-				const indent = before;
-				return stringValue.replace(/\n/g, "\n" + indent);
+		// In frontmatter, optimize for Bases compatibility
+		if (inFrontmatter) {
+			// For multiline strings in frontmatter, use block scalar format
+			if (stringValue.includes("\n")) {
+				const lineStart = originalString.lastIndexOf("\n", offset) + 1;
+				const before = originalString.slice(lineStart, offset);
+				// Check Placeholder is indented
+				if (/^\s*$/.test(before)) {
+					const indent = before;
+					return stringValue.replace(/\n/g, "\n" + indent);
+				}
 			}
+			
+			// For single-line strings in frontmatter, ensure proper quoting
+			return formatYamlValue(stringValue);
 		}
 
-		// Frontmatter가 아니거나, 한 줄 짜리 문자열이거나, inline placeholder인 경우 그대로 반환
+		// For body content, return as-is
 		return stringValue;
 	});
 }
 
 /**
  * Builds a default Markdown string content for a note if no template is provided.
- * Includes YAML frontmatter with specific fields and basic content structure.
+ * Creates Bases-optimized YAML frontmatter with proper property types for table/card views.
  * @param note The RemoteNote object.
  * @returns A Markdown string representing the note content.
  */
 export function buildMarkdownContent(note: RemoteNote): string {
   const fields = note.fields;
+  
+  // Build Bases-compatible metadata with proper property types
+  const metadata = buildBasesMetadata(note);
 
-  const metadata = [
-    "---",
-    `primaryField: ${note.primaryField}`,
-    `videoId: ${fields.videoId ?? ""}`,
-    `title: ${formatYamlValue(fields.title)}`,
-    `uploadDate: ${fields.uploadDate ?? ""}`,
-    `channelName: ${fields.channelName ?? ""}`,
-    `canonicalUrl: ${fields.canonicalUrl ?? ""}`,
-    `tags: ${Array.isArray(fields.tags) ? fields.tags.join(', ') : (fields.tags ?? "")}`,
-    `categories: ${Array.isArray(fields.categories) ? fields.categories.join(', ') : (fields.categories ?? "")}`,
-    `분류: ${fields.분류 ?? ""}`,
-    `description: |`,
-    `  ${(fields.description ?? "").replace(/\n/g, '\n  ')}`,
-    `summary: ${fields.summary ?? ""}`,
-    "check-read: false",
-    "---"
-  ].join("\n");
+  // Generate content sections based on available fields
+  const contentSections = buildContentSections(fields);
 
-  const youtubeImage = fields.thumbnail ? `![](${fields.thumbnail})` : "";
+  return `${metadata}\n\n${contentSections}`;
+}
 
-  const summarySection = fields.topics ? `# 📝 요약\n${fields.topics}` : "";
-  const scriptSection = fields.script ? `# 📜 전체 스크립트\n${fields.script}` : "";
+/**
+ * Builds Bases-optimized YAML frontmatter with proper property types.
+ * Ensures all fields are editable in Bases table view.
+ */
+function buildBasesMetadata(note: RemoteNote): string {
+  const fields = note.fields;
+  const metadata = ["---"];
 
-  return `${metadata}\n\n${youtubeImage}\n\n${summarySection}\n\n${scriptSection}`;
+  // Always include primary field for duplicate detection
+  metadata.push(`primaryField: ${formatYamlValue(note.primaryField)}`);
+
+  // Process all fields with proper Bases-compatible types
+  Object.entries(fields).forEach(([key, value]) => {
+    const formattedValue = formatFieldForBases(key, value);
+    if (formattedValue !== null) {
+      metadata.push(`${key}: ${formattedValue}`);
+    }
+  });
+
+  // Add Bases-specific metadata for better table/card view experience
+  if (!fields.hasOwnProperty('created')) {
+    metadata.push(`created: ${new Date().toISOString().split('T')[0]}`);
+  }
+  if (!fields.hasOwnProperty('status')) {
+    metadata.push(`status: imported`);
+  }
+
+  metadata.push("---");
+  return metadata.join("\n");
+}
+
+/**
+ * Formats field values for optimal Bases compatibility.
+ * Handles different data types to ensure proper editing in Bases.
+ */
+function formatFieldForBases(key: string, value: any): string | null {
+  if (value === null || value === undefined) {
+    return '""'; // Empty string for null values, editable in Bases
+  }
+
+  // Handle arrays - convert to Bases-friendly list format
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    
+    // For simple arrays, create a comma-separated list
+    const simpleItems = value.filter(item => 
+      typeof item === 'string' || typeof item === 'number'
+    );
+    if (simpleItems.length === value.length) {
+      return `[${simpleItems.map(item => `"${String(item)}"`).join(', ')}]`;
+    }
+    
+    // For complex arrays, stringify
+    return `"${value.map(item => 
+      typeof item === 'object' ? '[Object]' : String(item)
+    ).join(', ')}"`;
+  }
+
+  // Handle booleans - Bases can edit these directly
+  if (typeof value === 'boolean') {
+    return String(value);
+  }
+
+  // Handle numbers - Bases can edit these directly
+  if (typeof value === 'number' && isFinite(value)) {
+    return String(value);
+  }
+
+  // Handle dates - try to format as YYYY-MM-DD for Bases date property
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return formatYamlValue(value.split('T')[0]); // Keep date part only
+  }
+
+  // Handle objects - convert to readable string
+  if (typeof value === 'object') {
+    return `"[Object: ${Object.keys(value).slice(0, 3).join(', ')}]"`;
+  }
+
+  // Handle multiline strings - use block scalar for better editing
+  const stringValue = String(value);
+  if (stringValue.includes('\n')) {
+    return `|\n  ${stringValue.replace(/\n/g, '\n  ')}`;
+  }
+
+  // Default: quote the string value
+  return formatYamlValue(stringValue);
+}
+
+/**
+ * Builds content sections based on available fields.
+ * Creates a more generic structure suitable for various data types.
+ */
+function buildContentSections(fields: Record<string, any>): string {
+  const sections = [];
+
+  // Add cover image if available (for Bases card view)
+  const imageFields = ['thumbnail', 'image', 'cover', 'photo'];
+  const imageField = imageFields.find(field => fields[field]);
+  if (imageField && fields[imageField]) {
+    sections.push(`![](${fields[imageField]})`);
+  }
+
+  // Add main content sections based on field types
+  const contentFields = ['description', 'content', 'summary', 'notes'];
+  const contentField = contentFields.find(field => fields[field]);
+  if (contentField && fields[contentField]) {
+    sections.push(`## Description\n${fields[contentField]}`);
+  }
+
+  // Add topics/summary section for YouTube or similar content
+  if (fields.topics) {
+    sections.push(`## Topics\n${fields.topics}`);
+  }
+
+  // Add script section for transcripts
+  if (fields.script) {
+    sections.push(`## Content\n${fields.script}`);
+  }
+
+  return sections.join('\n\n') || '<!-- Content imported from Airtable -->';
 }
