@@ -11,55 +11,84 @@ import { getNestedValue, formatYamlValue } from "./utils";
  * @returns The template string with placeholders replaced by corresponding values.
  */
 export function parseTemplate(template: string, note: RemoteNote): string {
-  const record = note.fields;
+	const record = note.fields;
+	let processedTemplate = template;
 
-  // Use a regular expression to find all placeholders like {{fieldName}} or {{object.nested.field}}
-  return template.replace(/\{\{(.*?)\}\}/g, (_, key) => {
-    // Retrieve the value using the helper function for nested access
-    const value = getNestedValue(record, key.trim());
-  
-    // --- Value Handling ---
+	// --- Pre-process frontmatter for multi-line values in quoted placeholders ---
+	const fmMatchForPreProcess = processedTemplate.match(/^---\s*[\s\S]*?---/);
+	if (fmMatchForPreProcess) {
+		let frontmatter = fmMatchForPreProcess[0];
+		const body = processedTemplate.slice(frontmatter.length);
 
-    // 1. Handle null or undefined values
-    if (value === null || value === undefined) {
-      // Replace with an empty string
-      return "";
-    }
-  
-    // 2. Handle Array values
-    if (Array.isArray(value)) {
-      // Format as a string representation of a list: "[item1, item2]"
-      const stringifiedItems = value.map(item => {
-        // Represent nested objects simply within the string list
-        if (typeof item === "object" && item !== null) {
-          return "[Object]";
-        }
-        // Basic string conversion for other types
-        return String(item);
-      });
-      return `[${stringifiedItems.join(", ")}]`;
-    }
+		// Regex to find `key: "{{placeholder}}"`
+		const placeholderInQuotesRegex = /^(\s*[^\n:]+:\s*)"\{\{\s*([^}]+?)\s*\}\}"\s*$/gm;
 
-    // 3. Handle Boolean values
-    if (typeof value === "boolean") {
-      return value ? "true" : "false";
-    }
+		frontmatter = frontmatter.replace(placeholderInQuotesRegex, (match, keyPrefix, placeholderKey) => {
+			const key = placeholderKey.trim();
+			const value = getNestedValue(record, key);
 
-    // 4. Handle generic Object values (that are not arrays or null)
-    if (typeof value === "object") {
-      return "[Object]";
-    }
-    
-    // 5. Handle all other types (String, Number)
-    // Ensure multi-line strings maintain indentation suitable for YAML blocks
-    const stringValue = String(value);
-    if (stringValue.includes('\n')) {
-      // Replace internal newlines with newline + standard indentation (e.g., 2 spaces)
-      return stringValue.replace(/\n/g, '\n  '); // Assuming 2 spaces indent
-    } else {
-      return stringValue;
-    }
-  });
+			if (value && String(value).includes('\n')) {
+				// It's a multi-line value, so transform the template line to use a block scalar
+				const indentMatch = keyPrefix.match(/^\s*/);
+				const baseIndent = indentMatch ? indentMatch[0] : "";
+				// from: `key: "{{field}}"`
+				// to:   `key: |
+				//         {{field}}`
+				return `${keyPrefix.trimEnd()} |\n${baseIndent}  {{${key}}}`;
+			}
+
+			// It's a single-line value, leave it as is.
+			return match;
+		});
+
+		processedTemplate = frontmatter + body;
+	}
+	// --- End of pre-processing ---
+
+	// Find frontmatter boundaries once.
+	const fmMatch = processedTemplate.match(/^---\s*[\s\S]*?---/);
+	const fmEnd = fmMatch ? fmMatch[0].length : -1;
+
+	// Use a regular expression to find all placeholders like {{fieldName}} or {{object.nested.field}}
+	// The 'originalTemplate' parameter in the callback is crucial as it's the unmodified string.
+	return processedTemplate.replace(/\{\{(.*?)\}\}/g, (match, rawKey, offset, originalString) => {
+		const key = String(rawKey).trim();
+		const value = getNestedValue(record, key);
+
+		// 1. Handle null or undefined values
+		if (value === null || value === undefined) return "";
+
+		// 2. Handle Array values
+		if (Array.isArray(value)) {
+			const items = value.map(item =>
+				typeof item === "object" && item !== null ? "[Object]" : String(item)
+			);
+			return `[${items.join(", ")}]`;
+		}
+
+		// 3. Handle Boolean values
+		if (typeof value === "boolean") return String(value);
+
+		// 4. Handle generic Object values (that are not arrays or null)
+		if (typeof value === "object") return "[Object]";
+
+		// 5. Handle all other types (String, Number)
+		const stringValue = String(value);
+		const inFrontmatter = fmEnd !== -1 && offset < fmEnd;
+
+		if (inFrontmatter && stringValue.includes("\n")) {
+			const lineStart = originalString.lastIndexOf("\n", offset) + 1;
+			const before = originalString.slice(lineStart, offset);
+			// Placeholder가 들여쓰기 외에 다른 문자 없이 라인 시작 부분에 있을 때만 처리
+			if (/^\s*$/.test(before)) {
+				const indent = before;
+				return stringValue.replace(/\n/g, "\n" + indent);
+			}
+		}
+
+		// Frontmatter가 아니거나, 한 줄 짜리 문자열이거나, inline placeholder인 경우 그대로 반환
+		return stringValue;
+	});
 }
 
 /**
@@ -83,7 +112,7 @@ export function buildMarkdownContent(note: RemoteNote): string {
     `categories: ${Array.isArray(fields.categories) ? fields.categories.join(', ') : (fields.categories ?? "")}`,
     `분류: ${fields.분류 ?? ""}`,
     `description: |`,
-    `  ${(fields.description ?? "").replace(/\n/g, '\n ')}`,
+    `  ${(fields.description ?? "").replace(/\n/g, '\n  ')}`,
     `summary: ${fields.summary ?? ""}`,
     "check-read: false",
     "---"
