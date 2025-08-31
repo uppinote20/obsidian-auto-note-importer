@@ -27,7 +27,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: "sync-notes-now",
       name: "Sync notes now",
       callback: async () => {
-        new Notice("Auto Note Importer: ⏳ Syncing notes...");
+        new Notice("Auto Note Importer: 🚀 Starting sync...");
         await this.syncNotes();
       }
     });
@@ -73,12 +73,16 @@ export default class AutoNoteImporterPlugin extends Plugin {
    * 4. Displays status notices (start, completion, errors).
    */
   async syncNotes() {
+    const statusBarItem = this.addStatusBarItem();
+    
     try {
+      statusBarItem.setText("Auto Note Importer: Preparing...");
       const folderPath = normalizePath(this.settings.folderPath);
       if (!await this.app.vault.adapter.exists(folderPath)) {
         await this.app.vault.createFolder(folderPath);
       }
 
+      statusBarItem.setText("Auto Note Importer: Fetching from Airtable...");
       const remoteNotes = await fetchNotes(this.settings);
 
       let existingPrimaryField: Set<string> | null = null;
@@ -89,9 +93,13 @@ export default class AutoNoteImporterPlugin extends Plugin {
       let createdCount = 0;
       let updatedCount = 0;
       let skippedCount = 0;
-
-      for (const note of remoteNotes) {
+      
+      for (let i = 0; i < remoteNotes.length; i++) {
+        const note = remoteNotes[i];
         const shouldProcess = this.settings.allowOverwrite || (existingPrimaryField && !existingPrimaryField.has(note.primaryField));
+
+        // Update status bar with progress
+        statusBarItem.setText(`Auto Note Importer: Processing ${i + 1}/${remoteNotes.length}`);
 
         if (shouldProcess) {
           const result = await this.createNoteFromRemote(note);
@@ -102,13 +110,17 @@ export default class AutoNoteImporterPlugin extends Plugin {
         }
       }
 
+      // Clean up status bar
+      statusBarItem.remove();
+      
       let summary = `Auto Note Importer: ✅ Sync complete: ${createdCount} created, ${updatedCount} updated.`;
       if (skippedCount > 0) {
         summary += ` (${skippedCount} skipped)`;
       }
       new Notice(summary);
     } catch (error: any) {
-      new Notice(`Auto Note Importer: ❌ Error during sync. ${error.message || "Check console for details."}`);
+      statusBarItem.remove();
+      new Notice(`Auto Note Importer: ❌ Error during sync. ${error.message || "Please check your Airtable settings and network connection."}`);
     }
   }
 

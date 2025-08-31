@@ -210,8 +210,7 @@ check-read: false
 - [x] Flexible field mapping (choose which field to treat as unique/primary key)
 - [x] Expanded Airtable field type support & documentation (See "Airtable Field Type Support" section)
 - [ ] Support multi-database (Airtable, Supabase, Notion DB, Custom API)
-- [ ] Improved error handling with retry mechanism
-- [ ] Progress indicator during sync
+- [x] Progress indicator during sync
 - [ ] Internationalization (i18n) support for multiple languages
 - [ ] Advanced overwrite/merge strategies
 - [ ] UI/UX improvements in settings panel
