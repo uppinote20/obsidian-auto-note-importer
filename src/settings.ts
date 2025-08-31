@@ -68,7 +68,6 @@ export interface AutoNoteImporterSettings {
   templatePath: string;
   syncInterval: number;
   allowOverwrite: boolean;
-  primaryFieldName: string;
   filenameFieldName: string;
 }
 
@@ -81,7 +80,6 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   templatePath: "",
   syncInterval: 0,
   allowOverwrite: false,
-  primaryFieldName: "",
   filenameFieldName: "title",
 };
 
@@ -191,16 +189,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       }
     }
 
-    new Setting(containerEl)
-      .setName("Primary field name")
-      .setDesc("Enter the exact name of the Airtable field to use as the unique identifier for notes (for duplicate checking). Leave empty to use the first field.")
-      .addText(text => text
-        .setPlaceholder("e.g., Unique ID or leave empty")
-        .setValue(this.plugin.settings.primaryFieldName)
-        .onChange(async (value) => {
-          this.plugin.settings.primaryFieldName = value.trim();
-          await this.plugin.saveSettings();
-        }));
   
     new Setting(containerEl)
       .setName("Filename field name")

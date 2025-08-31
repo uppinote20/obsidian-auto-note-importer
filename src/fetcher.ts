@@ -52,22 +52,11 @@ export async function fetchNotes(settings: AutoNoteImporterSettings): Promise<Re
     const json = response.json;
 
     const notesFromPage: RemoteNote[] = json.records.map((record: any) => {
-      // Determine the primary field value
-      let primaryFieldValue: any;
-      if (settings.primaryFieldName && record.fields.hasOwnProperty(settings.primaryFieldName)) {
-        // Use the field specified in settings if it exists in the record
-        primaryFieldValue = record.fields[settings.primaryFieldName];
-      } else {
-        // Fallback: Use the value of the first field in the record
-        const firstFieldName = Object.keys(record.fields)[0];
-        primaryFieldValue = firstFieldName ? record.fields[firstFieldName] : "";
-      }
-      
       return {
         id: record.id,
-        // Ensure primaryField is always a string
-        primaryField: String(primaryFieldValue ?? ""),
-        fields:record.fields
+        // Use Airtable record ID as primaryField for guaranteed uniqueness
+        primaryField: record.id,
+        fields: record.fields
       };
     });
     allNotes = allNotes.concat(notesFromPage);

@@ -50,31 +50,59 @@ Customize destination folders, apply templates, and manage syncing with flexible
 
 <br>
 
-## Filename Generation
-- By default, notes are saved using the value from the Airtable field specified in the **Filename Field Name** setting (defaults to `title`).
-- If the field specified in **Filename Field Name** is missing or empty in a record, or if the setting itself is empty, the plugin will use the value from the **Primary Field** as the note filename.
-- **Important:** The **Primary Field** is the field specified in the **Primary Field Name** setting. If that setting is empty, it defaults to the value from the **very first column** in your Airtable table.
-- Filenames are automatically sanitized to remove characters that are not allowed in filenames.
+## ⚙️ How It Works: Core Concepts
+
+This plugin uses a unique identifier from your Airtable to manage note creation, naming, and duplicate handling. Understanding these three concepts is key to using the plugin effectively.
+
+### 1. Unique Identifier (`primaryField`)
+
+Each note imported from Airtable needs a unique ID to prevent duplicates and manage updates.
+
+- The plugin automatically uses the **Airtable record ID** (e.g., `recABC123DEF456`) as this unique identifier.
+- This ensures perfect uniqueness and reliability since Airtable record IDs never change or duplicate.
+- The plugin automatically adds this ID to the note's YAML frontmatter under the key `primaryField`. This key is reserved for internal use and cannot be changed.
+
+```yaml
+---
+primaryField: "recABC123DEF456"
+---
+```
+
+### 2. Note Creation and Filename
+
+When creating a new note, the filename is determined as follows:
+
+1.  It first looks for the field specified in the **Filename Field Name** setting (which defaults to `title`).
+2.  If that field is empty or doesn't exist in the record, it falls back to using the value from the **first field** in your Airtable record.
+3.  If no suitable value is found, it uses the Airtable record ID as filename.
+4.  All filenames are automatically sanitized to remove characters forbidden by your operating system.
+
+### 3. Duplicate Handling
+
+How the plugin handles existing notes depends on the **Allow Overwrite Existing Notes** setting:
+
+-   **Overwrite Disabled (Default):** The plugin checks the `primaryField` in the frontmatter of all notes in the destination folder. If a note with the same `primaryField` value already exists, the new note from Airtable is **skipped**. This is the safest option to prevent data loss.
+-   **Overwrite Enabled:** The plugin will overwrite any existing note that has the same **filename**. This is useful if you want your Obsidian notes to always reflect the latest version of your Airtable data.
 
 <br>
 
-## Duplicate Note Handling
+## 🔑 Airtable Setup
 
-- **Important:** The **Primary Field** (the field specified in the **Primary Field Name** setting, or the first column if empty) is used as a unique identifier for each note.
-- When the `Allow Overwrite Existing Notes` setting is **disabled** (the default):
-  - The plugin checks the YAML frontmatter (`primaryField: value`) of existing notes in the target folder.
-  - If a note with the same `primaryField` value already exists, the incoming note from Airtable will be **skipped** to prevent duplicates.
+To connect the plugin to your Airtable account, you need a **Personal Access Token (PAT)**.
 
-<br>
+### Creating a Personal Access Token
 
-### Important Note on `primaryField` in Frontmatter
+1.  Go to your [Airtable account page](https://airtable.com/account).
+2.  Navigate to the [**Developer hub**](https://airtable.com/developers/web/guides/personal-access-tokens) or go directly to the [Tokens page](https://airtable.com/create/tokens).
+3.  Click **Create new token**.
+4.  Give your token a **name** (e.g., "Obsidian Importer").
+5.  Select the following **scopes** (permissions):
+    - `data.records:read` - Allows the plugin to read records from your tables.
+    - `schema.bases:read` - Allows the plugin to see your bases and tables to populate the settings dropdowns.
+6.  Select the **Base(s)** you want to grant access to. For security, only grant access to the bases you intend to sync with Obsidian.
+7.  Click **Create token** and copy the generated token. Paste it into the plugin settings in Obsidian.
 
-To ensure reliable duplicate note detection (especially when `Allow Overwrite Existing Notes` is disabled), this plugin relies on a `primaryField` key in the YAML frontmatter of your notes.
-
-- **Automatic Injection:** If you use a custom template, the plugin will check the generated note content. If a YAML frontmatter block (`---`) exists but is missing the `primaryField:` key, **the plugin will automatically add it**. If your template does *not* contain a frontmatter block at all, the plugin will **create a minimal frontmatter block** at the top of the note, containing only the `primaryField`.
-- **Fixed Key Name:** The key name used for this purpose is always `primaryField`. This is used internally by the plugin and cannot be changed in the settings.
-- **Purpose:** This ensures that even if you later disable the "Allow Overwrite" setting, the plugin can correctly identify existing notes based on their unique primary field value.
-
+**Important:** Treat your Personal Access Token like a password. Do not share it publicly.
 <br>
 
 ## ⚙️ Settings
@@ -84,16 +112,18 @@ To ensure reliable duplicate note detection (especially when `Allow Overwrite Ex
 | Setting | Description |
 |:---|:---|
 | Airtable Personal Access Token | Personal Access Token for Airtable API |
-| Select Base | Select the Airtable Base to fetch records from (Requires valid PAT) |
-| Select Table | Select the Airtable Table inside the Base (Requires valid PAT and selected Base) |
+| Select Base | The Airtable Base to fetch records from (Requires valid PAT). |
+| Select Table | The Airtable Table inside the Base (Requires valid PAT and selected Base). |
 | New file location | Where imported notes are saved in your Vault (Suggests existing folders) |
-| Primary Field Name | (Optional) The Airtable field name to use as the unique identifier for duplicate checking.<br>Defaults to the first field if left empty. |
-| Filename Field Name | (Optional) The Airtable field name to use for the note's filename.<br>Defaults to `title`. Falls back to the Primary Field if empty or not found. |
+| Filename Field Name | The Airtable field to use for the note's filename. Defaults to `title`. See **How It Works** for details. |
 | Template file | (Optional) Path to a template Markdown file (Suggests existing Markdown files). See **Template Usage** below. |
 | Sync Interval (minutes) | Interval (in minutes) for auto-sync (0 = no auto sync) |
-| Allow Overwrite Existing Notes | If enabled, existing notes with the same filename will be overwritten. If disabled, notes with the same `primaryField` value in their frontmatter will be skipped (see **Duplicate Note Handling**). |
+| Allow Overwrite Existing Notes | If enabled, overwrites notes with the same filename. If disabled, skips notes that already exist based on their unique ID. See **How It Works** for details. |
 
 <br>
+
+<details>
+<summary>Airtable Field Type Support</summary>
 
 ## Airtable Field Type Support
 
@@ -139,6 +169,7 @@ This plugin attempts to fetch and represent various Airtable field types within 
 
 **Note:** For fields returning arrays or objects, using them directly in the template (`{{FieldName}}`) might result in simplified representations like `"[Value1, Value2]"` or `[Object]`. Use **dot notation** (e.g., `{{ArrayField.0}}`, `{{ObjectField.propertyName}}`) within your template to access specific elements or properties as needed. See the **Template Usage** section for more examples.
 
+</details>
 <br>
 
 ## 🔄 Example Workflow
@@ -192,13 +223,15 @@ This plugin works well with **Obsidian Bases** (the new database feature):
 
 <br>
 
+<details>
+<summary>Default Note Template Example</summary>
 ## 📝 Default Note Template Example
 
 If no custom template is provided, notes will be created with this structure:
 
 ```markdown
 ---
-primaryField: "Value from primary field (for duplicate detection)"
+primaryField: "recABC123DEF456"
 title: "Your Note Title"
 created: 2025-08-31
 status: imported
@@ -210,16 +243,17 @@ status: imported
 ## Description
 Your content here...
 ```
+</details>
 
 <br>
 
-## 🛠️ Planned Features
-
+<details>
+<summary>Planned Features & Feature Requests</summary>
 - [x] Pagination support for large Airtable datasets
 - [x] Flexible field mapping (choose which field to treat as unique/primary key)
 - [x] Expanded Airtable field type support & documentation (See "Airtable Field Type Support" section)
-- [ ] Support multi-database (Airtable, Supabase, Notion DB, Custom API)
 - [x] Progress indicator during sync
+- [ ] Support multi-database (Airtable, Supabase, Notion DB, Custom API)
 - [ ] Internationalization (i18n) support for multiple languages
 - [ ] Advanced overwrite/merge strategies
 - [ ] UI/UX improvements in settings panel
@@ -237,6 +271,7 @@ Your content here...
   - Automatically download attachments (save locally), auto-link URLs, and other advanced transformations
 - [ ] Compatibility Options for Obsidian Plugins
   - Provide format options compatible with other Obsidian plugins like Dataview and Templater (e.g., optimized YAML format, auto tagging, etc.).
+</details>
 
 <br>
 

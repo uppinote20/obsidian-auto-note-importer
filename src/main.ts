@@ -161,7 +161,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
     if (this.settings.filenameFieldName && note.fields.hasOwnProperty(this.settings.filenameFieldName)) {
       rawFilenameValue = note.fields[this.settings.filenameFieldName];
     } else {
-      rawFilenameValue = note.primaryField;
+      // Fallback to the first field value for filename
+      const firstFieldName = Object.keys(note.fields)[0];
+      rawFilenameValue = firstFieldName ? note.fields[firstFieldName] : note.primaryField;
     }
   
     let potentialTitle = String(rawFilenameValue ?? "").trim();
