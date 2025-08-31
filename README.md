@@ -215,6 +215,20 @@ check-read: false
 - [ ] Internationalization (i18n) support for multiple languages
 - [ ] Advanced overwrite/merge strategies
 - [ ] UI/UX improvements in settings panel
+- [ ] Multi-Base/Table Configuration
+  - Support independent settings for multiple Airtable Bases/Tables (Base/Table/Primary Field/Filename Field/File Location/Template File/Sync Interval/Overwrite). Each configuration will also have its own manual sync command.
+- [ ] Table-Level Import (Full Table Export)
+  - Instead of importing one row as one note, allow exporting the entire table as a single Markdown table-formatted note.
+- [ ] Sync Log File Generation
+  - Generate a log file during sync to record when and what data was synchronized.
+- [ ] Field-Template Mapping UI
+  - Improve UI to allow users to specify which field to use as Filename Field or Primary Field per table.
+- [ ] Filter/Query Conditions
+  - Add filtering options to import only records that match specific conditions (e.g., completed rows, rows created within the last 30 days).
+- [ ] Advanced Field Type Conversion
+  - Automatically download attachments (save locally), auto-link URLs, and other advanced transformations
+- [ ] Compatibility Options for Obsidian Plugins
+  - Provide format options compatible with other Obsidian plugins like Dataview and Templater (e.g., optimized YAML format, auto tagging, etc.).
 
 <br>
 
