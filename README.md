@@ -13,6 +13,7 @@ Customize destination folders, apply templates, and manage syncing with flexible
 
 - Pulls notes from Airtable (more database support planned)
 - Creates Markdown files with structured YAML metadata
+- **🔗 Obsidian Bases Compatible**: Clean YAML properties work well with Bases table/card views
 - Supports manual and scheduled syncing (configurable interval)
 - Customizable:
   - Destination folder
@@ -173,33 +174,41 @@ If you try to access a field that is an Array or Object directly without specify
 
 <br>
 
+## 🔗 Obsidian Bases Compatibility
+
+This plugin works well with **Obsidian Bases** (the new database feature):
+
+### ✨ **What Works**
+- **YAML Properties**: All imported metadata appears as editable properties in Bases
+- **Field Types**: Numbers, dates, booleans, and text fields display correctly in table view
+- **List Format**: Arrays are formatted as Bases-compatible lists when possible
+- **Structured Data**: Clean metadata organization for database-style workflows
+
+### 📊 **Usage with Bases**
+1. Import your notes using Auto Note Importer
+2. Enable the **Bases** plugin
+3. Create a new base from your imported notes folder
+4. View and edit your data in table or card format
+
+<br>
+
 ## 📝 Default Note Template Example
 
-If no custom template is provided, notes will be created with the following default structure:
+If no custom template is provided, notes will be created with this structure:
 
 ```markdown
 ---
-primaryField: Value from the first column of Airtable (used for duplicate checking if overwrite is off)
-videoId: {{videoId}}
-title: {{title}}
-uploadDate: {{uploadDate}}
-channelName: {{channelName}}
-canonicalUrl: {{canonicalUrl}}
-tags: {{tags}}
-categories: {{categories}}
-분류: {{분류}}
-description: {{description}}
-summary: {{summary}}
-check-read: false
+primaryField: "Value from primary field (for duplicate detection)"
+title: "Your Note Title"
+created: 2025-08-31
+status: imported
+# ... all your Airtable fields with proper types for Bases editing
 ---
 
-![]({{thumbnail}})
+![](image-url-if-available)
 
-# 📝 요약
-{{topics}}
-
-# 📜 전체 스크립트
-{{script}}
+## Description
+Your content here...
 ```
 
 <br>
