@@ -59,6 +59,17 @@ class FileSuggest extends AbstractInputSuggest<string> {
   }
 }
 
+// Defines the structure for Airtable field information
+export interface AirtableField {
+  id: string;
+  name: string;
+  type: string;
+  description?: string;
+}
+
+// Supported field types for filename and subfolder selection
+export const SUPPORTED_FIELD_TYPES = ['singleLineText', 'singleSelect', 'number'] as const;
+
 // Defines the structure for the plugin's settings.
 export interface AutoNoteImporterSettings {
   apiKey: string;
@@ -125,6 +136,36 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     return json.tables.map((t: any) => ({ id: t.id, name: t.name }));
   }
 
+  async fetchTableFields(apiKey: string, baseId: string, tableId: string): Promise<AirtableField[]> {
+    const response = await requestUrl({
+      url: `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
+      method: "GET",
+      headers: { "Authorization": `Bearer ${apiKey}` },
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`Failed to fetch table fields: HTTP ${response.status}`);
+    }
+
+    const json = response.json;
+    const table = json.tables.find((t: any) => t.id === tableId);
+    
+    if (!table) {
+      throw new Error(`Table with ID ${tableId} not found`);
+    }
+
+    return table.fields.map((f: any) => ({
+      id: f.id,
+      name: f.name,
+      type: f.type,
+      description: f.description
+    }));
+  }
+
+  isFieldTypeSupported(fieldType: string): boolean {
+    return SUPPORTED_FIELD_TYPES.includes(fieldType as any);
+  }
+
   // Renders the settings UI elements within the container element.
   display(): void {
     const { containerEl } = this;
@@ -183,36 +224,74 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               dropdown.onChange(async (value) => {
                 this.plugin.settings.tableId = value;
                 await this.plugin.saveSettings();
+                this.display();
               });
             } catch (error) {
               new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable tables. ${error.message || 'Check base ID or network.'}`);
             }
           });
+
+        if (this.plugin.settings.tableId) {
+          new Setting(containerEl)
+            .setName("Filename field")
+            .setDesc("Select the field to use for the note's filename. Only Single line text, Single select, and Number fields are supported. Other field types (Email, URL, Date, Formula, etc.) are not shown to prevent file naming issues.")
+            .addDropdown(async dropdown => {
+              try {
+                dropdown.addOption("", "-- Select field --");
+                const fields = await this.fetchTableFields(this.plugin.settings.apiKey, this.plugin.settings.baseId, this.plugin.settings.tableId);
+                
+                const supportedFields = fields.filter(field => this.isFieldTypeSupported(field.type));
+                const unsupportedCount = fields.length - supportedFields.length;
+                
+                supportedFields.forEach(field => {
+                  dropdown.addOption(field.name, `${field.name} (${field.type})`);
+                });
+                
+                if (unsupportedCount > 0) {
+                  dropdown.addOption("", `─── ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ───`);
+                }
+                
+                dropdown.setValue(this.plugin.settings.filenameFieldName);
+                dropdown.onChange(async (value) => {
+                  this.plugin.settings.filenameFieldName = value;
+                  await this.plugin.saveSettings();
+                });
+              } catch (error) {
+                new Notice(`Auto Note Importer: ❌ Failed to fetch table fields. ${error.message || 'Check table ID or network.'}`);
+              }
+            });
+
+          new Setting(containerEl)
+            .setName("Subfolder field")
+            .setDesc("Select the field to use for subfolder organization. Only Single line text, Single select, and Number fields are supported. Leave empty to disable subfolder organization.")
+            .addDropdown(async dropdown => {
+              try {
+                dropdown.addOption("", "-- No subfolder --");
+                const fields = await this.fetchTableFields(this.plugin.settings.apiKey, this.plugin.settings.baseId, this.plugin.settings.tableId);
+                
+                const supportedFields = fields.filter(field => this.isFieldTypeSupported(field.type));
+                const unsupportedCount = fields.length - supportedFields.length;
+                
+                supportedFields.forEach(field => {
+                  dropdown.addOption(field.name, `${field.name} (${field.type})`);
+                });
+                
+                if (unsupportedCount > 0) {
+                  dropdown.addOption("", `─── ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ───`);
+                }
+                
+                dropdown.setValue(this.plugin.settings.subfolderFieldName);
+                dropdown.onChange(async (value) => {
+                  this.plugin.settings.subfolderFieldName = value;
+                  await this.plugin.saveSettings();
+                });
+              } catch (error) {
+                new Notice(`Auto Note Importer: ❌ Failed to fetch table fields. ${error.message || 'Check table ID or network.'}`);
+              }
+            });
+        }
       }
     }
-
-  
-    new Setting(containerEl)
-      .setName("Filename field name")
-      .setDesc("Enter the exact name of the Airtable field to use for the note's filename.")
-      .addText(text => text
-        .setPlaceholder("e.g., title")
-        .setValue(this.plugin.settings.filenameFieldName)
-        .onChange(async (value) => {
-          this.plugin.settings.filenameFieldName = value.trim();
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName("Subfolder field name")
-      .setDesc("Enter the field name to use for creating subfolders. Leave empty to disable subfolder organization.")
-      .addText(text => text
-        .setPlaceholder("e.g., category, status")
-        .setValue(this.plugin.settings.subfolderFieldName)
-        .onChange(async (value) => {
-          this.plugin.settings.subfolderFieldName = value.trim();
-          await this.plugin.saveSettings();
-        }));
   
     new Setting(containerEl)
       .setName("New file location")
