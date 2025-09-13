@@ -69,6 +69,7 @@ export interface AutoNoteImporterSettings {
   syncInterval: number;
   allowOverwrite: boolean;
   filenameFieldName: string;
+  subfolderFieldName: string;
 }
 
 // Default values for the plugin settings.
@@ -81,6 +82,7 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   syncInterval: 0,
   allowOverwrite: false,
   filenameFieldName: "title",
+  subfolderFieldName: "",
 };
 
 // Represents the settings tab for the Auto Note Importer plugin in Obsidian's settings panel.
@@ -198,6 +200,17 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.filenameFieldName)
         .onChange(async (value) => {
           this.plugin.settings.filenameFieldName = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName("Subfolder field name")
+      .setDesc("Enter the field name to use for creating subfolders. Leave empty to disable subfolder organization.")
+      .addText(text => text
+        .setPlaceholder("e.g., category, status")
+        .setValue(this.plugin.settings.subfolderFieldName)
+        .onChange(async (value) => {
+          this.plugin.settings.subfolderFieldName = value.trim();
           await this.plugin.saveSettings();
         }));
   

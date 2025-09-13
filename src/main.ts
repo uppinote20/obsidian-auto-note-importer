@@ -3,7 +3,7 @@ import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab 
 import { fetchNotes, RemoteNote } from "./fetcher";
 import { buildMarkdownContent, parseTemplate } from "./note-builder";
 // import { sanitizeFileName } from "./utils";
-import { sanitizeFileName, formatYamlValue } from "./utils";
+import { sanitizeFileName, formatYamlValue, sanitizeFolderPath } from "./utils";
 
 /**
  * The main plugin class for Auto Note Importer.
@@ -126,6 +126,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   /**
    * Scans the target folder for existing notes and extracts the value of the `primaryField` from their frontmatter.
+   * Recursively searches subfolders to handle subfolder organization.
    * @param folderPath The path to the folder where notes are stored.
    * @returns A Promise that resolves to a Set containing the primaryField values of existing notes.
    */
@@ -134,16 +135,28 @@ export default class AutoNoteImporterPlugin extends Plugin {
     const primaryField = new Set<string>();
 
     if (folder instanceof TFolder) {
-      for (const file of folder.children) {
-        if (file instanceof TFile && file.extension === "md") {
-          const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-          if (frontmatter && frontmatter.primaryField) {
-            primaryField.add(String(frontmatter.primaryField));
-          }
-        }
-      }
+      await this.scanFolderRecursively(folder, primaryField);
     }
     return primaryField;
+  }
+
+  /**
+   * Recursively scans a folder and its subfolders for markdown files with primaryField frontmatter.
+   * @param folder The folder to scan
+   * @param primaryField The Set to add found primaryField values to
+   */
+  private async scanFolderRecursively(folder: TFolder, primaryField: Set<string>): Promise<void> {
+    for (const file of folder.children) {
+      if (file instanceof TFile && file.extension === "md") {
+        const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (frontmatter && frontmatter.primaryField) {
+          primaryField.add(String(frontmatter.primaryField));
+        }
+      } else if (file instanceof TFolder) {
+        // Recursively scan subfolders
+        await this.scanFolderRecursively(file, primaryField);
+      }
+    }
   }
 
   /**
@@ -171,7 +184,30 @@ export default class AutoNoteImporterPlugin extends Plugin {
       potentialTitle = note.id;
     }
     const safeTitle = sanitizeFileName(potentialTitle);
-    const folderPath = normalizePath(this.settings.folderPath);
+    
+    // Determine the folder path based on subfolder field settings
+    let finalFolderPath = this.settings.folderPath;
+    
+    if (this.settings.subfolderFieldName && note.fields.hasOwnProperty(this.settings.subfolderFieldName)) {
+      const subfolderValue = note.fields[this.settings.subfolderFieldName];
+      if (subfolderValue !== null && subfolderValue !== undefined) {
+        const trimmedValue = String(subfolderValue).trim();
+        if (trimmedValue) {
+          const sanitizedSubfolder = sanitizeFolderPath(trimmedValue);
+          if (sanitizedSubfolder) {
+            finalFolderPath = `${this.settings.folderPath}/${sanitizedSubfolder}`;
+          }
+        }
+      }
+    }
+    
+    const folderPath = normalizePath(finalFolderPath);
+    
+    // Ensure the folder exists (create if needed)
+    if (!await this.app.vault.adapter.exists(folderPath)) {
+      await this.app.vault.createFolder(folderPath);
+    }
+    
     const filePath = normalizePath(`${folderPath}/${safeTitle}.md`);
     const existingFile = this.app.vault.getAbstractFileByPath(filePath);
 
