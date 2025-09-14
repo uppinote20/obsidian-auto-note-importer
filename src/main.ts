@@ -3,7 +3,7 @@ import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab 
 import { fetchNotes, RemoteNote } from "./fetcher";
 import { buildMarkdownContent, parseTemplate } from "./note-builder";
 // import { sanitizeFileName } from "./utils";
-import { sanitizeFileName, formatYamlValue } from "./utils";
+import { sanitizeFileName, formatYamlValue, sanitizeFolderPath } from "./utils";
 
 /**
  * The main plugin class for Auto Note Importer.
@@ -126,6 +126,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   /**
    * Scans the target folder for existing notes and extracts the value of the `primaryField` from their frontmatter.
+   * Recursively searches subfolders to handle subfolder organization.
    * @param folderPath The path to the folder where notes are stored.
    * @returns A Promise that resolves to a Set containing the primaryField values of existing notes.
    */
@@ -134,16 +135,34 @@ export default class AutoNoteImporterPlugin extends Plugin {
     const primaryField = new Set<string>();
 
     if (folder instanceof TFolder) {
-      for (const file of folder.children) {
-        if (file instanceof TFile && file.extension === "md") {
-          const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-          if (frontmatter && frontmatter.primaryField) {
-            primaryField.add(String(frontmatter.primaryField));
-          }
-        }
-      }
+      await this.scanFolderRecursively(folder, primaryField, 0, 10); // Max depth of 10
     }
     return primaryField;
+  }
+
+  /**
+   * Recursively scans a folder and its subfolders for markdown files with primaryField frontmatter.
+   * @param folder The folder to scan
+   * @param primaryField The Set to add found primaryField values to
+   * @param currentDepth Current recursion depth
+   * @param maxDepth Maximum recursion depth to prevent infinite loops
+   */
+  private async scanFolderRecursively(folder: TFolder, primaryField: Set<string>, currentDepth = 0, maxDepth = 10): Promise<void> {
+    if (currentDepth >= maxDepth) {
+      return; // Prevent excessive recursion
+    }
+
+    for (const file of folder.children) {
+      if (file instanceof TFile && file.extension === "md") {
+        const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        if (frontmatter && frontmatter.primaryField) {
+          primaryField.add(String(frontmatter.primaryField));
+        }
+      } else if (file instanceof TFolder) {
+        // Recursively scan subfolders with depth tracking
+        await this.scanFolderRecursively(file, primaryField, currentDepth + 1, maxDepth);
+      }
+    }
   }
 
   /**
@@ -161,6 +180,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
     if (this.settings.filenameFieldName && note.fields.hasOwnProperty(this.settings.filenameFieldName)) {
       rawFilenameValue = note.fields[this.settings.filenameFieldName];
     } else {
+      // Fallback to primaryField (Airtable record ID) for safe, unique filename
       rawFilenameValue = note.primaryField;
     }
   
@@ -169,7 +189,30 @@ export default class AutoNoteImporterPlugin extends Plugin {
       potentialTitle = note.id;
     }
     const safeTitle = sanitizeFileName(potentialTitle);
-    const folderPath = normalizePath(this.settings.folderPath);
+    
+    // Determine the folder path based on subfolder field settings
+    let finalFolderPath = this.settings.folderPath;
+    
+    if (this.settings.subfolderFieldName && note.fields.hasOwnProperty(this.settings.subfolderFieldName)) {
+      const subfolderValue = note.fields[this.settings.subfolderFieldName];
+      if (subfolderValue !== null && subfolderValue !== undefined) {
+        const trimmedValue = String(subfolderValue).trim();
+        if (trimmedValue) {
+          const sanitizedSubfolder = sanitizeFolderPath(trimmedValue);
+          if (sanitizedSubfolder) {
+            finalFolderPath = `${this.settings.folderPath}/${sanitizedSubfolder}`;
+          }
+        }
+      }
+    }
+    
+    const folderPath = normalizePath(finalFolderPath);
+    
+    // Ensure the folder exists (create if needed)
+    if (!await this.app.vault.adapter.exists(folderPath)) {
+      await this.app.vault.createFolder(folderPath);
+    }
+    
     const filePath = normalizePath(`${folderPath}/${safeTitle}.md`);
     const existingFile = this.app.vault.getAbstractFileByPath(filePath);
 
@@ -186,7 +229,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
           const templateContent = await this.app.vault.read(templateFile);
           content = parseTemplate(templateContent, note);
         } catch (templateError) {
-          new Notice("Auto Note Importer: ❌ Error using template. Using default format.");
+          new Notice(`Auto Note Importer: ❌ Template error: ${templateError.message || 'Unknown error'}. Using default format.`);
           content = buildMarkdownContent(note);
         }
       } else {
@@ -212,17 +255,23 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
     if (!hasPrimaryFieldKey) {
       if (match) {
-        // Frontmatter exists, but primaryField key is missing. Inject it.
-        // Find the end of the frontmatter block (second '---')
-        const endFrontmatterIndex = content.indexOf('---', 3);
-        if (endFrontmatterIndex !== -1) {
-            // Insert the primaryField line just before the closing '---'
-            const insertionPoint = content.lastIndexOf('\n', endFrontmatterIndex -1) + 1;
-            content = content.slice(0, insertionPoint) + primaryFieldYamlLine + content.slice(insertionPoint);
+        // Frontmatter exists, but primaryField key is missing. Inject it safely.
+        const frontmatterEnd = content.indexOf('\n---\n', 4);
+        if (frontmatterEnd !== -1) {
+          // Well-formed frontmatter: insert before closing ---
+          content = content.slice(0, frontmatterEnd) + '\n' + primaryFieldYamlLine.trim() + content.slice(frontmatterEnd);
         } else {
-          // Malformed frontmatter (only opening '---')? Append after opening line.
-          content = content.slice(0, 3) + '\n' + primaryFieldYamlLine + content.slice(3);
-      
+          // Try alternative frontmatter ending patterns
+          const altEnd = content.indexOf('\n---', 4);
+          if (altEnd !== -1) {
+            content = content.slice(0, altEnd) + '\n' + primaryFieldYamlLine.trim() + content.slice(altEnd);
+          } else {
+            // Malformed frontmatter: add after opening line
+            const firstNewline = content.indexOf('\n', 3);
+            if (firstNewline !== -1) {
+              content = content.slice(0, firstNewline + 1) + primaryFieldYamlLine + content.slice(firstNewline + 1);
+            }
+          }
         }
       } else {
         // No frontmatter exists. Create a new frontmatter block at the beginning.

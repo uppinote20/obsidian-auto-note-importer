@@ -59,6 +59,17 @@ class FileSuggest extends AbstractInputSuggest<string> {
   }
 }
 
+// Defines the structure for Airtable field information
+export interface AirtableField {
+  id: string;
+  name: string;
+  type: string;
+  description?: string;
+}
+
+// Supported field types for filename and subfolder selection
+export const SUPPORTED_FIELD_TYPES = ['singleLineText', 'singleSelect', 'number'] as const;
+
 // Defines the structure for the plugin's settings.
 export interface AutoNoteImporterSettings {
   apiKey: string;
@@ -68,8 +79,8 @@ export interface AutoNoteImporterSettings {
   templatePath: string;
   syncInterval: number;
   allowOverwrite: boolean;
-  primaryFieldName: string;
   filenameFieldName: string;
+  subfolderFieldName: string;
 }
 
 // Default values for the plugin settings.
@@ -81,13 +92,18 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   templatePath: "",
   syncInterval: 0,
   allowOverwrite: false,
-  primaryFieldName: "",
   filenameFieldName: "title",
+  subfolderFieldName: "",
 };
 
 // Represents the settings tab for the Auto Note Importer plugin in Obsidian's settings panel.
 export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: AutoNoteImporterPlugin;
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private cachedBases: {id: string, name: string}[] | null = null;
+  private cachedTables: Map<string, {id: string, name: string}[]> = new Map();
+  private cachedFields: Map<string, AirtableField[]> = new Map();
+  private lastApiKey = "";
 
   // Creates an instance of the setting tab.
   constructor(app: App, plugin: AutoNoteImporterPlugin) {
@@ -95,7 +111,35 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  private debounceDisplay(delay = 100) {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => {
+      this.display();
+    }, delay);
+  }
+
+  private clearCacheIfApiKeyChanged(currentApiKey: string) {
+    if (this.lastApiKey !== currentApiKey) {
+      this.cachedBases = null;
+      this.cachedTables.clear();
+      this.cachedFields.clear();
+      this.lastApiKey = currentApiKey;
+    }
+  }
+
+  private getCacheKey(baseId: string, tableId: string): string {
+    return `${baseId}-${tableId}`;
+  }
+
   async fetchBases(apiKey: string): Promise<{id: string, name: string}[]> {
+    this.clearCacheIfApiKeyChanged(apiKey);
+
+    if (this.cachedBases) {
+      return this.cachedBases;
+    }
+
     const response = await requestUrl({
       url: "https://api.airtable.com/v0/meta/bases",
       method: "GET",
@@ -107,10 +151,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     const json = response.json;
-    return json.bases.map((b: any) => ({ id: b.id, name: b.name }));
+    return this.cachedBases = json.bases.map((b: any) => ({ id: b.id, name: b.name }));
   }
 
   async fetchTables(apiKey: string, baseId: string): Promise<{id: string, name: string}[]> {
+    this.clearCacheIfApiKeyChanged(apiKey);
+
+    if (this.cachedTables.has(baseId)) {
+      return this.cachedTables.get(baseId)!;
+    }
+
     const response = await requestUrl({
       url: `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
       method: "GET",
@@ -122,7 +172,49 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     const json = response.json;
-    return json.tables.map((t: any) => ({ id: t.id, name: t.name }));
+    const tables = json.tables.map((t: any) => ({ id: t.id, name: t.name }));
+    this.cachedTables.set(baseId, tables);
+    return tables;
+  }
+
+  async fetchTableFields(apiKey: string, baseId: string, tableId: string): Promise<AirtableField[]> {
+    this.clearCacheIfApiKeyChanged(apiKey);
+
+    const cacheKey = this.getCacheKey(baseId, tableId);
+    if (this.cachedFields.has(cacheKey)) {
+      return this.cachedFields.get(cacheKey)!;
+    }
+
+    const response = await requestUrl({
+      url: `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
+      method: "GET",
+      headers: { "Authorization": `Bearer ${apiKey}` },
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`Failed to fetch table fields: HTTP ${response.status}`);
+    }
+
+    const json = response.json;
+    const table = json.tables.find((t: any) => t.id === tableId);
+
+    if (!table) {
+      throw new Error(`Table with ID ${tableId} not found`);
+    }
+
+    const fields = table.fields.map((f: any) => ({
+      id: f.id,
+      name: f.name,
+      type: f.type,
+      description: f.description
+    }));
+
+    this.cachedFields.set(cacheKey, fields);
+    return fields;
+  }
+
+  isFieldTypeSupported(fieldType: string): boolean {
+    return SUPPORTED_FIELD_TYPES.includes(fieldType as any);
   }
 
   // Renders the settings UI elements within the container element.
@@ -140,7 +232,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.apiKey = value;
             await this.plugin.saveSettings();
-            this.display();
+            this.debounceDisplay();
           });
         text.inputEl.type = 'password';
       });
@@ -161,7 +253,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               this.plugin.settings.baseId = value;
               this.plugin.settings.tableId = "";
               await this.plugin.saveSettings();
-              this.display();
+              this.debounceDisplay();
             });
           } catch (error) {
             new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable bases. ${error.message || 'Check PAT or network.'}`);
@@ -183,35 +275,74 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               dropdown.onChange(async (value) => {
                 this.plugin.settings.tableId = value;
                 await this.plugin.saveSettings();
+                this.debounceDisplay();
               });
             } catch (error) {
               new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable tables. ${error.message || 'Check base ID or network.'}`);
             }
           });
+
+        if (this.plugin.settings.tableId) {
+          new Setting(containerEl)
+            .setName("Filename field")
+            .setDesc("Select the field to use for the note's filename. Only Single line text, Single select, and Number fields are supported. Other field types (Email, URL, Date, Formula, etc.) are not shown to prevent file naming issues.")
+            .addDropdown(async dropdown => {
+              try {
+                dropdown.addOption("", "-- Select field --");
+                const fields = await this.fetchTableFields(this.plugin.settings.apiKey, this.plugin.settings.baseId, this.plugin.settings.tableId);
+                
+                const supportedFields = fields.filter(field => this.isFieldTypeSupported(field.type));
+                const unsupportedCount = fields.length - supportedFields.length;
+                
+                supportedFields.forEach(field => {
+                  dropdown.addOption(field.name, `${field.name} (${field.type})`);
+                });
+                
+                if (unsupportedCount > 0) {
+                  dropdown.addOption("", `─── ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ───`);
+                }
+                
+                dropdown.setValue(this.plugin.settings.filenameFieldName);
+                dropdown.onChange(async (value) => {
+                  this.plugin.settings.filenameFieldName = value;
+                  await this.plugin.saveSettings();
+                });
+              } catch (error) {
+                new Notice(`Auto Note Importer: ❌ Failed to fetch table fields. ${error.message || 'Check table ID or network.'}`);
+              }
+            });
+
+          new Setting(containerEl)
+            .setName("Subfolder field")
+            .setDesc("Select the field to use for subfolder organization. Only Single line text, Single select, and Number fields are supported. Leave empty to disable subfolder organization.")
+            .addDropdown(async dropdown => {
+              try {
+                dropdown.addOption("", "-- No subfolder --");
+                const fields = await this.fetchTableFields(this.plugin.settings.apiKey, this.plugin.settings.baseId, this.plugin.settings.tableId);
+                
+                const supportedFields = fields.filter(field => this.isFieldTypeSupported(field.type));
+                const unsupportedCount = fields.length - supportedFields.length;
+                
+                supportedFields.forEach(field => {
+                  dropdown.addOption(field.name, `${field.name} (${field.type})`);
+                });
+                
+                if (unsupportedCount > 0) {
+                  dropdown.addOption("", `─── ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ───`);
+                }
+                
+                dropdown.setValue(this.plugin.settings.subfolderFieldName);
+                dropdown.onChange(async (value) => {
+                  this.plugin.settings.subfolderFieldName = value;
+                  await this.plugin.saveSettings();
+                });
+              } catch (error) {
+                new Notice(`Auto Note Importer: ❌ Failed to fetch table fields. ${error.message || 'Check table ID or network.'}`);
+              }
+            });
+        }
       }
     }
-
-    new Setting(containerEl)
-      .setName("Primary field name")
-      .setDesc("Enter the exact name of the Airtable field to use as the unique identifier for notes (for duplicate checking). Leave empty to use the first field.")
-      .addText(text => text
-        .setPlaceholder("e.g., Unique ID or leave empty")
-        .setValue(this.plugin.settings.primaryFieldName)
-        .onChange(async (value) => {
-          this.plugin.settings.primaryFieldName = value.trim();
-          await this.plugin.saveSettings();
-        }));
-  
-    new Setting(containerEl)
-      .setName("Filename field name")
-      .setDesc("Enter the exact name of the Airtable field to use for the note's filename.")
-      .addText(text => text
-        .setPlaceholder("e.g., title")
-        .setValue(this.plugin.settings.filenameFieldName)
-        .onChange(async (value) => {
-          this.plugin.settings.filenameFieldName = value.trim();
-          await this.plugin.saveSettings();
-        }));
   
     new Setting(containerEl)
       .setName("New file location")

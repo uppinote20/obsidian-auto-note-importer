@@ -4,236 +4,157 @@
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/uppinote20/obsidian-auto-note-importer?sort=semver)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/uppinote20/obsidian-auto-note-importer/total)
 
-Easily import and sync notes from an external database like Airtable into your Vault.  
-Customize destination folders, apply templates, and manage syncing with flexible settings.
+Import and sync notes from Airtable into your Obsidian vault with smart field mapping and organization features.
 
-<br>
+## ✨ Key Features
 
-## ✨ Features
-
-- Pulls notes from Airtable (more database support planned)
-- Creates Markdown files with structured YAML metadata
-- Supports manual and scheduled syncing (configurable interval)
-- Customizable:
-  - Destination folder
-  - Note template
-  - Overwrite option
-- Handles missing folders by auto-creating them
-- Minimal setup, zero coding required!
-
-<br>
+- **Smart Field Selection**: Dropdown-based field selection with type validation
+- **Subfolder Organization**: Automatically organize notes into subfolders based on field values
+- **Safe File Naming**: Only allows compatible field types (Text, Select, Number) for filenames
+- **Template Support**: Customize note format with powerful template system
+- **Obsidian Bases Compatible**: Optimized YAML properties for table/card views
+- **Automated Syncing**: Manual sync or scheduled intervals
+- **Zero Coding Required**: Point-and-click setup with intuitive UI
 
 ## 📦 Installation
 
-1. Open Obsidian.
-2. Go to **Settings > Community plugins > Browse**.
-3. Search for "**Auto Note Importer**" and install it.
-4. Enable the plugin.
-5. Configure your Airtable PAT and Base/Table settings.
+1. Open Obsidian
+2. Go to **Settings > Community plugins > Browse**
+3. Search for "**Auto Note Importer**" and install it
+4. Enable the plugin
+5. Configure your Airtable settings
 
-<br>
+## 🚀 Quick Start
 
-## 🚀 Usage
+### 1. Get Airtable Personal Access Token
 
-- **Manual Sync**:
-  - Use the Command Palette (`Ctrl+P`) → search for **"Sync Notes Now"** to trigger manual sync.
-- **Auto Sync**:
-  - Set a sync interval (minutes) in settings.
-  - If set to `0`, auto sync will be disabled (manual only).
+1. Go to [Airtable Tokens page](https://airtable.com/create/tokens)
+2. Click **Create new token**
+3. Select scopes: `data.records:read` and `schema.bases:read`
+4. Select your bases and click **Create token**
+5. Copy the token and paste it in plugin settings
 
-<br>
+### 2. Configure Plugin
 
-📺 **Watch the 30-second install guide:**
+1. **Airtable PAT**: Enter your Personal Access Token
+2. **Select Base**: Choose from your available bases
+3. **Select Table**: Pick the table to sync
+4. **Filename Field**: Choose field for note names (Text/Select/Number only)
+5. **Subfolder Field**: Optional - organize notes by field value
+6. **Destination**: Set folder location for imported notes
+7. **Template**: Optional - customize note format
 
-<video src="https://github.com/user-attachments/assets/9944368b-1ec2-496a-a216-3c01edb54589" controls width="100%"></video>
+### 3. Sync Notes
 
-<br>
+- **Manual**: Use Command Palette → "Sync notes now"
+- **Auto**: Set sync interval in minutes (0 = manual only)
 
-## Filename Generation
-- By default, notes are saved using the value from the Airtable field specified in the **Filename Field Name** setting (defaults to `title`).
-- If the field specified in **Filename Field Name** is missing or empty in a record, or if the setting itself is empty, the plugin will use the value from the **Primary Field** as the note filename.
-- **Important:** The **Primary Field** is the field specified in the **Primary Field Name** setting. If that setting is empty, it defaults to the value from the **very first column** in your Airtable table.
-- Filenames are automatically sanitized to remove characters that are not allowed in filenames.
-
-<br>
-
-## Duplicate Note Handling
-
-- **Important:** The **Primary Field** (the field specified in the **Primary Field Name** setting, or the first column if empty) is used as a unique identifier for each note.
-- When the `Allow Overwrite Existing Notes` setting is **disabled** (the default):
-  - The plugin checks the YAML frontmatter (`primaryField: value`) of existing notes in the target folder.
-  - If a note with the same `primaryField` value already exists, the incoming note from Airtable will be **skipped** to prevent duplicates.
-
-<br>
-
-### Important Note on `primaryField` in Frontmatter
-
-To ensure reliable duplicate note detection (especially when `Allow Overwrite Existing Notes` is disabled), this plugin relies on a `primaryField` key in the YAML frontmatter of your notes.
-
-- **Automatic Injection:** If you use a custom template, the plugin will check the generated note content. If a YAML frontmatter block (`---`) exists but is missing the `primaryField:` key, **the plugin will automatically add it**. If your template does *not* contain a frontmatter block at all, the plugin will **create a minimal frontmatter block** at the top of the note, containing only the `primaryField`.
-- **Fixed Key Name:** The key name used for this purpose is always `primaryField`. This is used internally by the plugin and cannot be changed in the settings.
-- **Purpose:** This ensures that even if you later disable the "Allow Overwrite" setting, the plugin can correctly identify existing notes based on their unique primary field value.
-
-<br>
-
-## ⚙️ Settings
-
-![Plugin Settings Screenshot](assets/settings.png)
+## ⚙️ Settings Guide
 
 | Setting | Description |
 |:---|:---|
-| Airtable Personal Access Token | Personal Access Token for Airtable API |
-| Select Base | Select the Airtable Base to fetch records from (Requires valid PAT) |
-| Select Table | Select the Airtable Table inside the Base (Requires valid PAT and selected Base) |
-| New file location | Where imported notes are saved in your Vault (Suggests existing folders) |
-| Primary Field Name | (Optional) The Airtable field name to use as the unique identifier for duplicate checking.<br>Defaults to the first field if left empty. |
-| Filename Field Name | (Optional) The Airtable field name to use for the note's filename.<br>Defaults to `title`. Falls back to the Primary Field if empty or not found. |
-| Template file | (Optional) Path to a template Markdown file (Suggests existing Markdown files). See **Template Usage** below. |
-| Sync Interval (minutes) | Interval (in minutes) for auto-sync (0 = no auto sync) |
-| Allow Overwrite Existing Notes | If enabled, existing notes with the same filename will be overwritten. If disabled, notes with the same `primaryField` value in their frontmatter will be skipped (see **Duplicate Note Handling**). |
+| **Airtable Personal Access Token** | Your Airtable PAT for API access |
+| **Select Base** | Choose Airtable base (auto-populated from PAT) |
+| **Select Table** | Choose table within base |
+| **Filename Field** | Field to use for note filenames (safe types only) |
+| **Subfolder Field** | Field to organize notes into subfolders (optional) |
+| **New File Location** | Destination folder in your vault |
+| **Template File** | Custom template for note format (optional) |
+| **Sync Interval** | Auto-sync frequency in minutes (0 = disabled) |
+| **Allow Overwrite** | Update existing notes vs skip duplicates |
 
-<br>
+### Supported Field Types
 
-## Airtable Field Type Support
+**✅ Safe for Filenames & Subfolders:**
+- Single line text
+- Single select  
+- Number
 
-This plugin attempts to fetch and represent various Airtable field types within your Obsidian notes, primarily through the template system (`{{fieldName}}`). Here's how different types are generally handled:
+**❌ Not Supported:**
+- Email, URL, Phone (special characters)
+- Date, Time (formatting issues)
+- Formula, Multiple select (unpredictable results)
+- Attachment, User (complex data types)
 
-| Field Type             | API Data Example                      | Template Output (`{{Field}}`) | Notes & Usage Tips                                                                                                                               |
-| :--------------------- | :------------------------------------ | :---------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Text Types**         |                                       |                               |                                                                                                                                                  |
-| Single line text       | `"Short text"`                        | `Short text`                  | Outputs the text directly.                                                                                                                       |
-| Long text              | `"Line 1\nLine 2"`                    | `Line 1\nLine 2`              | Outputs the text, preserving line breaks. Use YAML block scalar for multi-line frontmatter.                                                  |
-| Email                  | `"test@example.com"`                  | `test@example.com`            | Outputs the email address text.                                                                                                                  |
-| URL                    | `"https://obsidian.md"`               | `https://obsidian.md`         | Outputs the URL text. Use Markdown syntax `{{Field}}` in template for a clickable link.                                             |
-| Phone number           | `"+15551234567"`                      | `+15551234567`                | Outputs the phone number text.                                                                                                                   |
-| **Number Types**       |                                       |                               |                                                                                                                                                  |
-| Number                 | `123.45`                              | `123.45`                      | Outputs the number as text.                                                                                                                      |
-| Currency               | `99.99`                               | `99.99`                       | Outputs the numerical value. Currency symbol is not included by default.                                                                         |
-| Percent                | `0.75`                                | `0.75`                        | Outputs the decimal value (e.g., 75% is 0.75).                                                                                                   |
-| Rating                 | `4`                                   | `4`                           | Outputs the rating number.                                                                                                                       |
-| Autonumber             | `101`                                 | `101`                         | Outputs the unique number.                                                                                                                       |
-| **Date & Time**        |                                       |                               |                                                                                                                                                  |
-| Date                   | `"2023-10-27"` / `"2023-10-27T10:00Z"` | `2023-10-27` / `2023-10-27...`| Outputs the date/time as an ISO 8601 string. Compatible with Obsidian/Dataview YAML date fields.                                              |
-| Created time           | `"2023-10-27T10:00:00.000Z"`          | `2023-10-27T10:00:00.000Z`    | Outputs the timestamp string.                                                                                                                    |
-| Last modified time     | `"2023-10-27T11:30:00.000Z"`          | `2023-10-27T11:30:00.000Z`    | Outputs the timestamp string.                                                                                                                    |
-| Duration               | `3665` (seconds)                      | `3665`                        | Outputs the duration in seconds. Use Airtable Formula field for human-readable format if needed.                                                 |
-| **Choice Types**       |                                       |                               |                                                                                                                                                  |
-| Single select          | `"Option B"`                          | `Option B`                    | Outputs the selected option text.                                                                                                                |
-| Multiple select        | `["Option A", "Option C"]`            | `[Option A, Option C]`        | Outputs a string representation of the array (e.g., `"[Option A, Option C]"`). Suitable for YAML lists if format matches.                       |
-| Checkbox               | `true`                                | `true`                        | Outputs `"true"` or `"false"` string. Compatible with Obsidian/Dataview YAML boolean fields.                                                   |
-| **Relational Types**   |                                       |                               |                                                                                                                                                  |
-| Link to another record | `["recXXX", "recYYY"]`                | `[recXXX, recYYY]`            | Outputs a string representation of the linked record ID array. **Recommendation:** Use a `Lookup` field in Airtable to get meaningful data. |
-| Lookup                 | *Depends on lookup*                   | *Depends on lookup*           | Output depends on the looked-up field type (text, number, array). Handled like the original type. Arrays become `"[Value1, Value2]"`.          |
-| Rollup                 | *Depends on rollup*                   | *Depends on rollup*           | Output depends on the aggregation result (number, date, array). Handled like the result type. Arrays become `"[Value1, Value2]"`.             |
-| Count                  | `3`                                   | `3`                           | Outputs the count number.                                                                                                                        |
-| **Attachment & User**  |                                       |                               |                                                                                                                                                  |
-| Attachment             | `[{id:"att...", url:"...", ...}]`     | `[Object]`                    | Use **dot notation** for details: `{{Attachment.0.url}}`, `{{Attachment.0.filename}}`. Direct use outputs `[Object]`.                          |
-| User                   | `{id:"usr...", email:"...", name:"..."}` | `[Object]`                    | Use **dot notation** for details: `{{UserField.name}}`, `{{UserField.email}}`. Direct use outputs `[Object]`.                               |
-| Created by             | `{id:"usr...", ...}`                  | `[Object]`                    | Use dot notation: `{{Created by.name}}`.                                                                                                         |
-| Last modified by       | `{id:"usr...", ...}`                  | `[Object]`                    | Use dot notation: `{{Last modified by.name}}`.                                                                                                   |
-| **Special Types**      |                                       |                               |                                                                                                                                                  |
-| Barcode                | `{text: "123"}`          | `[Object]`                    | Use dot notation: `{{BarcodeField.text}}`.                                                                                                       |
-| Button                 | *N/A (UI only)*                       | *N/A*                         | Button fields are UI elements in Airtable and do not return data via the API.                                                                    |
-| Formula                | *Depends on formula*                  | *Depends on formula*          | Output depends on the formula result type (text, number, date, boolean, array). Handled like the result type.                                    |
+*Unsupported fields are automatically hidden in dropdowns to prevent errors.*
 
-**Note:** For fields returning arrays or objects, using them directly in the template (`{{FieldName}}`) might result in simplified representations like `"[Value1, Value2]"` or `[Object]`. Use **dot notation** (e.g., `{{ArrayField.0}}`, `{{ObjectField.propertyName}}`) within your template to access specific elements or properties as needed. See the **Template Usage** section for more examples.
+**📋 [Complete Field Type Reference →](examples/airtable-field-types.md)**
 
-<br>
+## 🔄 How It Works
 
-## 🔄 Example Workflow
+### Unique Identification
+Each note gets a unique `primaryField` (Airtable record ID) in frontmatter to prevent duplicates and enable proper sync tracking.
 
-1. Use **n8n** to collect and summarize YouTube video information.
-2. Store the processed summaries into **Airtable**.
-3. Launch **Obsidian**, and use this plugin to fetch and create beautiful Markdown notes!
+### File Naming Logic
+1. Use selected **Filename Field** if available and non-empty
+2. Fallback to **Airtable record ID** for guaranteed unique, safe filename
+3. All filenames are sanitized for cross-platform compatibility
 
-<br>
+### Subfolder Organization
+- **With Subfolder Field**: `destination/field-value/note.md`
+- **Without Subfolder Field**: `destination/note.md`
+- Supports nested folders (e.g., "Category/Subcategory")
+- Recursive duplicate detection across all subfolders
 
-## Template Usage
+## 📝 Template Usage
 
-If you specify a `Template file`, the plugin will use its content to create new notes. You can use placeholders in the template file that will be replaced with the actual data from your Airtable record.
-
-Use double curly braces `{{ }}` around the **field name** from your Airtable table. For example:
-
-**Accessing Nested Fields:**
-
-For complex fields like `Attachment` or `User` (which are often arrays or objects), you can access nested properties using **dot notation**.
-
-- To get the URL of the *first* attachment: `{{Attachment.0.url}}`
-- To get the name of the *first* user in a User field: `{{Assignee.0.name}}` (if multiple users allowed) or `{{Assignee.name}}` (if single user)
-- To get the text value from a Barcode field: `{{My Barcode.text}}`
-
-**Comprehensive Template Example:**
-
-For a detailed example demonstrating how to use various Airtable field types (including nested access for Attachments, Users, Barcodes, and multi-line text handling in frontmatter), please see the example file:
-
-**➡️ [View Template Example File](examples/template-example.md)**
-
-If a field referenced in the template (e.g., `{{summary}}`) doesn't exist in a specific Airtable record, it will be replaced with an empty string.
-If you try to access a field that is an Array or Object directly without specifying a nested property (e.g., `{{Attachment}}`), it will be rendered as `[Object]` or a string representation like `[Value1, Value2]`. Use dot notation for specific values.
-
-<br>
-
-## 📝 Default Note Template Example
-
-If no custom template is provided, notes will be created with the following default structure:
+Create custom note templates using `{{fieldName}}` placeholders:
 
 ```markdown
 ---
-primaryField: Value from the first column of Airtable (used for duplicate checking if overwrite is off)
-videoId: {{videoId}}
-title: {{title}}
-uploadDate: {{uploadDate}}
-channelName: {{channelName}}
-canonicalUrl: {{canonicalUrl}}
-tags: {{tags}}
-categories: {{categories}}
-분류: {{분류}}
-description: {{description}}
-summary: {{summary}}
-check-read: false
+title: "{{Title}}"
+status: "{{Status}}"
+author: "{{Author.name}}"
+created: "{{Created time}}"
 ---
 
-![]({{thumbnail}})
+# {{Title}}
 
-# 📝 요약
-{{topics}}
+## Summary
+{{Summary}}
 
-# 📜 전체 스크립트
-{{script}}
+## Content
+{{Description}}
+
+## Attachments
+{{Attachment.0.url}}
 ```
 
-<br>
+**Advanced Features:**
+- **Nested Access**: `{{Attachment.0.url}}`, `{{User.name}}`
+- **Multi-line Support**: Automatic YAML block scalar formatting
+- **Bases Optimization**: Proper YAML types for table/card views
 
-## 🛠️ Planned Features
+**📝 [Template Examples & Best Practices →](examples/template-examples.md)**
 
-- [x] Pagination support for large Airtable datasets
-- [x] Flexible field mapping (choose which field to treat as unique/primary key)
-- [x] Expanded Airtable field type support & documentation (See "Airtable Field Type Support" section)
-- [ ] Support multi-database (Airtable, Supabase, Notion DB, Custom API)
-- [x] Progress indicator during sync
-- [ ] Internationalization (i18n) support for multiple languages
-- [ ] Advanced overwrite/merge strategies
-- [ ] UI/UX improvements in settings panel
-- [ ] Multi-Base/Table Configuration
-  - Support independent settings for multiple Airtable Bases/Tables (Base/Table/Primary Field/Filename Field/File Location/Template File/Sync Interval/Overwrite). Each configuration will also have its own manual sync command.
-- [ ] Table-Level Import (Full Table Export)
-  - Instead of importing one row as one note, allow exporting the entire table as a single Markdown table-formatted note.
-- [ ] Sync Log File Generation
-  - Generate a log file during sync to record when and what data was synchronized.
-- [ ] Field-Template Mapping UI
-  - Improve UI to allow users to specify which field to use as Filename Field or Primary Field per table.
-- [ ] Filter/Query Conditions
-  - Add filtering options to import only records that match specific conditions (e.g., completed rows, rows created within the last 30 days).
-- [ ] Advanced Field Type Conversion
-  - Automatically download attachments (save locally), auto-link URLs, and other advanced transformations
-- [ ] Compatibility Options for Obsidian Plugins
-  - Provide format options compatible with other Obsidian plugins like Dataview and Templater (e.g., optimized YAML format, auto tagging, etc.).
+## 🔗 Obsidian Bases Integration
 
-<br>
+This plugin creates Bases-compatible YAML frontmatter with proper data types for seamless table/card view editing. Import your notes, enable the Bases plugin, and create a database from your imported folder for powerful data management workflows.
+
+## 📊 Example Workflow
+
+1. **Collect Data**: Use automation tools (n8n, Zapier) to gather content
+2. **Store in Airtable**: Organize and process your data
+3. **Import to Obsidian**: Use this plugin to create structured notes
+4. **Organize Automatically**: Subfolder structure based on your data
+5. **Manage in Bases**: View and edit in table/card format
+
+## 🛠️ Troubleshooting
+
+**Common Issues:**
+- **No fields showing**: Check PAT permissions and base/table selection
+- **Sync fails**: Verify network connection and Airtable credentials  
+- **File naming errors**: Ensure selected field type is supported
+- **Missing subfolders**: Check subfolder field value isn't empty
+
+**Field Selection Tips:**
+- Use descriptive text fields for filenames
+- Choose categorical fields for subfolder organization
+- Avoid formula fields that might change unexpectedly
 
 ## ☕ Support
 
-If you find this plugin useful, you can support the development:
+If you find this plugin useful, support development:
 
 <div style="display: flex; gap: 20px; align-items: center;">
   <a href="https://ko-fi.com/uppinote" target="_blank">
@@ -243,8 +164,6 @@ If you find this plugin useful, you can support the development:
     <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:60px; width:217px;">
   </a>
 </div>
-
-<br>
 
 ## 📄 License
 
