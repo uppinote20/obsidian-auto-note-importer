@@ -5,10 +5,10 @@
 	"minAppVersion": "0.15.0",
 	"description": "Automatically import notes from an external database like Airtable into your Vault.",
 	"author": "uppinote",
-	"authorUrl": "https://github.com/upnote2020/obsidian-auto-note-importer",
+	"authorUrl": "https://github.com/uppinote20/obsidian-auto-note-importer",
 	"fundingUrl": {
 		"Buy Me a Coffee": "https://www.buymeacoffee.com/uppinote",
 		"ko-fi": "https://ko-fi.com/uppinote"
 	},
-	"isDesktopOnly": true
+	"isDesktopOnly": false
 }
