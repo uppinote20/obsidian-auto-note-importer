@@ -1,6 +1,6 @@
-import { Plugin, TFile, TFolder, normalizePath, Notice } from "obsidian";
+import { Plugin, TFile, TFolder, normalizePath, Notice, requestUrl } from "obsidian";
 import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab } from "./settings";
-import { fetchNotes, RemoteNote } from "./fetcher";
+import { fetchNotes, RemoteNote, updateAirtableRecord, SyncResult, ConflictInfo } from "./fetcher";
 import { buildMarkdownContent, parseTemplate } from "./note-builder";
 // import { sanitizeFileName } from "./utils";
 import { formatYamlValue, sanitizeFolderPath, validateAndSanitizeFilename, sanitizeFileName } from "./utils";
@@ -18,6 +18,10 @@ export default class AutoNoteImporterPlugin extends Plugin {
   intervalId: number | null = null;
   // Reference to the settings tab for accessing cached field information
   settingTab: AutoNoteImporterSettingTab;
+  // Tracks files that have been modified and need to be synced back to Airtable
+  pendingSyncFiles: Set<string> = new Set();
+  // Debounce timer for file changes to avoid excessive API calls
+  syncDebounceTimer: NodeJS.Timeout | null = null;
 
   // When plugin loaded
   async onload() {
@@ -35,13 +39,31 @@ export default class AutoNoteImporterPlugin extends Plugin {
       }
     });
 
+    // Add bidirectional sync command
+    this.addCommand({
+      id: "sync-to-airtable",
+      name: "Sync changes to Airtable",
+      callback: async () => {
+        if (!this.settings.bidirectionalSync) {
+          new Notice("Auto Note Importer: ❌ Bidirectional sync is disabled in settings.");
+          return;
+        }
+        new Notice("Auto Note Importer: 🔄 Syncing changes to Airtable...");
+        await this.syncToAirtable();
+      }
+    });
+
     this.startScheduler();
+    this.setupFileWatcher();
   }
 
   // When plugin unloaded
   onunload() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
+    }
+    if (this.syncDebounceTimer) {
+      clearTimeout(this.syncDebounceTimer);
     }
   }
 
@@ -329,5 +351,290 @@ export default class AutoNoteImporterPlugin extends Plugin {
       new Notice(`Auto Note Importer: ❌ Failed to save note: ${safeTitle}`);
       return "skipped";
     }
+  }
+
+  /**
+   * Sets up file watching for bidirectional sync functionality.
+   * Monitors changes to files in the target folder and triggers sync to Airtable.
+   */
+  setupFileWatcher() {
+    if (!this.settings.bidirectionalSync || !this.settings.watchForChanges) {
+      return;
+    }
+
+    // Listen for file modifications
+    this.registerEvent(
+      this.app.vault.on('modify', (file) => {
+        if (file instanceof TFile && file.extension === 'md') {
+          this.handleFileChange(file);
+        }
+      })
+    );
+  }
+
+  /**
+   * Handles file change events with debouncing to avoid excessive API calls.
+   * @param file The modified file
+   */
+  handleFileChange(file: TFile) {
+    const folderPath = normalizePath(this.settings.folderPath);
+    
+    // Check if the file is in our target folder (including subfolders)
+    if (!file.path.startsWith(folderPath)) {
+      return;
+    }
+
+    this.pendingSyncFiles.add(file.path);
+    
+    // Debounce the sync operation
+    if (this.syncDebounceTimer) {
+      clearTimeout(this.syncDebounceTimer);
+    }
+    
+    this.syncDebounceTimer = setTimeout(async () => {
+      await this.syncToAirtable();
+    }, 2000); // 2 second debounce
+  }
+
+  /**
+   * Syncs pending file changes back to Airtable.
+   * Extracts field changes from frontmatter and sends updates via API.
+   */
+  async syncToAirtable() {
+    if (!this.settings.bidirectionalSync) {
+      return;
+    }
+
+    if (this.pendingSyncFiles.size === 0) {
+      return;
+    }
+
+    const statusBarItem = this.addStatusBarItem();
+    let syncedCount = 0;
+    let errorCount = 0;
+    
+    try {
+      statusBarItem.setText("Auto Note Importer: Syncing to Airtable...");
+      
+      for (const filePath of this.pendingSyncFiles) {
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        
+        if (!(file instanceof TFile)) {
+          this.pendingSyncFiles.delete(filePath);
+          continue;
+        }
+
+        try {
+          const result = await this.syncFileToAirtable(file);
+          if (result.success) {
+            syncedCount++;
+          } else {
+            errorCount++;
+            new Notice(`Auto Note Importer: ❌ Failed to sync ${file.name}: ${result.error}`);
+          }
+        } catch (error: any) {
+          errorCount++;
+          new Notice(`Auto Note Importer: ❌ Error syncing ${file.name}: ${error.message}`);
+        }
+        
+        this.pendingSyncFiles.delete(filePath);
+      }
+      
+      statusBarItem.remove();
+      
+      if (syncedCount > 0 || errorCount > 0) {
+        const message = `Auto Note Importer: ✅ Synced ${syncedCount} to Airtable${errorCount > 0 ? ` (${errorCount} errors)` : ''}`;
+        new Notice(message);
+      }
+    } catch (error: any) {
+      statusBarItem.remove();
+      new Notice(`Auto Note Importer: ❌ Sync to Airtable failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Syncs a single file's changes back to Airtable.
+   * @param file The file to sync
+   * @returns Promise<SyncResult>
+   */
+  async syncFileToAirtable(file: TFile): Promise<SyncResult> {
+    try {
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      
+      if (!frontmatter || !frontmatter.primaryField) {
+        return {
+          success: false,
+          recordId: '',
+          updatedFields: {},
+          error: 'No primaryField found in frontmatter'
+        };
+      }
+
+      const recordId = frontmatter.primaryField;
+      
+      // Extract fields that should be synced back to Airtable
+      const fieldsToSync: Record<string, any> = {};
+      
+      // Get all frontmatter fields except system fields
+      const systemFields = ['primaryField'];
+      for (const [key, value] of Object.entries(frontmatter)) {
+        if (!systemFields.includes(key) && value !== null && value !== undefined) {
+          fieldsToSync[key] = value;
+        }
+      }
+      
+      if (Object.keys(fieldsToSync).length === 0) {
+        return {
+          success: true,
+          recordId,
+          updatedFields: {},
+        };
+      }
+
+      // Handle conflicts if enabled
+      if (this.settings.conflictResolution !== 'obsidian-wins') {
+        const conflicts = await this.detectConflicts(recordId, fieldsToSync, file.path);
+        if (conflicts.length > 0) {
+          return await this.handleConflicts(conflicts, fieldsToSync, recordId);
+        }
+      }
+
+      return await updateAirtableRecord(this.settings, recordId, fieldsToSync);
+    } catch (error: any) {
+      return {
+        success: false,
+        recordId: '',
+        updatedFields: {},
+        error: error.message || 'Unknown error occurred'
+      };
+    }
+  }
+
+  /**
+   * Detects conflicts between Obsidian and Airtable field values.
+   * @param recordId The Airtable record ID
+   * @param obsidianFields The fields from Obsidian
+   * @param filePath The file path for reference
+   * @returns Promise<ConflictInfo[]>
+   */
+  async detectConflicts(recordId: string, obsidianFields: Record<string, any>, filePath: string): Promise<ConflictInfo[]> {
+    try {
+      // Fetch current Airtable record to compare values
+      const url = `https://api.airtable.com/v0/${this.settings.baseId}/${this.settings.tableId}/${recordId}`;
+      const response = await requestUrl({
+        url: url,
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${this.settings.apiKey}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (response.status !== 200) {
+        // If we can't fetch the record, assume no conflicts
+        return [];
+      }
+
+      const airtableRecord = response.json;
+      const conflicts: ConflictInfo[] = [];
+
+      for (const [field, obsidianValue] of Object.entries(obsidianFields)) {
+        const airtableValue = airtableRecord.fields[field];
+        
+        // Compare values (simple comparison for now)
+        if (airtableValue !== undefined && !this.areValuesEqual(obsidianValue, airtableValue)) {
+          conflicts.push({
+            field,
+            obsidianValue,
+            airtableValue,
+            recordId,
+            filePath
+          });
+        }
+      }
+
+      return conflicts;
+    } catch (error) {
+      // If conflict detection fails, assume no conflicts
+      return [];
+    }
+  }
+
+  /**
+   * Handles detected conflicts based on the conflict resolution strategy.
+   * @param conflicts Array of detected conflicts
+   * @param fieldsToSync The fields that were to be synced
+   * @param recordId The record ID
+   * @returns Promise<SyncResult>
+   */
+  async handleConflicts(conflicts: ConflictInfo[], fieldsToSync: Record<string, any>, recordId: string): Promise<SyncResult> {
+    switch (this.settings.conflictResolution) {
+      case 'airtable-wins': {
+        // Don't sync conflicted fields, only sync non-conflicted ones
+        const nonConflictedFields: Record<string, any> = {};
+        const conflictedFieldNames = new Set(conflicts.map(c => c.field));
+        
+        for (const [field, value] of Object.entries(fieldsToSync)) {
+          if (!conflictedFieldNames.has(field)) {
+            nonConflictedFields[field] = value;
+          }
+        }
+        
+        if (Object.keys(nonConflictedFields).length > 0) {
+          return await updateAirtableRecord(this.settings, recordId, nonConflictedFields);
+        } else {
+          return {
+            success: true,
+            recordId,
+            updatedFields: {},
+          };
+        }
+      }
+
+      case 'manual': {
+        // Show conflict notification and don't sync
+        const conflictFields = conflicts.map(c => c.field).join(', ');
+        new Notice(`Auto Note Importer: ⚠️ Conflicts detected in fields: ${conflictFields}. Please resolve manually.`);
+        return {
+          success: false,
+          recordId,
+          updatedFields: {},
+          error: `Conflicts detected in fields: ${conflictFields}`
+        };
+      }
+
+      default:
+        // This shouldn't happen, but fallback to obsidian-wins
+        return await updateAirtableRecord(this.settings, recordId, fieldsToSync);
+    }
+  }
+
+  /**
+   * Compares two values for equality, handling different data types.
+   * @param value1 First value to compare
+   * @param value2 Second value to compare
+   * @returns boolean indicating if values are equal
+   */
+  areValuesEqual(value1: any, value2: any): boolean {
+    // Handle null/undefined
+    if (value1 == null && value2 == null) return true;
+    if (value1 == null || value2 == null) return false;
+    
+    // Handle arrays
+    if (Array.isArray(value1) && Array.isArray(value2)) {
+      if (value1.length !== value2.length) return false;
+      return value1.every((item, index) => this.areValuesEqual(item, value2[index]));
+    }
+    
+    // Handle objects
+    if (typeof value1 === 'object' && typeof value2 === 'object') {
+      const keys1 = Object.keys(value1);
+      const keys2 = Object.keys(value2);
+      if (keys1.length !== keys2.length) return false;
+      return keys1.every(key => this.areValuesEqual(value1[key], value2[key]));
+    }
+    
+    // Handle primitive values
+    return String(value1).trim() === String(value2).trim();
   }
 }

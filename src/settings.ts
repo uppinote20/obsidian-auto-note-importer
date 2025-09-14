@@ -81,6 +81,9 @@ export interface AutoNoteImporterSettings {
   allowOverwrite: boolean;
   filenameFieldName: string;
   subfolderFieldName: string;
+  bidirectionalSync: boolean;
+  conflictResolution: 'obsidian-wins' | 'airtable-wins' | 'manual';
+  watchForChanges: boolean;
 }
 
 // Default values for the plugin settings.
@@ -94,6 +97,9 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   allowOverwrite: false,
   filenameFieldName: "title",
   subfolderFieldName: "",
+  bidirectionalSync: false,
+  conflictResolution: 'manual',
+  watchForChanges: true,
 };
 
 // Represents the settings tab for the Auto Note Importer plugin in Obsidian's settings panel.
@@ -406,5 +412,42 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           this.plugin.settings.allowOverwrite = value;
           await this.plugin.saveSettings();
         }));
+
+    // Bidirectional Sync Settings
+    new Setting(containerEl)
+      .setName("Enable bidirectional sync")
+      .setDesc("When enabled, changes made in Obsidian will be synced back to Airtable. This allows formulas and relations to be computed in Airtable and synced back.")
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.bidirectionalSync)
+        .onChange(async (value) => {
+          this.plugin.settings.bidirectionalSync = value;
+          await this.plugin.saveSettings();
+          this.debounceDisplay();
+        }));
+
+    if (this.plugin.settings.bidirectionalSync) {
+      new Setting(containerEl)
+        .setName("Conflict resolution")
+        .setDesc("How to handle conflicts when the same field is modified in both Obsidian and Airtable.")
+        .addDropdown(dropdown => dropdown
+          .addOption('manual', 'Manual resolution (show conflicts)')
+          .addOption('obsidian-wins', 'Obsidian wins (overwrite Airtable)')
+          .addOption('airtable-wins', 'Airtable wins (overwrite Obsidian)')
+          .setValue(this.plugin.settings.conflictResolution)
+          .onChange(async (value: 'obsidian-wins' | 'airtable-wins' | 'manual') => {
+            this.plugin.settings.conflictResolution = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName("Watch for file changes")
+        .setDesc("Automatically detect and sync changes made to notes in Obsidian.")
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.watchForChanges)
+          .onChange(async (value) => {
+            this.plugin.settings.watchForChanges = value;
+            await this.plugin.saveSettings();
+          }));
+    }
   }
 }

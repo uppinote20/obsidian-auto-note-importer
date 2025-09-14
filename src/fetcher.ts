@@ -7,6 +7,21 @@ export interface RemoteNote {
   fields: Record<string, any>;
 }
 
+export interface SyncResult {
+  success: boolean;
+  recordId: string;
+  updatedFields: Record<string, any>;
+  error?: string;
+}
+
+export interface ConflictInfo {
+  field: string;
+  obsidianValue: any;
+  airtableValue: any;
+  recordId: string;
+  filePath: string;
+}
+
 /**
  * Fetches notes from a specified Airtable base and table using the provided API key.
  * Handles pagination automatically to retrieve all records.
@@ -66,4 +81,73 @@ export async function fetchNotes(settings: AutoNoteImporterSettings): Promise<Re
   } while (offset);
 
   return allNotes;
+}
+
+/**
+ * Updates a record in Airtable with new field values.
+ * @param settings The plugin settings containing Airtable credentials
+ * @param recordId The Airtable record ID to update
+ * @param fields The fields to update with their new values
+ * @returns A Promise that resolves to a SyncResult object
+ */
+export async function updateAirtableRecord(
+  settings: AutoNoteImporterSettings, 
+  recordId: string, 
+  fields: Record<string, any>
+): Promise<SyncResult> {
+  const { apiKey, baseId, tableId } = settings;
+
+  if (!apiKey || !baseId || !tableId) {
+    return {
+      success: false,
+      recordId,
+      updatedFields: {},
+      error: "Airtable API key, base ID, and table ID must be set."
+    };
+  }
+
+  try {
+    const url = `https://api.airtable.com/v0/${baseId}/${tableId}/${recordId}`;
+    const response = await requestUrl({
+      url: url,
+      method: "PATCH",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fields: fields
+      })
+    });
+    
+    if (response.status !== 200) {
+      let errorDetails = `HTTP ${response.status}`;
+      try {
+        const errorJson = response.json;
+        errorDetails += `: ${errorJson?.error?.message || JSON.stringify(errorJson)}`;
+      } catch (e) {
+        // Ignore if response body isn't valid JSON
+      }
+      return {
+        success: false,
+        recordId,
+        updatedFields: {},
+        error: `Failed to update Airtable record: ${errorDetails}`
+      };
+    }
+
+    const json = response.json;
+    return {
+      success: true,
+      recordId: json.id,
+      updatedFields: json.fields,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      recordId,
+      updatedFields: {},
+      error: error.message || "Unknown error occurred while updating Airtable record"
+    };
+  }
 }
