@@ -135,7 +135,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
     const primaryField = new Set<string>();
 
     if (folder instanceof TFolder) {
-      await this.scanFolderRecursively(folder, primaryField);
+      await this.scanFolderRecursively(folder, primaryField, 0, 10); // Max depth of 10
     }
     return primaryField;
   }
@@ -144,8 +144,14 @@ export default class AutoNoteImporterPlugin extends Plugin {
    * Recursively scans a folder and its subfolders for markdown files with primaryField frontmatter.
    * @param folder The folder to scan
    * @param primaryField The Set to add found primaryField values to
+   * @param currentDepth Current recursion depth
+   * @param maxDepth Maximum recursion depth to prevent infinite loops
    */
-  private async scanFolderRecursively(folder: TFolder, primaryField: Set<string>): Promise<void> {
+  private async scanFolderRecursively(folder: TFolder, primaryField: Set<string>, currentDepth = 0, maxDepth = 10): Promise<void> {
+    if (currentDepth >= maxDepth) {
+      return; // Prevent excessive recursion
+    }
+
     for (const file of folder.children) {
       if (file instanceof TFile && file.extension === "md") {
         const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
@@ -153,8 +159,8 @@ export default class AutoNoteImporterPlugin extends Plugin {
           primaryField.add(String(frontmatter.primaryField));
         }
       } else if (file instanceof TFolder) {
-        // Recursively scan subfolders
-        await this.scanFolderRecursively(file, primaryField);
+        // Recursively scan subfolders with depth tracking
+        await this.scanFolderRecursively(file, primaryField, currentDepth + 1, maxDepth);
       }
     }
   }
@@ -223,7 +229,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
           const templateContent = await this.app.vault.read(templateFile);
           content = parseTemplate(templateContent, note);
         } catch (templateError) {
-          new Notice("Auto Note Importer: ❌ Error using template. Using default format.");
+          new Notice(`Auto Note Importer: ❌ Template error: ${templateError.message || 'Unknown error'}. Using default format.`);
           content = buildMarkdownContent(note);
         }
       } else {
@@ -249,17 +255,23 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
     if (!hasPrimaryFieldKey) {
       if (match) {
-        // Frontmatter exists, but primaryField key is missing. Inject it.
-        // Find the end of the frontmatter block (second '---')
-        const endFrontmatterIndex = content.indexOf('---', 3);
-        if (endFrontmatterIndex !== -1) {
-            // Insert the primaryField line just before the closing '---'
-            const insertionPoint = content.lastIndexOf('\n', endFrontmatterIndex -1) + 1;
-            content = content.slice(0, insertionPoint) + primaryFieldYamlLine + content.slice(insertionPoint);
+        // Frontmatter exists, but primaryField key is missing. Inject it safely.
+        const frontmatterEnd = content.indexOf('\n---\n', 4);
+        if (frontmatterEnd !== -1) {
+          // Well-formed frontmatter: insert before closing ---
+          content = content.slice(0, frontmatterEnd) + '\n' + primaryFieldYamlLine.trim() + content.slice(frontmatterEnd);
         } else {
-          // Malformed frontmatter (only opening '---')? Append after opening line.
-          content = content.slice(0, 3) + '\n' + primaryFieldYamlLine + content.slice(3);
-      
+          // Try alternative frontmatter ending patterns
+          const altEnd = content.indexOf('\n---', 4);
+          if (altEnd !== -1) {
+            content = content.slice(0, altEnd) + '\n' + primaryFieldYamlLine.trim() + content.slice(altEnd);
+          } else {
+            // Malformed frontmatter: add after opening line
+            const firstNewline = content.indexOf('\n', 3);
+            if (firstNewline !== -1) {
+              content = content.slice(0, firstNewline + 1) + primaryFieldYamlLine + content.slice(firstNewline + 1);
+            }
+          }
         }
       } else {
         // No frontmatter exists. Create a new frontmatter block at the beginning.

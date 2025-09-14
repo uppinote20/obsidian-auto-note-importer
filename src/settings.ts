@@ -99,6 +99,11 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
 // Represents the settings tab for the Auto Note Importer plugin in Obsidian's settings panel.
 export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: AutoNoteImporterPlugin;
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private cachedBases: {id: string, name: string}[] | null = null;
+  private cachedTables: Map<string, {id: string, name: string}[]> = new Map();
+  private cachedFields: Map<string, AirtableField[]> = new Map();
+  private lastApiKey = "";
 
   // Creates an instance of the setting tab.
   constructor(app: App, plugin: AutoNoteImporterPlugin) {
@@ -106,7 +111,35 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  private debounceDisplay(delay = 100) {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => {
+      this.display();
+    }, delay);
+  }
+
+  private clearCacheIfApiKeyChanged(currentApiKey: string) {
+    if (this.lastApiKey !== currentApiKey) {
+      this.cachedBases = null;
+      this.cachedTables.clear();
+      this.cachedFields.clear();
+      this.lastApiKey = currentApiKey;
+    }
+  }
+
+  private getCacheKey(baseId: string, tableId: string): string {
+    return `${baseId}-${tableId}`;
+  }
+
   async fetchBases(apiKey: string): Promise<{id: string, name: string}[]> {
+    this.clearCacheIfApiKeyChanged(apiKey);
+
+    if (this.cachedBases) {
+      return this.cachedBases;
+    }
+
     const response = await requestUrl({
       url: "https://api.airtable.com/v0/meta/bases",
       method: "GET",
@@ -118,10 +151,17 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     const json = response.json;
-    return json.bases.map((b: any) => ({ id: b.id, name: b.name }));
+    this.cachedBases = json.bases.map((b: any) => ({ id: b.id, name: b.name }));
+    return this.cachedBases;
   }
 
   async fetchTables(apiKey: string, baseId: string): Promise<{id: string, name: string}[]> {
+    this.clearCacheIfApiKeyChanged(apiKey);
+
+    if (this.cachedTables.has(baseId)) {
+      return this.cachedTables.get(baseId)!;
+    }
+
     const response = await requestUrl({
       url: `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
       method: "GET",
@@ -133,10 +173,19 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     const json = response.json;
-    return json.tables.map((t: any) => ({ id: t.id, name: t.name }));
+    const tables = json.tables.map((t: any) => ({ id: t.id, name: t.name }));
+    this.cachedTables.set(baseId, tables);
+    return tables;
   }
 
   async fetchTableFields(apiKey: string, baseId: string, tableId: string): Promise<AirtableField[]> {
+    this.clearCacheIfApiKeyChanged(apiKey);
+
+    const cacheKey = this.getCacheKey(baseId, tableId);
+    if (this.cachedFields.has(cacheKey)) {
+      return this.cachedFields.get(cacheKey)!;
+    }
+
     const response = await requestUrl({
       url: `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
       method: "GET",
@@ -149,17 +198,20 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     const json = response.json;
     const table = json.tables.find((t: any) => t.id === tableId);
-    
+
     if (!table) {
       throw new Error(`Table with ID ${tableId} not found`);
     }
 
-    return table.fields.map((f: any) => ({
+    const fields = table.fields.map((f: any) => ({
       id: f.id,
       name: f.name,
       type: f.type,
       description: f.description
     }));
+
+    this.cachedFields.set(cacheKey, fields);
+    return fields;
   }
 
   isFieldTypeSupported(fieldType: string): boolean {
@@ -181,7 +233,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.apiKey = value;
             await this.plugin.saveSettings();
-            this.display();
+            this.debounceDisplay();
           });
         text.inputEl.type = 'password';
       });
@@ -202,7 +254,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               this.plugin.settings.baseId = value;
               this.plugin.settings.tableId = "";
               await this.plugin.saveSettings();
-              this.display();
+              this.debounceDisplay();
             });
           } catch (error) {
             new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable bases. ${error.message || 'Check PAT or network.'}`);
@@ -224,7 +276,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               dropdown.onChange(async (value) => {
                 this.plugin.settings.tableId = value;
                 await this.plugin.saveSettings();
-                this.display();
+                this.debounceDisplay();
               });
             } catch (error) {
               new Notice(`Auto Note Importer: ❌ Failed to fetch Airtable tables. ${error.message || 'Check base ID or network.'}`);
