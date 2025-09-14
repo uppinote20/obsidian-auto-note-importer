@@ -151,8 +151,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     const json = response.json;
-    this.cachedBases = json.bases.map((b: any) => ({ id: b.id, name: b.name }));
-    return this.cachedBases;
+    return this.cachedBases = json.bases.map((b: any) => ({ id: b.id, name: b.name }));
   }
 
   async fetchTables(apiKey: string, baseId: string): Promise<{id: string, name: string}[]> {
