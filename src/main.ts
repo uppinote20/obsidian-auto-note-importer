@@ -174,9 +174,8 @@ export default class AutoNoteImporterPlugin extends Plugin {
     if (this.settings.filenameFieldName && note.fields.hasOwnProperty(this.settings.filenameFieldName)) {
       rawFilenameValue = note.fields[this.settings.filenameFieldName];
     } else {
-      // Fallback to the first field value for filename
-      const firstFieldName = Object.keys(note.fields)[0];
-      rawFilenameValue = firstFieldName ? note.fields[firstFieldName] : note.primaryField;
+      // Fallback to primaryField (Airtable record ID) for safe, unique filename
+      rawFilenameValue = note.primaryField;
     }
   
     let potentialTitle = String(rawFilenameValue ?? "").trim();
