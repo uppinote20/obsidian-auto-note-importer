@@ -151,3 +151,85 @@ export async function updateAirtableRecord(
     };
   }
 }
+
+/**
+ * Batch updates multiple records in Airtable for better performance.
+ * @param settings The plugin settings containing Airtable credentials
+ * @param updates Array of record updates (max 10 per batch)
+ * @returns A Promise that resolves to an array of SyncResult objects
+ */
+export async function batchUpdateAirtableRecords(
+  settings: AutoNoteImporterSettings,
+  updates: Array<{ recordId: string; fields: Record<string, any> }>
+): Promise<SyncResult[]> {
+  const { apiKey, baseId, tableId } = settings;
+
+  if (!apiKey || !baseId || !tableId) {
+    return updates.map(update => ({
+      success: false,
+      recordId: update.recordId,
+      updatedFields: {},
+      error: "Airtable API key, base ID, and table ID must be set."
+    }));
+  }
+
+  if (updates.length === 0) {
+    return [];
+  }
+
+  // Airtable supports max 10 records per batch
+  if (updates.length > 10) {
+    throw new Error("Maximum 10 records allowed per batch update");
+  }
+
+  try {
+    const url = `https://api.airtable.com/v0/${baseId}/${tableId}`;
+    const records = updates.map(update => ({
+      id: update.recordId,
+      fields: update.fields
+    }));
+
+    const response = await requestUrl({
+      url: url,
+      method: "PATCH",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        records: records
+      })
+    });
+    
+    if (response.status !== 200) {
+      let errorDetails = `HTTP ${response.status}`;
+      try {
+        const errorJson = response.json;
+        errorDetails += `: ${errorJson?.error?.message || JSON.stringify(errorJson)}`;
+      } catch (e) {
+        // Ignore if response body isn't valid JSON
+      }
+      
+      return updates.map(update => ({
+        success: false,
+        recordId: update.recordId,
+        updatedFields: {},
+        error: `Failed to batch update Airtable records: ${errorDetails}`
+      }));
+    }
+
+    const json = response.json;
+    return json.records.map((record: any) => ({
+      success: true,
+      recordId: record.id,
+      updatedFields: record.fields,
+    }));
+  } catch (error: any) {
+    return updates.map(update => ({
+      success: false,
+      recordId: update.recordId,
+      updatedFields: {},
+      error: error.message || "Unknown error occurred while batch updating Airtable records"
+    }));
+  }
+}
