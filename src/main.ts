@@ -1,6 +1,6 @@
 import { Plugin, TFile, TFolder, normalizePath, Notice, requestUrl } from "obsidian";
 import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab } from "./settings";
-import { fetchNotes, RemoteNote, updateAirtableRecord, SyncResult, ConflictInfo } from "./fetcher";
+import { fetchNotes, RemoteNote, updateAirtableRecord, SyncResult, ConflictInfo, batchUpdateAirtableRecords } from "./fetcher";
 import { buildMarkdownContent, parseTemplate } from "./note-builder";
 // import { sanitizeFileName } from "./utils";
 import { sanitizeFileName, formatYamlValue, sanitizeFolderPath } from "./utils";
@@ -20,6 +20,13 @@ export default class AutoNoteImporterPlugin extends Plugin {
   pendingSyncFiles: Set<string> = new Set();
   // Debounce timer for file changes to avoid excessive API calls
   syncDebounceTimer: NodeJS.Timeout | null = null;
+  // Flag to prevent concurrent sync operations
+  isSyncing = false;
+  // Rate limiter for API requests
+  private rateLimiter = {
+    lastRequest: 0,
+    minInterval: 200, // 200ms minimum between requests
+  };
 
   // When plugin loaded
   async onload() {
@@ -31,8 +38,17 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: "sync-notes-now",
       name: "Sync notes now",
       callback: async () => {
+        if (this.isSyncing) {
+          new Notice("Auto Note Importer: ⏳ Sync already in progress...");
+          return;
+        }
         new Notice("Auto Note Importer: 🚀 Starting sync...");
-        await this.syncNotes();
+        this.isSyncing = true;
+        try {
+          await this.syncNotes();
+        } finally {
+          this.isSyncing = false;
+        }
       }
     });
 
@@ -45,8 +61,17 @@ export default class AutoNoteImporterPlugin extends Plugin {
           new Notice("Auto Note Importer: ❌ Bidirectional sync is disabled in settings.");
           return;
         }
+        if (this.isSyncing) {
+          new Notice("Auto Note Importer: ⏳ Sync already in progress...");
+          return;
+        }
         new Notice("Auto Note Importer: 🔄 Syncing changes to Airtable...");
-        await this.syncToAirtable();
+        this.isSyncing = true;
+        try {
+          await this.syncToAirtable();
+        } finally {
+          this.isSyncing = false;
+        }
       }
     });
 
@@ -362,7 +387,14 @@ export default class AutoNoteImporterPlugin extends Plugin {
     }
     
     this.syncDebounceTimer = setTimeout(async () => {
-      await this.syncToAirtable();
+      if (!this.isSyncing) {
+        this.isSyncing = true;
+        try {
+          await this.syncToAirtable();
+        } finally {
+          this.isSyncing = false;
+        }
+      }
     }, 2000); // 2 second debounce
   }
 
@@ -379,12 +411,19 @@ export default class AutoNoteImporterPlugin extends Plugin {
       return;
     }
 
+    // Clean up non-existent files first to prevent memory leak
+    this.cleanupPendingSyncFiles();
+
     const statusBarItem = this.addStatusBarItem();
     let syncedCount = 0;
     let errorCount = 0;
     
     try {
-      statusBarItem.setText("Auto Note Importer: Syncing to Airtable...");
+      statusBarItem.setText("Auto Note Importer: Preparing batch sync...");
+      
+      // Collect all updates for batch processing
+      const batchUpdates: Array<{ recordId: string; fields: Record<string, any>; filePath: string }> = [];
+      const filesToProcess: TFile[] = [];
       
       for (const filePath of this.pendingSyncFiles) {
         const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -393,22 +432,51 @@ export default class AutoNoteImporterPlugin extends Plugin {
           this.pendingSyncFiles.delete(filePath);
           continue;
         }
-
+        
         try {
-          const result = await this.syncFileToAirtable(file);
-          if (result.success) {
-            syncedCount++;
-          } else {
-            errorCount++;
-            new Notice(`Auto Note Importer: ❌ Failed to sync ${file.name}: ${result.error}`);
+          const updateData = await this.prepareFileForSync(file);
+          if (updateData) {
+            batchUpdates.push({
+              recordId: updateData.recordId,
+              fields: updateData.fields,
+              filePath: file.path
+            });
+            filesToProcess.push(file);
           }
         } catch (error: any) {
           errorCount++;
-          new Notice(`Auto Note Importer: ❌ Error syncing ${file.name}: ${error.message}`);
+          new Notice(`Auto Note Importer: ❌ Error preparing ${file.name}: ${error.message}`);
         }
-        
-        this.pendingSyncFiles.delete(filePath);
       }
+      
+      // Process updates in batches of 10 (Airtable limit)
+      const batchSize = 10;
+      for (let i = 0; i < batchUpdates.length; i += batchSize) {
+        const batch = batchUpdates.slice(i, i + batchSize);
+        statusBarItem.setText(`Auto Note Importer: Syncing batch ${Math.floor(i / batchSize) + 1}...`);
+        
+        try {
+          const results = await this.makeRateLimitedRequest(() => 
+            batchUpdateAirtableRecords(this.settings, batch)
+          );
+          
+          results.forEach((result, index) => {
+            if (result.success) {
+              syncedCount++;
+            } else {
+              errorCount++;
+              const fileName = filesToProcess[i + index]?.name || 'unknown';
+              new Notice(`Auto Note Importer: ❌ Failed to sync ${fileName}: ${result.error}`);
+            }
+          });
+        } catch (error: any) {
+          errorCount += batch.length;
+          new Notice(`Auto Note Importer: ❌ Batch sync failed: ${error.message}`);
+        }
+      }
+      
+      // Clear all processed files
+      this.pendingSyncFiles.clear();
       
       statusBarItem.remove();
       
@@ -419,6 +487,42 @@ export default class AutoNoteImporterPlugin extends Plugin {
     } catch (error: any) {
       statusBarItem.remove();
       new Notice(`Auto Note Importer: ❌ Sync to Airtable failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Prepares a file for batch sync by extracting record ID and fields.
+   * @param file The file to prepare
+   * @returns Promise with recordId and fields, or null if file can't be synced
+   */
+  async prepareFileForSync(file: TFile): Promise<{ recordId: string; fields: Record<string, any> } | null> {
+    try {
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      
+      if (!frontmatter || !frontmatter.primaryField) {
+        return null;
+      }
+
+      const recordId = frontmatter.primaryField;
+      
+      // Extract fields that should be synced back to Airtable
+      const fieldsToSync: Record<string, any> = {};
+      
+      // Get all frontmatter fields except system fields
+      const systemFields = ['primaryField'];
+      for (const [key, value] of Object.entries(frontmatter)) {
+        if (!systemFields.includes(key) && value !== null && value !== undefined) {
+          fieldsToSync[key] = value;
+        }
+      }
+      
+      if (Object.keys(fieldsToSync).length === 0) {
+        return null;
+      }
+
+      return { recordId, fields: fieldsToSync };
+    } catch (error: any) {
+      throw new Error(`Failed to prepare file for sync: ${error.message}`);
     }
   }
 
@@ -461,15 +565,22 @@ export default class AutoNoteImporterPlugin extends Plugin {
         };
       }
 
-      // Handle conflicts if enabled
-      if (this.settings.conflictResolution !== 'obsidian-wins') {
-        const conflicts = await this.detectConflicts(recordId, fieldsToSync, file.path);
-        if (conflicts.length > 0) {
-          return await this.handleConflicts(conflicts, fieldsToSync, recordId);
-        }
+      // Skip conflict detection if obsidian-wins is selected (performance optimization)
+      if (this.settings.conflictResolution === 'obsidian-wins') {
+        return await this.makeRateLimitedRequest(() => 
+          updateAirtableRecord(this.settings, recordId, fieldsToSync)
+        );
       }
 
-      return await updateAirtableRecord(this.settings, recordId, fieldsToSync);
+      // Handle conflicts for other resolution modes
+      const conflicts = await this.detectConflicts(recordId, fieldsToSync, file.path);
+      if (conflicts.length > 0) {
+        return await this.handleConflicts(conflicts, fieldsToSync, recordId);
+      }
+
+      return await this.makeRateLimitedRequest(() => 
+        updateAirtableRecord(this.settings, recordId, fieldsToSync)
+      );
     } catch (error: any) {
       return {
         success: false,
@@ -489,16 +600,16 @@ export default class AutoNoteImporterPlugin extends Plugin {
    */
   async detectConflicts(recordId: string, obsidianFields: Record<string, any>, filePath: string): Promise<ConflictInfo[]> {
     try {
-      // Fetch current Airtable record to compare values
+      // Fetch current Airtable record to compare values (with rate limiting)
       const url = `https://api.airtable.com/v0/${this.settings.baseId}/${this.settings.tableId}/${recordId}`;
-      const response = await requestUrl({
+      const response = await this.makeRateLimitedRequest(() => requestUrl({
         url: url,
         method: "GET",
         headers: {
           "Authorization": `Bearer ${this.settings.apiKey}`,
           "Content-Type": "application/json",
         },
-      });
+      }));
 
       if (response.status !== 200) {
         // If we can't fetch the record, assume no conflicts
@@ -524,8 +635,8 @@ export default class AutoNoteImporterPlugin extends Plugin {
       }
 
       return conflicts;
-    } catch (error) {
-      // If conflict detection fails, assume no conflicts
+    } catch (error: any) {
+      new Notice(`Auto Note Importer: ⚠️ Unable to check for conflicts: ${error.message || 'Unknown error'}. Proceeding with sync.`);
       return [];
     }
   }
@@ -550,8 +661,16 @@ export default class AutoNoteImporterPlugin extends Plugin {
           }
         }
         
+        // Notify user about ignored conflicts
+        if (conflicts.length > 0) {
+          const conflictFields = conflicts.map(c => c.field).join(', ');
+          new Notice(`Auto Note Importer: ⚠️ Conflicted fields ignored (Airtable wins): ${conflictFields}`);
+        }
+        
         if (Object.keys(nonConflictedFields).length > 0) {
-          return await updateAirtableRecord(this.settings, recordId, nonConflictedFields);
+          return await this.makeRateLimitedRequest(() => 
+            updateAirtableRecord(this.settings, recordId, nonConflictedFields)
+          );
         } else {
           return {
             success: true,
@@ -575,7 +694,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
       default:
         // This shouldn't happen, but fallback to obsidian-wins
-        return await updateAirtableRecord(this.settings, recordId, fieldsToSync);
+        return await this.makeRateLimitedRequest(() => 
+          updateAirtableRecord(this.settings, recordId, fieldsToSync)
+        );
     }
   }
 
@@ -606,5 +727,41 @@ export default class AutoNoteImporterPlugin extends Plugin {
     
     // Handle primitive values
     return String(value1).trim() === String(value2).trim();
+  }
+
+  /**
+   * Cleans up non-existent files from pendingSyncFiles to prevent memory leaks.
+   */
+  private cleanupPendingSyncFiles(): void {
+    const filesToRemove: string[] = [];
+    
+    for (const filePath of this.pendingSyncFiles) {
+      const file = this.app.vault.getAbstractFileByPath(filePath);
+      if (!(file instanceof TFile)) {
+        filesToRemove.push(filePath);
+      }
+    }
+    
+    filesToRemove.forEach(filePath => {
+      this.pendingSyncFiles.delete(filePath);
+    });
+  }
+
+  /**
+   * Makes a rate-limited request to prevent overwhelming the Airtable API.
+   * @param requestFn Function that makes the actual request
+   * @returns Promise resolving to the request result
+   */
+  private async makeRateLimitedRequest<T>(requestFn: () => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.rateLimiter.lastRequest;
+    
+    if (timeSinceLastRequest < this.rateLimiter.minInterval) {
+      const delay = this.rateLimiter.minInterval - timeSinceLastRequest;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    
+    this.rateLimiter.lastRequest = Date.now();
+    return await requestFn();
   }
 }
