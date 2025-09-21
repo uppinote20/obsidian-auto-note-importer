@@ -214,7 +214,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   isFieldTypeSupported(fieldType: string): boolean {
-    return SUPPORTED_FIELD_TYPES.includes(fieldType as any);
+    return SUPPORTED_FIELD_TYPES.includes(fieldType as typeof SUPPORTED_FIELD_TYPES[number]);
+  }
+
+  getCachedFields(cacheKey: string): AirtableField[] | undefined {
+    return this.cachedFields.get(cacheKey);
   }
 
   // Renders the settings UI elements within the container element.
