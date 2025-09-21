@@ -1,6 +1,6 @@
 {
 	"name": "auto-note-importer",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Automatically import notes from an external database like Airtable into your Vault.",
 	"main": "main.js",
 	"scripts": {
