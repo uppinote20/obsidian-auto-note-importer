@@ -92,3 +92,38 @@ export function formatYamlValue(value: unknown): string {
   const escapedValue = strValue.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return `"${escapedValue}"`;
 }
+
+/**
+ * Validates and sanitizes a value for use as a filename.
+ * Returns the sanitized filename if valid, or null if invalid.
+ * @param value The value to validate and sanitize
+ * @returns Sanitized filename string or null if invalid
+ */
+export function validateAndSanitizeFilename(value: unknown): string | null {
+  // Reject null, undefined, or empty values
+  if (value == null) return null;
+
+  // Convert to string and check basic requirements
+  const strValue = String(value).trim();
+  if (!strValue) return null;
+
+  // Check for maximum length before sanitization
+  if (strValue.length > 255) return null;
+
+  // Sanitize the filename
+  const sanitized = sanitizeFileName(strValue);
+
+  // Check if sanitization produced a valid result
+  if (!sanitized || sanitized.trim() === '' || sanitized === '-'.repeat(sanitized.length)) {
+    return null;
+  }
+
+  // Reject reserved names on Windows
+  const reservedNames = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'];
+  const upperSanitized = sanitized.toUpperCase();
+  if (reservedNames.includes(upperSanitized) || reservedNames.some(name => upperSanitized.startsWith(name + '.'))) {
+    return null;
+  }
+
+  return sanitized;
+}

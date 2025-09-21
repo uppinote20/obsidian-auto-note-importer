@@ -3,7 +3,7 @@ import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab 
 import { fetchNotes, RemoteNote } from "./fetcher";
 import { buildMarkdownContent, parseTemplate } from "./note-builder";
 // import { sanitizeFileName } from "./utils";
-import { sanitizeFileName, formatYamlValue, sanitizeFolderPath } from "./utils";
+import { formatYamlValue, sanitizeFolderPath, validateAndSanitizeFilename, sanitizeFileName } from "./utils";
 
 /**
  * The main plugin class for Auto Note Importer.
@@ -16,12 +16,15 @@ export default class AutoNoteImporterPlugin extends Plugin {
   // Holds the ID of the interval timer used for scheduled synchronization.
   // Null if scheduling is disabled or not started.
   intervalId: number | null = null;
+  // Reference to the settings tab for accessing cached field information
+  settingTab: AutoNoteImporterSettingTab;
 
   // When plugin loaded
   async onload() {
 
     await this.loadSettings();
-    this.addSettingTab(new AutoNoteImporterSettingTab(this.app, this));
+    this.settingTab = new AutoNoteImporterSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
     
     this.addCommand({
       id: "sync-notes-now",
@@ -176,19 +179,46 @@ export default class AutoNoteImporterPlugin extends Plugin {
    * @returns A Promise resolving to "created", "updated", or "skipped" based on the action taken.
    */
   async createNoteFromRemote(note: RemoteNote): Promise<"created" | "updated" | "skipped"> {
-    let rawFilenameValue: any;
+    let safeTitle: string;
+
     if (this.settings.filenameFieldName && note.fields.hasOwnProperty(this.settings.filenameFieldName)) {
-      rawFilenameValue = note.fields[this.settings.filenameFieldName];
+      const rawFilenameValue = note.fields[this.settings.filenameFieldName];
+
+      try {
+        // Get field type from cached fields to determine validation approach
+        const cacheKey = `${this.settings.baseId}-${this.settings.tableId}`;
+        const cachedFields = this.settingTab?.getCachedFields(cacheKey);
+        const fieldInfo = cachedFields?.find((f: {name: string; type: string}) => f.name === this.settings.filenameFieldName);
+        const fieldType = fieldInfo?.type;
+
+        if (fieldType === 'formula') {
+          // Apply strict validation only to formula fields
+          const validatedTitle = validateAndSanitizeFilename(rawFilenameValue);
+          if (validatedTitle) {
+            safeTitle = validatedTitle;
+          } else {
+            new Notice(`Auto Note Importer: ⚠️ Invalid filename from Formula field "${this.settings.filenameFieldName}". Using record ID as fallback.`);
+            safeTitle = note.primaryField;
+          }
+        } else {
+          // For other field types, just sanitize without strict validation
+          const sanitizedTitle = sanitizeFileName(String(rawFilenameValue));
+          safeTitle = sanitizedTitle || note.primaryField;
+        }
+      } catch (error) {
+        // Fallback to basic sanitization without console logging
+        const sanitizedTitle = sanitizeFileName(String(rawFilenameValue));
+        safeTitle = sanitizedTitle || note.primaryField;
+      }
     } else {
-      // Fallback to primaryField (Airtable record ID) for safe, unique filename
-      rawFilenameValue = note.primaryField;
+      // Fallback to primaryField (Airtable record ID) - already safe, no sanitization needed
+      safeTitle = note.primaryField;
     }
-  
-    let potentialTitle = String(rawFilenameValue ?? "").trim();
-    if (!potentialTitle) {
-      potentialTitle = note.id;
+
+    // Final fallback if somehow we don't have a title
+    if (!safeTitle || safeTitle.trim() === '') {
+      safeTitle = note.id || 'untitled';
     }
-    const safeTitle = sanitizeFileName(potentialTitle);
     
     // Determine the folder path based on subfolder field settings
     let finalFolderPath = this.settings.folderPath;
