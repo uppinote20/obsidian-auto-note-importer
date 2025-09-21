@@ -3,7 +3,7 @@ import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab 
 import { fetchNotes, RemoteNote } from "./fetcher";
 import { buildMarkdownContent, parseTemplate } from "./note-builder";
 // import { sanitizeFileName } from "./utils";
-import { sanitizeFileName, formatYamlValue, sanitizeFolderPath } from "./utils";
+import { sanitizeFileName, formatYamlValue, sanitizeFolderPath, isValidFilename } from "./utils";
 
 /**
  * The main plugin class for Auto Note Importer.
@@ -179,11 +179,17 @@ export default class AutoNoteImporterPlugin extends Plugin {
     let rawFilenameValue: any;
     if (this.settings.filenameFieldName && note.fields.hasOwnProperty(this.settings.filenameFieldName)) {
       rawFilenameValue = note.fields[this.settings.filenameFieldName];
+
+      // Validate filename for formula fields
+      if (!isValidFilename(rawFilenameValue)) {
+        new Notice(`Auto Note Importer: ⚠️ Invalid filename from field "${this.settings.filenameFieldName}". Using record ID as fallback.`);
+        rawFilenameValue = note.primaryField;
+      }
     } else {
       // Fallback to primaryField (Airtable record ID) for safe, unique filename
       rawFilenameValue = note.primaryField;
     }
-  
+
     let potentialTitle = String(rawFilenameValue ?? "").trim();
     if (!potentialTitle) {
       potentialTitle = note.id;
@@ -196,12 +202,17 @@ export default class AutoNoteImporterPlugin extends Plugin {
     if (this.settings.subfolderFieldName && note.fields.hasOwnProperty(this.settings.subfolderFieldName)) {
       const subfolderValue = note.fields[this.settings.subfolderFieldName];
       if (subfolderValue !== null && subfolderValue !== undefined) {
-        const trimmedValue = String(subfolderValue).trim();
-        if (trimmedValue) {
-          const sanitizedSubfolder = sanitizeFolderPath(trimmedValue);
-          if (sanitizedSubfolder) {
-            finalFolderPath = `${this.settings.folderPath}/${sanitizedSubfolder}`;
+        // Validate subfolder value for formula fields
+        if (isValidFilename(subfolderValue)) {
+          const trimmedValue = String(subfolderValue).trim();
+          if (trimmedValue) {
+            const sanitizedSubfolder = sanitizeFolderPath(trimmedValue);
+            if (sanitizedSubfolder) {
+              finalFolderPath = `${this.settings.folderPath}/${sanitizedSubfolder}`;
+            }
           }
+        } else {
+          new Notice(`Auto Note Importer: ⚠️ Invalid subfolder value from field "${this.settings.subfolderFieldName}". Skipping subfolder organization.`);
         }
       }
     }

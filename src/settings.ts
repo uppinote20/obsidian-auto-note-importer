@@ -68,7 +68,7 @@ export interface AirtableField {
 }
 
 // Supported field types for filename and subfolder selection
-export const SUPPORTED_FIELD_TYPES = ['singleLineText', 'singleSelect', 'number'] as const;
+export const SUPPORTED_FIELD_TYPES = ['singleLineText', 'singleSelect', 'number', 'formula'] as const;
 
 // Defines the structure for the plugin's settings.
 export interface AutoNoteImporterSettings {
@@ -285,7 +285,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         if (this.plugin.settings.tableId) {
           new Setting(containerEl)
             .setName("Filename field")
-            .setDesc("Select the field to use for the note's filename. Only Single line text, Single select, and Number fields are supported. Other field types (Email, URL, Date, Formula, etc.) are not shown to prevent file naming issues.")
+            .setDesc("Select the field to use for the note's filename. Single line text, Single select, Number, and Formula fields are supported. Formula fields are validated for filename compatibility. Other field types are not shown to prevent file naming issues.")
             .addDropdown(async dropdown => {
               try {
                 dropdown.addOption("", "-- Select field --");
@@ -314,7 +314,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
           new Setting(containerEl)
             .setName("Subfolder field")
-            .setDesc("Select the field to use for subfolder organization. Only Single line text, Single select, and Number fields are supported. Leave empty to disable subfolder organization.")
+            .setDesc("Select the field to use for subfolder organization. Single line text, Single select, Number, and Formula fields are supported. Formula fields are validated for filename compatibility. Leave empty to disable subfolder organization.")
             .addDropdown(async dropdown => {
               try {
                 dropdown.addOption("", "-- No subfolder --");
