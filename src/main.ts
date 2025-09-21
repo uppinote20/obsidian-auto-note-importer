@@ -3,7 +3,7 @@ import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab 
 import { fetchNotes, RemoteNote } from "./fetcher";
 import { buildMarkdownContent, parseTemplate } from "./note-builder";
 // import { sanitizeFileName } from "./utils";
-import { sanitizeFileName, formatYamlValue, sanitizeFolderPath, isValidFilename } from "./utils";
+import { formatYamlValue, sanitizeFolderPath, validateAndSanitizeFilename } from "./utils";
 
 /**
  * The main plugin class for Auto Note Importer.
@@ -176,25 +176,30 @@ export default class AutoNoteImporterPlugin extends Plugin {
    * @returns A Promise resolving to "created", "updated", or "skipped" based on the action taken.
    */
   async createNoteFromRemote(note: RemoteNote): Promise<"created" | "updated" | "skipped"> {
-    let rawFilenameValue: any;
-    if (this.settings.filenameFieldName && note.fields.hasOwnProperty(this.settings.filenameFieldName)) {
-      rawFilenameValue = note.fields[this.settings.filenameFieldName];
+    let safeTitle: string;
 
-      // Validate filename for formula fields
-      if (!isValidFilename(rawFilenameValue)) {
+    if (this.settings.filenameFieldName && note.fields.hasOwnProperty(this.settings.filenameFieldName)) {
+      const rawFilenameValue = note.fields[this.settings.filenameFieldName];
+
+      // Try to validate and sanitize the filename value
+      const validatedTitle = validateAndSanitizeFilename(rawFilenameValue);
+
+      if (validatedTitle) {
+        safeTitle = validatedTitle;
+      } else {
         new Notice(`Auto Note Importer: ⚠️ Invalid filename from field "${this.settings.filenameFieldName}". Using record ID as fallback.`);
-        rawFilenameValue = note.primaryField;
+        // primaryField is already safe (Airtable record ID)
+        safeTitle = note.primaryField;
       }
     } else {
-      // Fallback to primaryField (Airtable record ID) for safe, unique filename
-      rawFilenameValue = note.primaryField;
+      // Fallback to primaryField (Airtable record ID) - already safe, no sanitization needed
+      safeTitle = note.primaryField;
     }
 
-    let potentialTitle = String(rawFilenameValue ?? "").trim();
-    if (!potentialTitle) {
-      potentialTitle = note.id;
+    // Final fallback if somehow we don't have a title
+    if (!safeTitle || safeTitle.trim() === '') {
+      safeTitle = note.id || 'untitled';
     }
-    const safeTitle = sanitizeFileName(potentialTitle);
     
     // Determine the folder path based on subfolder field settings
     let finalFolderPath = this.settings.folderPath;
@@ -202,17 +207,12 @@ export default class AutoNoteImporterPlugin extends Plugin {
     if (this.settings.subfolderFieldName && note.fields.hasOwnProperty(this.settings.subfolderFieldName)) {
       const subfolderValue = note.fields[this.settings.subfolderFieldName];
       if (subfolderValue !== null && subfolderValue !== undefined) {
-        // Validate subfolder value for formula fields
-        if (isValidFilename(subfolderValue)) {
-          const trimmedValue = String(subfolderValue).trim();
-          if (trimmedValue) {
-            const sanitizedSubfolder = sanitizeFolderPath(trimmedValue);
-            if (sanitizedSubfolder) {
-              finalFolderPath = `${this.settings.folderPath}/${sanitizedSubfolder}`;
-            }
+        const trimmedValue = String(subfolderValue).trim();
+        if (trimmedValue) {
+          const sanitizedSubfolder = sanitizeFolderPath(trimmedValue);
+          if (sanitizedSubfolder) {
+            finalFolderPath = `${this.settings.folderPath}/${sanitizedSubfolder}`;
           }
-        } else {
-          new Notice(`Auto Note Importer: ⚠️ Invalid subfolder value from field "${this.settings.subfolderFieldName}". Skipping subfolder organization.`);
         }
       }
     }

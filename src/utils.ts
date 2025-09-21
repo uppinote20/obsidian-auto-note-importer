@@ -94,34 +94,36 @@ export function formatYamlValue(value: unknown): string {
 }
 
 /**
- * Validates if a formula field value can be safely used as a filename.
- * Formula fields can contain various data types and values that might not be suitable for filenames.
- * @param value The formula field value to validate
- * @returns true if the value can be safely used as a filename, false otherwise
+ * Validates and sanitizes a value for use as a filename.
+ * Returns the sanitized filename if valid, or null if invalid.
+ * @param value The value to validate and sanitize
+ * @returns Sanitized filename string or null if invalid
  */
-export function isValidFilename(value: unknown): boolean {
+export function validateAndSanitizeFilename(value: unknown): string | null {
   // Reject null, undefined, or empty values
-  if (value == null) return false;
+  if (value == null) return null;
 
   // Convert to string and check basic requirements
   const strValue = String(value).trim();
-  if (!strValue) return false;
+  if (!strValue) return null;
 
-  // Check for minimum and maximum length
-  if (strValue.length < 1 || strValue.length > 255) return false;
+  // Check for maximum length before sanitization
+  if (strValue.length > 255) return null;
 
-  // Reject values that contain only invalid filename characters
+  // Sanitize the filename
   const sanitized = sanitizeFileName(strValue);
+
+  // Check if sanitization produced a valid result
   if (!sanitized || sanitized.trim() === '' || sanitized === '-'.repeat(sanitized.length)) {
-    return false;
+    return null;
   }
 
   // Reject reserved names on Windows
   const reservedNames = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'];
   const upperSanitized = sanitized.toUpperCase();
   if (reservedNames.includes(upperSanitized) || reservedNames.some(name => upperSanitized.startsWith(name + '.'))) {
-    return false;
+    return null;
   }
 
-  return true;
+  return sanitized;
 }
