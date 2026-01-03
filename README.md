@@ -56,13 +56,16 @@ Use Command Palette (Ctrl/Cmd + P) to access sync commands:
 
 | Command | Description |
 |:---|:---|
+| **Sync current note from Airtable** | Refresh current note from Airtable |
 | **Sync all notes from Airtable** | Import/update all notes from Airtable |
-| **Sync current note to Airtable** | Push current note changes to Airtable |
-| **Sync modified notes to Airtable** | Push all pending changes to Airtable |
-| **Sync all notes to Airtable** | Push all notes to Airtable |
-| **Bidirectional sync current note** | Sync to Airtable, then fetch formula results |
-| **Bidirectional sync modified notes** | Sync modified notes with formula refresh |
-| **Bidirectional sync all notes** | Full bidirectional sync with formulas |
+| **Sync current note to Airtable** | Push current note changes to Airtable* |
+| **Sync modified notes to Airtable** | Push all pending changes to Airtable* |
+| **Sync all notes to Airtable** | Push all notes to Airtable* |
+| **Bidirectional sync current note** | Sync to Airtable, then fetch formula results* |
+| **Bidirectional sync modified notes** | Sync modified notes with formula refresh* |
+| **Bidirectional sync all notes** | Full bidirectional sync with formulas* |
+
+*Commands marked with * require **Enable bidirectional sync** to be turned on. They are hidden from Command Palette when disabled.
 
 - **Auto**: Set sync interval in minutes (0 = manual only)
 - **Watch**: Enable file change detection for automatic sync
