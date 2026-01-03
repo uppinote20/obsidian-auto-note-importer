@@ -20,5 +20,9 @@ data.json
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
-etc/*
-BIDIRECTIONAL_SYNC_ROADMAP.md
+
+# Private docs (symlinked)
+.private/
+docs
+.claude
+CLAUDE.md

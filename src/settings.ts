@@ -70,6 +70,24 @@ export interface AirtableField {
 // Supported field types for filename and subfolder selection
 export const SUPPORTED_FIELD_TYPES = ['singleLineText', 'singleSelect', 'number', 'formula'] as const;
 
+// All field types that can be synced (broader than filename-suitable types)
+export const SYNCABLE_FIELD_TYPES = [
+  'singleLineText', 'multilineText', 'richText', 'email', 'url', 'phoneNumber',
+  'singleSelect', 'multipleSelects', 'number', 'currency', 'percent', 'duration',
+  'date', 'dateTime', 'checkbox', 'rating', 'formula', 'rollup',
+  'multipleRecordLinks', 'count', 'lookup', 'createdTime', 'lastModifiedTime',
+  'createdBy', 'lastModifiedBy', 'autoNumber'
+] as const;
+
+// Read-only field types that should only receive updates from Airtable
+export const READ_ONLY_FIELD_TYPES = [
+  'formula', 'rollup', 'count', 'lookup', 'createdTime', 'lastModifiedTime',
+  'createdBy', 'lastModifiedBy', 'autoNumber'
+] as const;
+
+// Sync scope options
+export type SyncScope = 'current' | 'modified' | 'all';
+
 // Defines the structure for the plugin's settings.
 export interface AutoNoteImporterSettings {
   apiKey: string;
@@ -84,6 +102,8 @@ export interface AutoNoteImporterSettings {
   bidirectionalSync: boolean;
   conflictResolution: 'obsidian-wins' | 'airtable-wins' | 'manual';
   watchForChanges: boolean;
+  autoSyncFormulas: boolean; // Automatically fetch formula results after syncing to Airtable
+  formulaSyncDelay: number; // Delay in milliseconds to wait for Airtable formula computation
 }
 
 // Default values for the plugin settings.
@@ -100,6 +120,8 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   bidirectionalSync: false,
   conflictResolution: 'manual',
   watchForChanges: true,
+  autoSyncFormulas: true,
+  formulaSyncDelay: 1500,
 };
 
 // Represents the settings tab for the Auto Note Importer plugin in Obsidian's settings panel.
@@ -448,6 +470,40 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             this.plugin.settings.watchForChanges = value;
             await this.plugin.saveSettings();
           }));
+
+      new Setting(containerEl)
+        .setName("Auto-sync formulas and relations")
+        .setDesc("Automatically fetch computed formula and relation results from Airtable after syncing changes. Enable this to get real-time formula updates.")
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.autoSyncFormulas)
+          .onChange(async (value) => {
+            this.plugin.settings.autoSyncFormulas = value;
+            await this.plugin.saveSettings();
+            this.debounceDisplay();
+          }));
+
+      if (this.plugin.settings.autoSyncFormulas) {
+        new Setting(containerEl)
+          .setName("Formula sync delay (milliseconds)")
+          .setDesc("How long to wait for Airtable to compute formulas before fetching results. Increase if formulas are complex.")
+          .addText(text => {
+            const input = text
+              .setPlaceholder("1500")
+              .setValue(this.plugin.settings.formulaSyncDelay.toString())
+              .onChange(async (value) => {
+                const num = Number(value);
+                if (Number.isNaN(num) || num < 0) {
+                  new Notice("Auto Note Importer: ❌ Formula sync delay must be a positive number.");
+                  return;
+                }
+                this.plugin.settings.formulaSyncDelay = num;
+                await this.plugin.saveSettings();
+              });
+            (input.inputEl as HTMLInputElement).type = "number";
+            (input.inputEl as HTMLInputElement).min = "0";
+            (input.inputEl as HTMLInputElement).step = "100";
+          });
+      }
     }
   }
 }

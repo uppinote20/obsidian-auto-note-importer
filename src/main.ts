@@ -1,5 +1,5 @@
-import { Plugin, TFile, TFolder, normalizePath, Notice, requestUrl } from "obsidian";
-import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab } from "./settings";
+import { Plugin, TFile, TFolder, normalizePath, Notice, requestUrl, MarkdownView } from "obsidian";
+import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab, READ_ONLY_FIELD_TYPES, SyncScope } from "./settings";
 import { fetchNotes, RemoteNote, updateAirtableRecord, SyncResult, ConflictInfo, batchUpdateAirtableRecords } from "./fetcher";
 import { buildMarkdownContent, parseTemplate } from "./note-builder";
 // import { sanitizeFileName } from "./utils";
@@ -37,15 +37,16 @@ export default class AutoNoteImporterPlugin extends Plugin {
     this.settingTab = new AutoNoteImporterSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
     
+    // Sync from Airtable commands
     this.addCommand({
-      id: "sync-notes-now",
-      name: "Sync notes now",
+      id: "sync-all-from-airtable",
+      name: "Sync all notes from Airtable",
       callback: async () => {
         if (this.isSyncing) {
           new Notice("Auto Note Importer: ⏳ Sync already in progress...");
           return;
         }
-        new Notice("Auto Note Importer: 🚀 Starting sync...");
+        new Notice("Auto Note Importer: 🚀 Syncing all notes from Airtable...");
         this.isSyncing = true;
         try {
           await this.syncNotes();
@@ -55,26 +56,77 @@ export default class AutoNoteImporterPlugin extends Plugin {
       }
     });
 
-    // Add bidirectional sync command
+    // Sync to Airtable commands
     this.addCommand({
-      id: "sync-to-airtable",
-      name: "Sync changes to Airtable",
+      id: "sync-current-to-airtable",
+      name: "Sync current note to Airtable",
       callback: async () => {
         if (!this.settings.bidirectionalSync) {
           new Notice("Auto Note Importer: ❌ Bidirectional sync is disabled in settings.");
           return;
         }
-        if (this.isSyncing) {
-          new Notice("Auto Note Importer: ⏳ Sync already in progress...");
+        await this.performSync('to-airtable', 'current');
+      }
+    });
+
+    this.addCommand({
+      id: "sync-modified-to-airtable",
+      name: "Sync modified notes to Airtable",
+      callback: async () => {
+        if (!this.settings.bidirectionalSync) {
+          new Notice("Auto Note Importer: ❌ Bidirectional sync is disabled in settings.");
           return;
         }
-        new Notice("Auto Note Importer: 🔄 Syncing changes to Airtable...");
-        this.isSyncing = true;
-        try {
-          await this.syncToAirtable();
-        } finally {
-          this.isSyncing = false;
+        await this.performSync('to-airtable', 'modified');
+      }
+    });
+
+    this.addCommand({
+      id: "sync-all-to-airtable",
+      name: "Sync all notes to Airtable",
+      callback: async () => {
+        if (!this.settings.bidirectionalSync) {
+          new Notice("Auto Note Importer: ❌ Bidirectional sync is disabled in settings.");
+          return;
         }
+        await this.performSync('to-airtable', 'all');
+      }
+    });
+
+    // Bidirectional sync with formulas commands
+    this.addCommand({
+      id: "bidirectional-sync-current",
+      name: "Bidirectional sync current note (with formulas)",
+      callback: async () => {
+        if (!this.settings.bidirectionalSync) {
+          new Notice("Auto Note Importer: ❌ Bidirectional sync is disabled in settings.");
+          return;
+        }
+        await this.performSync('bidirectional', 'current');
+      }
+    });
+
+    this.addCommand({
+      id: "bidirectional-sync-modified",
+      name: "Bidirectional sync modified notes (with formulas)",
+      callback: async () => {
+        if (!this.settings.bidirectionalSync) {
+          new Notice("Auto Note Importer: ❌ Bidirectional sync is disabled in settings.");
+          return;
+        }
+        await this.performSync('bidirectional', 'modified');
+      }
+    });
+
+    this.addCommand({
+      id: "bidirectional-sync-all",
+      name: "Bidirectional sync all notes (with formulas)",
+      callback: async () => {
+        if (!this.settings.bidirectionalSync) {
+          new Notice("Auto Note Importer: ❌ Bidirectional sync is disabled in settings.");
+          return;
+        }
+        await this.performSync('bidirectional', 'all');
       }
     });
 
@@ -100,6 +152,187 @@ export default class AutoNoteImporterPlugin extends Plugin {
   // Save settings to data storage
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  /**
+   * Unified sync method that handles different sync modes and scopes.
+   * @param mode 'to-airtable' | 'from-airtable' | 'bidirectional'
+   * @param scope 'current' | 'modified' | 'all'
+   */
+  async performSync(mode: 'to-airtable' | 'from-airtable' | 'bidirectional', scope: SyncScope) {
+    if (this.isSyncing) {
+      new Notice("Auto Note Importer: ⏳ Sync already in progress...");
+      return;
+    }
+
+    this.isSyncing = true;
+    const statusBarItem = this.addStatusBarItem();
+
+    try {
+      // Get files to sync based on scope
+      const filesToSync = await this.getFilesToSync(scope);
+
+      if (filesToSync.length === 0) {
+        new Notice(`Auto Note Importer: ℹ️ No files to sync for scope: ${scope}`);
+        statusBarItem.remove();
+        return;
+      }
+
+      // Execute sync based on mode
+      switch (mode) {
+        case 'to-airtable':
+          statusBarItem.setText(`Auto Note Importer: Syncing ${filesToSync.length} file(s) to Airtable...`);
+          await this.syncFilesToAirtable(filesToSync);
+          new Notice(`Auto Note Importer: ✅ Synced ${filesToSync.length} file(s) to Airtable`);
+          break;
+
+        case 'from-airtable':
+          statusBarItem.setText("Auto Note Importer: Syncing from Airtable...");
+          await this.syncNotes();
+          break;
+
+        case 'bidirectional':
+          // Phase 1: Sync to Airtable
+          statusBarItem.setText(`Auto Note Importer: Phase 1/2 - Syncing ${filesToSync.length} file(s) to Airtable...`);
+          await this.syncFilesToAirtable(filesToSync);
+
+          // Phase 2: Wait for formulas and sync back
+          if (this.settings.autoSyncFormulas) {
+            statusBarItem.setText(`Auto Note Importer: Waiting ${this.settings.formulaSyncDelay}ms for formulas...`);
+            await new Promise(resolve => setTimeout(resolve, this.settings.formulaSyncDelay));
+
+            statusBarItem.setText("Auto Note Importer: Phase 2/2 - Fetching computed results...");
+            await this.syncNotes();
+            new Notice("Auto Note Importer: ✅ Bidirectional sync complete with formulas updated!");
+          } else {
+            new Notice(`Auto Note Importer: ✅ Synced ${filesToSync.length} file(s) to Airtable`);
+          }
+          break;
+      }
+
+      statusBarItem.remove();
+    } catch (error: any) {
+      statusBarItem.remove();
+      new Notice(`Auto Note Importer: ❌ Sync failed: ${error.message}`);
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  /**
+   * Gets files to sync based on the specified scope.
+   */
+  async getFilesToSync(scope: SyncScope): Promise<TFile[]> {
+    const folderPath = normalizePath(this.settings.folderPath);
+
+    switch (scope) {
+      case 'current': {
+        // Get currently active file
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!activeView || !activeView.file) {
+          throw new Error("No active markdown file");
+        }
+        const file = activeView.file;
+        // Check if file is in target folder
+        if (!file.path.startsWith(folderPath)) {
+          throw new Error("Current file is not in the sync folder");
+        }
+        return [file];
+      }
+
+      case 'modified': {
+        // Get pending sync files
+        const files: TFile[] = [];
+        for (const filePath of this.pendingSyncFiles) {
+          const file = this.app.vault.getAbstractFileByPath(filePath);
+          if (file instanceof TFile) {
+            files.push(file);
+          }
+        }
+        return files;
+      }
+
+      case 'all': {
+        // Get all markdown files in sync folder
+        const folder = this.app.vault.getAbstractFileByPath(folderPath);
+        if (!(folder instanceof TFolder)) {
+          throw new Error("Sync folder not found");
+        }
+        const files: TFile[] = [];
+        await this.collectMarkdownFiles(folder, files);
+        return files;
+      }
+
+      default:
+        return [];
+    }
+  }
+
+  /**
+   * Recursively collects all markdown files from a folder.
+   */
+  private async collectMarkdownFiles(folder: TFolder, files: TFile[]): Promise<void> {
+    for (const child of folder.children) {
+      if (child instanceof TFile && child.extension === 'md') {
+        files.push(child);
+      } else if (child instanceof TFolder) {
+        await this.collectMarkdownFiles(child, files);
+      }
+    }
+  }
+
+  /**
+   * Syncs an array of files to Airtable.
+   */
+  async syncFilesToAirtable(files: TFile[]): Promise<void> {
+    const batchUpdates: Array<{ recordId: string; fields: Record<string, any>; filePath: string }> = [];
+
+    for (const file of files) {
+      const updateData = await this.prepareFileForSync(file);
+      if (updateData) {
+        batchUpdates.push({
+          recordId: updateData.recordId,
+          fields: updateData.fields,
+          filePath: file.path
+        });
+      }
+    }
+
+    if (batchUpdates.length === 0) {
+      return;
+    }
+
+    // Process updates in batches of 10 (Airtable limit)
+    const batchSize = 10;
+    let syncedCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < batchUpdates.length; i += batchSize) {
+      const batch = batchUpdates.slice(i, i + batchSize);
+
+      try {
+        const results = await this.makeRateLimitedRequest(() =>
+          batchUpdateAirtableRecords(this.settings, batch)
+        );
+
+        results.forEach(result => {
+          if (result.success) {
+            syncedCount++;
+          } else {
+            errorCount++;
+          }
+        });
+      } catch (error: any) {
+        errorCount += batch.length;
+      }
+    }
+
+    if (errorCount > 0) {
+      new Notice(`Auto Note Importer: ⚠️ ${syncedCount} synced, ${errorCount} errors`);
+    }
+
+    // Clear pending files if we synced them
+    files.forEach(file => this.pendingSyncFiles.delete(file.path));
   }
 
   startScheduler() {
@@ -399,28 +632,34 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   /**
    * Handles file change events with debouncing to avoid excessive API calls.
+   * Automatically performs bidirectional sync if autoSyncFormulas is enabled.
    * @param file The modified file
    */
   handleFileChange(file: TFile) {
     const folderPath = normalizePath(this.settings.folderPath);
-    
+
     // Check if the file is in our target folder (including subfolders)
     if (!file.path.startsWith(folderPath)) {
       return;
     }
 
     this.pendingSyncFiles.add(file.path);
-    
+
     // Debounce the sync operation
     if (this.syncDebounceTimer) {
       clearTimeout(this.syncDebounceTimer);
     }
-    
+
     this.syncDebounceTimer = setTimeout(async () => {
       if (!this.isSyncing) {
         this.isSyncing = true;
         try {
-          await this.syncToAirtable();
+          // Use bidirectional sync if formula auto-sync is enabled
+          if (this.settings.autoSyncFormulas) {
+            await this.performSync('bidirectional', 'modified');
+          } else {
+            await this.syncToAirtable();
+          }
         } finally {
           this.isSyncing = false;
         }
@@ -522,30 +761,53 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   /**
    * Prepares a file for batch sync by extracting record ID and fields.
+   * Filters out read-only fields (formulas, rollups, etc.) that shouldn't be synced to Airtable.
    * @param file The file to prepare
    * @returns Promise with recordId and fields, or null if file can't be synced
    */
   async prepareFileForSync(file: TFile): Promise<{ recordId: string; fields: Record<string, any> } | null> {
     try {
       const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-      
+
       if (!frontmatter || !frontmatter.primaryField) {
         return null;
       }
 
       const recordId = frontmatter.primaryField;
-      
+
+      // Get cached field information to determine field types
+      const cacheKey = `${this.settings.baseId}-${this.settings.tableId}`;
+      const cachedFields = this.settingTab?.getCachedFields(cacheKey);
+
       // Extract fields that should be synced back to Airtable
       const fieldsToSync: Record<string, any> = {};
-      
-      // Get all frontmatter fields except system fields
-      const systemFields = ['primaryField'];
+
+      // System fields that should never be synced
+      const systemFields = ['primaryField', 'position'];
+
       for (const [key, value] of Object.entries(frontmatter)) {
-        if (!systemFields.includes(key) && value !== null && value !== undefined) {
-          fieldsToSync[key] = value;
+        // Skip system fields
+        if (systemFields.includes(key)) {
+          continue;
         }
+
+        // Skip null/undefined values
+        if (value === null || value === undefined) {
+          continue;
+        }
+
+        // Check if field is read-only (formula, rollup, etc.)
+        if (cachedFields) {
+          const fieldInfo = cachedFields.find(f => f.name === key);
+          if (fieldInfo && READ_ONLY_FIELD_TYPES.includes(fieldInfo.type as any)) {
+            // Skip read-only fields - they should only be updated from Airtable
+            continue;
+          }
+        }
+
+        fieldsToSync[key] = value;
       }
-      
+
       if (Object.keys(fieldsToSync).length === 0) {
         return null;
       }
