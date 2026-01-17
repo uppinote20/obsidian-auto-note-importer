@@ -2,7 +2,7 @@
  * Rate limiter service to prevent overwhelming the Airtable API.
  */
 
-import { RATE_LIMIT_INTERVAL_MS } from '../constants';
+import { RATE_LIMIT_INTERVAL_MS, DEBUG_DELAY_MULTIPLIER } from '../constants';
 
 /**
  * Rate limiter for API requests.
@@ -10,14 +10,28 @@ import { RATE_LIMIT_INTERVAL_MS } from '../constants';
  */
 export class RateLimiter {
   private lastRequest = 0;
+  private baseInterval: number;
   private minInterval: number;
+  private debugMode = false;
 
   /**
    * Creates a new RateLimiter.
    * @param minInterval Minimum interval between requests in milliseconds
    */
   constructor(minInterval: number = RATE_LIMIT_INTERVAL_MS) {
+    this.baseInterval = minInterval;
     this.minInterval = minInterval;
+  }
+
+  /**
+   * Sets debug mode which multiplies all delays.
+   * @param enabled Whether debug mode is enabled
+   */
+  setDebugMode(enabled: boolean): void {
+    this.debugMode = enabled;
+    this.minInterval = enabled
+      ? this.baseInterval * DEBUG_DELAY_MULTIPLIER
+      : this.baseInterval;
   }
 
   /**

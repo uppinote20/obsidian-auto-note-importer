@@ -4,7 +4,7 @@
 
 import type { App, TFile, EventRef } from "obsidian";
 import { normalizePath } from "obsidian";
-import { FILE_CHANGE_DEBOUNCE_MS } from '../constants';
+import { DEBUG_DELAY_MULTIPLIER } from '../constants';
 import type { AutoNoteImporterSettings } from '../types';
 
 /**
@@ -100,6 +100,16 @@ export class FileWatcher {
   }
 
   /**
+   * Calculates debounce time based on settings and debug mode.
+   */
+  private getDebounceTime(): number {
+    const baseDebounce = this.settings.fileWatchDebounce;
+    return this.settings.debugMode
+      ? baseDebounce * DEBUG_DELAY_MULTIPLIER
+      : baseDebounce;
+  }
+
+  /**
    * Schedules a debounced sync operation.
    */
   private scheduleSync(): void {
@@ -117,7 +127,7 @@ export class FileWatcher {
           this.isSyncing = false;
         }
       }
-    }, FILE_CHANGE_DEBOUNCE_MS);
+    }, this.getDebounceTime());
   }
 
   /**

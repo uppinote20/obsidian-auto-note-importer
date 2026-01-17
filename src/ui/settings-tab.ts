@@ -145,6 +145,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     // Bidirectional sync settings
     this.renderBidirectionalSyncSettings(containerEl);
+
+    // Debug settings
+    this.renderDebugSettings(containerEl);
   }
 
   private renderBaseSelector(containerEl: HTMLElement): void {
@@ -313,7 +316,31 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.watchForChanges = value;
             await this.plugin.saveSettings();
+            this.debounceDisplay();
           }));
+
+      if (this.plugin.settings.watchForChanges) {
+        new Setting(containerEl)
+          .setName("File watch debounce (milliseconds)")
+          .setDesc("How long to wait after a file change before triggering sync.")
+          .addText(text => {
+            const input = text
+              .setPlaceholder("2000")
+              .setValue(this.plugin.settings.fileWatchDebounce.toString())
+              .onChange(async (value) => {
+                const num = Number(value);
+                if (Number.isNaN(num) || num < 0) {
+                  new Notice("Auto Note Importer: Debounce time must be a positive number.");
+                  return;
+                }
+                this.plugin.settings.fileWatchDebounce = num;
+                await this.plugin.saveSettings();
+              });
+            (input.inputEl as HTMLInputElement).type = "number";
+            (input.inputEl as HTMLInputElement).min = "0";
+            (input.inputEl as HTMLInputElement).step = "500";
+          });
+      }
 
       new Setting(containerEl)
         .setName("Auto-sync formulas and relations")
@@ -349,5 +376,19 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           });
       }
     }
+  }
+
+  private renderDebugSettings(containerEl: HTMLElement): void {
+    containerEl.createEl('h3', { text: 'Debug' });
+
+    new Setting(containerEl)
+      .setName("Debug mode (slow sync)")
+      .setDesc("Slows down all sync operations by 5x for easier testing and observation.")
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.debugMode)
+        .onChange(async (value) => {
+          this.plugin.settings.debugMode = value;
+          await this.plugin.saveSettings();
+        }));
   }
 }

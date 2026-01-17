@@ -12,7 +12,7 @@ import type { AutoNoteImporterSettings, RemoteNote, SyncMode, SyncScope, NoteCre
 import { DEFAULT_SETTINGS } from './types';
 
 // Constants
-import { AIRTABLE_BATCH_SIZE } from './constants';
+import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from './constants';
 
 // Services
 import { AirtableClient, FieldCache, RateLimiter } from './services';
@@ -65,6 +65,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
    */
   private initializeServices(): void {
     this.rateLimiter = new RateLimiter();
+    this.rateLimiter.setDebugMode(this.settings.debugMode);
     this.fieldCache = new FieldCache();
     this.airtableClient = new AirtableClient(this.settings, this.rateLimiter);
 
@@ -212,8 +213,11 @@ export default class AutoNoteImporterPlugin extends Plugin {
           await this.syncFilesToAirtable(files);
 
           if (this.settings.autoSyncFormulas) {
-            statusBarItem.setText(`Waiting ${this.settings.formulaSyncDelay}ms for formulas...`);
-            await this.sleep(this.settings.formulaSyncDelay);
+            const delay = this.settings.debugMode
+              ? this.settings.formulaSyncDelay * DEBUG_DELAY_MULTIPLIER
+              : this.settings.formulaSyncDelay;
+            statusBarItem.setText(`Waiting ${delay}ms for formulas...`);
+            await this.sleep(delay);
 
             statusBarItem.setText("Phase 2/2 - Fetching computed results...");
             await this.syncFromAirtable();
@@ -542,6 +546,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
     await this.saveData(this.settings);
 
     // Update service settings
+    this.rateLimiter?.setDebugMode(this.settings.debugMode);
     this.airtableClient?.updateSettings(this.settings);
     this.conflictResolver?.updateSettings(this.settings);
 

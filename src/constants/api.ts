@@ -23,6 +23,12 @@ export const FILE_CHANGE_DEBOUNCE_MS = 2000;
 export const DEFAULT_FORMULA_SYNC_DELAY_MS = 1500;
 
 /**
+ * Delay multiplier for debug/test mode.
+ * All timing-related delays are multiplied by this value when debugMode is enabled.
+ */
+export const DEBUG_DELAY_MULTIPLIER = 5;
+
+/**
  * Maximum folder depth for recursive scanning.
  */
 export const MAX_FOLDER_DEPTH = 10;

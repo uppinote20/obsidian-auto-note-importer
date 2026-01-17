@@ -28,8 +28,10 @@ export interface AutoNoteImporterSettings {
   bidirectionalSync: boolean;
   conflictResolution: ConflictResolutionMode;
   watchForChanges: boolean;
+  fileWatchDebounce: number;
   autoSyncFormulas: boolean;
   formulaSyncDelay: number;
+  debugMode: boolean;
 }
 
 /**
@@ -48,6 +50,8 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   bidirectionalSync: false,
   conflictResolution: 'manual',
   watchForChanges: true,
+  fileWatchDebounce: 2000,
   autoSyncFormulas: true,
   formulaSyncDelay: 1500,
+  debugMode: false,
 };
