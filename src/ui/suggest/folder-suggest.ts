@@ -21,7 +21,7 @@ export class FolderSuggest extends AbstractInputSuggest<string> {
 
   public override getSuggestions(query: string): string[] {
     return this.folderPaths.filter(path =>
-      path.toLowerCase().contains(query.toLowerCase())
+      path.toLowerCase().includes(query.toLowerCase())
     );
   }
 
