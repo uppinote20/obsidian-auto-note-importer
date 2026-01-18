@@ -482,7 +482,20 @@ export default class AutoNoteImporterPlugin extends Plugin {
    */
   private async syncFilesToAirtable(files: TFile[]): Promise<void> {
     const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
-    const cachedFields = this.settingTab.getCachedFields(cacheKey);
+
+    // Auto-load field cache if empty (prevents read-only fields from being pushed)
+    let cachedFields = this.fieldCache.getFields(cacheKey);
+    if (!cachedFields && this.settings.apiKey && this.settings.baseId && this.settings.tableId) {
+      try {
+        cachedFields = await this.fieldCache.fetchFields(
+          this.settings.apiKey,
+          this.settings.baseId,
+          this.settings.tableId
+        );
+      } catch {
+        new Notice("Auto Note Importer: Field metadata unavailable. Sync may fail for computed fields.");
+      }
+    }
 
     const batchUpdates: Array<{ recordId: string; fields: Record<string, unknown> }> = [];
 
