@@ -33,20 +33,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     this.fieldCache = fieldCache;
   }
 
-  /**
-   * Gets the field cache instance.
-   */
-  getFieldCache(): FieldCache {
-    return this.fieldCache;
-  }
-
-  /**
-   * Gets cached fields for a specific base/table combination.
-   */
-  getCachedFields(cacheKey: string) {
-    return this.fieldCache.getFields(cacheKey);
-  }
-
   private debounceDisplay(delay = 100) {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
@@ -110,27 +96,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         new FileSuggest(this.app, input.inputEl as HTMLInputElement);
       });
 
-    // Sync interval setting
-    new Setting(containerEl)
-      .setName("Sync interval (minutes)")
-      .setDesc("How often to sync notes (in minutes).")
-      .addText(text => {
-        const input = text
-          .setPlaceholder("0")
-          .setValue(this.plugin.settings.syncInterval.toString())
-          .onChange(async (value) => {
-            const num = Number(value);
-            if (Number.isNaN(num) || num < 0) {
-              new Notice("Auto Note Importer: Sync interval must be a positive number.");
-              return;
-            }
-            this.plugin.settings.syncInterval = num;
-            await this.plugin.saveSettings();
-            this.plugin.startScheduler();
-          });
-        (input.inputEl as HTMLInputElement).type = "number";
-        (input.inputEl as HTMLInputElement).min = "0";
-      });
+    this.renderNumberSetting(containerEl, "Sync interval (minutes)", "How often to sync notes (in minutes).", "0",
+      this.plugin.settings.syncInterval, "Sync interval",
+      (num) => { this.plugin.settings.syncInterval = num; },
+      () => { this.plugin.startScheduler(); });
 
     // Allow overwrite setting
     new Setting(containerEl)
@@ -211,13 +180,27 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderFieldSelectors(containerEl: HTMLElement): void {
-    // Filename field selector
+    this.renderFieldDropdown(containerEl, "Filename field", "Select the field to use for the note's filename.", "-- Select field --",
+      this.plugin.settings.filenameFieldName, (value) => { this.plugin.settings.filenameFieldName = value; });
+
+    this.renderFieldDropdown(containerEl, "Subfolder field", "Select the field to use for subfolder organization.", "-- No subfolder --",
+      this.plugin.settings.subfolderFieldName, (value) => { this.plugin.settings.subfolderFieldName = value; });
+  }
+
+  private renderFieldDropdown(
+    containerEl: HTMLElement,
+    name: string,
+    desc: string,
+    placeholder: string,
+    currentValue: string,
+    onSelect: (value: string) => void
+  ): void {
     new Setting(containerEl)
-      .setName("Filename field")
-      .setDesc("Select the field to use for the note's filename.")
+      .setName(name)
+      .setDesc(desc)
       .addDropdown(async dropdown => {
         try {
-          dropdown.addOption("", "-- Select field --");
+          dropdown.addOption("", placeholder);
           const fields = await this.fieldCache.fetchFields(
             this.plugin.settings.apiKey,
             this.plugin.settings.baseId,
@@ -235,44 +218,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             dropdown.addOption("", `--- ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ---`);
           }
 
-          dropdown.setValue(this.plugin.settings.filenameFieldName);
+          dropdown.setValue(currentValue);
           dropdown.onChange(async (value) => {
-            this.plugin.settings.filenameFieldName = value;
-            await this.plugin.saveSettings();
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Check table ID or network.';
-          new Notice(`Auto Note Importer: Failed to fetch table fields. ${message}`);
-        }
-      });
-
-    // Subfolder field selector
-    new Setting(containerEl)
-      .setName("Subfolder field")
-      .setDesc("Select the field to use for subfolder organization.")
-      .addDropdown(async dropdown => {
-        try {
-          dropdown.addOption("", "-- No subfolder --");
-          const fields = await this.fieldCache.fetchFields(
-            this.plugin.settings.apiKey,
-            this.plugin.settings.baseId,
-            this.plugin.settings.tableId
-          );
-
-          const supportedFields = fields.filter(field => isFieldTypeSupported(field.type));
-          const unsupportedCount = fields.length - supportedFields.length;
-
-          supportedFields.forEach(field => {
-            dropdown.addOption(field.name, `${field.name} (${field.type})`);
-          });
-
-          if (unsupportedCount > 0) {
-            dropdown.addOption("", `--- ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ---`);
-          }
-
-          dropdown.setValue(this.plugin.settings.subfolderFieldName);
-          dropdown.onChange(async (value) => {
-            this.plugin.settings.subfolderFieldName = value;
+            onSelect(value);
             await this.plugin.saveSettings();
           });
         } catch (error) {
@@ -320,26 +268,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           }));
 
       if (this.plugin.settings.watchForChanges) {
-        new Setting(containerEl)
-          .setName("File watch debounce (milliseconds)")
-          .setDesc("How long to wait after a file change before triggering sync.")
-          .addText(text => {
-            const input = text
-              .setPlaceholder("2000")
-              .setValue(this.plugin.settings.fileWatchDebounce.toString())
-              .onChange(async (value) => {
-                const num = Number(value);
-                if (Number.isNaN(num) || num < 0) {
-                  new Notice("Auto Note Importer: Debounce time must be a positive number.");
-                  return;
-                }
-                this.plugin.settings.fileWatchDebounce = num;
-                await this.plugin.saveSettings();
-              });
-            (input.inputEl as HTMLInputElement).type = "number";
-            (input.inputEl as HTMLInputElement).min = "0";
-            (input.inputEl as HTMLInputElement).step = "500";
-          });
+        this.renderNumberSetting(containerEl, "File watch debounce (milliseconds)",
+          "How long to wait after a file change before triggering sync.", "2000",
+          this.plugin.settings.fileWatchDebounce, "Debounce time",
+          (num) => { this.plugin.settings.fileWatchDebounce = num; }, undefined, "500");
       }
 
       new Setting(containerEl)
@@ -354,28 +286,46 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           }));
 
       if (this.plugin.settings.autoSyncFormulas) {
-        new Setting(containerEl)
-          .setName("Formula sync delay (milliseconds)")
-          .setDesc("How long to wait for Airtable to compute formulas before fetching.")
-          .addText(text => {
-            const input = text
-              .setPlaceholder("1500")
-              .setValue(this.plugin.settings.formulaSyncDelay.toString())
-              .onChange(async (value) => {
-                const num = Number(value);
-                if (Number.isNaN(num) || num < 0) {
-                  new Notice("Auto Note Importer: Formula sync delay must be a positive number.");
-                  return;
-                }
-                this.plugin.settings.formulaSyncDelay = num;
-                await this.plugin.saveSettings();
-              });
-            (input.inputEl as HTMLInputElement).type = "number";
-            (input.inputEl as HTMLInputElement).min = "0";
-            (input.inputEl as HTMLInputElement).step = "100";
-          });
+        this.renderNumberSetting(containerEl, "Formula sync delay (milliseconds)",
+          "How long to wait for Airtable to compute formulas before fetching.", "1500",
+          this.plugin.settings.formulaSyncDelay, "Formula sync delay",
+          (num) => { this.plugin.settings.formulaSyncDelay = num; }, undefined, "100");
       }
     }
+  }
+
+  private renderNumberSetting(
+    containerEl: HTMLElement,
+    name: string,
+    desc: string,
+    placeholder: string,
+    currentValue: number,
+    label: string,
+    onSet: (num: number) => void,
+    postSave?: () => void,
+    step?: string
+  ): void {
+    new Setting(containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addText(text => {
+        const input = text
+          .setPlaceholder(placeholder)
+          .setValue(currentValue.toString())
+          .onChange(async (value) => {
+            const num = Number(value);
+            if (Number.isNaN(num) || num < 0) {
+              new Notice(`Auto Note Importer: ${label} must be a positive number.`);
+              return;
+            }
+            onSet(num);
+            await this.plugin.saveSettings();
+            postSave?.();
+          });
+        (input.inputEl as HTMLInputElement).type = "number";
+        (input.inputEl as HTMLInputElement).min = "0";
+        if (step) (input.inputEl as HTMLInputElement).step = step;
+      });
   }
 
   private renderDebugSettings(containerEl: HTMLElement): void {

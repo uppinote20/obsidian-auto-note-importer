@@ -13,16 +13,6 @@ export const AIRTABLE_BATCH_SIZE = 10;
 export const RATE_LIMIT_INTERVAL_MS = 200;
 
 /**
- * Default delay for file change debouncing (in milliseconds).
- */
-export const FILE_CHANGE_DEBOUNCE_MS = 2000;
-
-/**
- * Default delay for formula sync (in milliseconds).
- */
-export const DEFAULT_FORMULA_SYNC_DELAY_MS = 1500;
-
-/**
  * Delay multiplier for debug/test mode.
  * All timing-related delays are multiplied by this value when debugMode is enabled.
  */

@@ -28,7 +28,8 @@ export function getNestedValue(obj: unknown, path: string): unknown {
 
 /**
  * Compares two values for deep equality.
- * Handles arrays, objects, and primitive types.
+ * Handles arrays (element-wise), objects (key-wise), and primitives.
+ * Primitives are compared via String conversion with trimming (e.g. "42" equals 42).
  * @param value1 First value to compare
  * @param value2 Second value to compare
  * @returns boolean indicating if values are equal
@@ -66,5 +67,5 @@ export function areValuesEqual(value1: unknown, value2: unknown): boolean {
  * @returns A unique string identifier
  */
 export function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 }

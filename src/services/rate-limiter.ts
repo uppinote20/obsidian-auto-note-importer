@@ -61,25 +61,4 @@ export class RateLimiter {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  /**
-   * Resets the rate limiter state.
-   */
-  reset(): void {
-    this.lastRequest = 0;
-  }
-}
-
-/**
- * Singleton instance for shared rate limiting.
- */
-let defaultRateLimiter: RateLimiter | null = null;
-
-/**
- * Gets the default rate limiter instance.
- */
-export function getDefaultRateLimiter(): RateLimiter {
-  if (!defaultRateLimiter) {
-    defaultRateLimiter = new RateLimiter();
-  }
-  return defaultRateLimiter;
 }

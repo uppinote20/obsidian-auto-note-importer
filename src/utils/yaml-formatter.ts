@@ -4,10 +4,10 @@
 
 /**
  * Formats a JavaScript value into a YAML-compatible string representation.
- * - Strings are quoted and escaped.
- * - Numbers, booleans, and null are represented directly.
- * - undefined becomes an empty string.
- * - Does not handle complex types like Arrays or Objects directly.
+ * - Strings are quoted and escaped (backslashes and double quotes).
+ * - Numbers (finite) and booleans are unquoted.
+ * - null and undefined become empty string.
+ * - Non-finite numbers (Infinity, NaN) are treated as strings.
  * @param value The value to format.
  * @returns A YAML-compatible string representation.
  */
@@ -42,7 +42,7 @@ export function formatFieldForBases(key: string, value: unknown): string | null 
       typeof item === 'string' || typeof item === 'number'
     );
     if (simpleItems.length === value.length) {
-      return `[${simpleItems.map(item => `"${String(item)}"`).join(', ')}]`;
+      return `[${simpleItems.map(item => formatYamlValue(String(item))).join(', ')}]`;
     }
 
     return `"${value.map(item =>

@@ -1,6 +1,5 @@
 /**
  * Field caching service for Airtable metadata.
- * Extracted from settings.ts for better separation of concerns.
  */
 
 import { requestUrl } from "obsidian";
@@ -152,13 +151,4 @@ export class FieldCache {
     return fields?.find(f => f.name === fieldName);
   }
 
-  /**
-   * Invalidates all cached data.
-   */
-  invalidate(): void {
-    this.cachedBases = null;
-    this.cachedTables.clear();
-    this.cachedFields.clear();
-    this.lastApiKey = "";
-  }
 }
