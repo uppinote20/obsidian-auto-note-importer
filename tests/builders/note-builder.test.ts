@@ -11,6 +11,7 @@ import type { RemoteNote } from '../../src/types';
 
 describe('parseTemplate', () => {
   const createNote = (fields: Record<string, unknown>): RemoteNote => ({
+    id: 'rec123',
     primaryField: 'rec123',
     fields
   });
@@ -84,6 +85,7 @@ describe('parseTemplate', () => {
 
 describe('buildMarkdownContent', () => {
   const createNote = (fields: Record<string, unknown>): RemoteNote => ({
+    id: 'rec123',
     primaryField: 'rec123',
     fields
   });

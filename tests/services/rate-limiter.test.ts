@@ -21,9 +21,21 @@ describe('RateLimiter', () => {
       expect(RATE_LIMIT_INTERVAL_MS).toBe(200);
     });
 
-    it('should accept custom interval', () => {
+    it('should accept custom interval and enforce it', async () => {
       const limiter = new RateLimiter(500);
-      // Internal state, verified through behavior tests
+      const mockFn = vi.fn().mockResolvedValue('result');
+
+      await limiter.execute(mockFn);
+      const secondPromise = limiter.execute(mockFn);
+
+      // Should NOT complete after 200ms (default interval)
+      await vi.advanceTimersByTimeAsync(200);
+      expect(mockFn).toHaveBeenCalledTimes(1);
+
+      // Should complete after 500ms (custom interval)
+      await vi.advanceTimersByTimeAsync(300);
+      await secondPromise;
+      expect(mockFn).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -140,38 +152,17 @@ describe('RateLimiter', () => {
       const limiter = new RateLimiter(200);
       const mockFn = vi.fn().mockResolvedValue('result');
 
-      // Enable debug mode
       limiter.setDebugMode(true);
-
-      // Reset to clear any prior state
-      limiter.reset();
 
       await limiter.execute(mockFn);
       expect(mockFn).toHaveBeenCalledTimes(1);
 
-      // Disable debug mode and reset
+      // Wait for debug interval to elapse
+      await vi.advanceTimersByTimeAsync(1000);
+
       limiter.setDebugMode(false);
-      limiter.reset();
 
       await limiter.execute(mockFn);
-      expect(mockFn).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe('reset', () => {
-    it('should allow immediate request after reset', async () => {
-      const limiter = new RateLimiter(200);
-      const mockFn = vi.fn().mockResolvedValue('result');
-
-      // First call
-      await limiter.execute(mockFn);
-
-      // Reset
-      limiter.reset();
-
-      // Should be immediate now
-      await limiter.execute(mockFn);
-
       expect(mockFn).toHaveBeenCalledTimes(2);
     });
   });

@@ -18,23 +18,22 @@ describe('ConflictResolver', () => {
   let resolver: ConflictResolver;
 
   const createSettings = (conflictResolution: 'obsidian-wins' | 'airtable-wins' | 'manual'): AutoNoteImporterSettings => ({
-    airtableApiKey: 'key',
+    apiKey: 'key',
     baseId: 'base123',
-    tableName: 'Table',
-    viewId: '',
-    targetFolder: 'notes',
-    customTemplate: '',
-    filenameField: '',
-    subfolderField: '',
-    createSubfolders: false,
+    tableId: 'tbl123',
+    folderPath: 'notes',
+    templatePath: '',
+    syncInterval: 0,
+    allowOverwrite: false,
+    filenameFieldName: '',
+    subfolderFieldName: '',
     bidirectionalSync: true,
     conflictResolution,
-    syncOnStartup: false,
-    autoSync: false,
-    autoSyncInterval: 5,
     watchForChanges: false,
+    fileWatchDebounce: 2000,
+    autoSyncFormulas: false,
+    formulaSyncDelay: 1500,
     debugMode: false,
-    fileChangeDebounceMs: 2000
   });
 
   beforeEach(() => {
@@ -148,19 +147,15 @@ describe('ConflictResolver', () => {
       expect(conflicts).toEqual([]);
     });
 
-    it('should return empty array on fetch error', async () => {
+    it('should propagate fetch errors to caller', async () => {
       const settings = createSettings('airtable-wins');
       resolver = new ConflictResolver(settings, mockAirtableClient as any);
 
       mockAirtableClient.fetchRecord.mockRejectedValue(new Error('Network error'));
 
-      const conflicts = await resolver.detectConflicts(
-        'rec123',
-        { field1: 'value' },
-        'notes/test.md'
-      );
-
-      expect(conflicts).toEqual([]);
+      await expect(
+        resolver.detectConflicts('rec123', { field1: 'value' }, 'notes/test.md')
+      ).rejects.toThrow('Network error');
     });
   });
 
