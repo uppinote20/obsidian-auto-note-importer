@@ -34,35 +34,29 @@ export class ConflictResolver {
     obsidianFields: Record<string, unknown>,
     filePath: string
   ): Promise<ConflictInfo[]> {
-    try {
-      const record = await this.airtableClient.fetchRecord(recordId);
+    const record = await this.airtableClient.fetchRecord(recordId);
 
-      if (!record) {
-        return [];
-      }
-
-      const conflicts: ConflictInfo[] = [];
-
-      for (const [field, obsidianValue] of Object.entries(obsidianFields)) {
-        const airtableValue = record.fields[field];
-
-        if (airtableValue !== undefined && !areValuesEqual(obsidianValue, airtableValue)) {
-          conflicts.push({
-            field,
-            obsidianValue,
-            airtableValue,
-            recordId,
-            filePath
-          });
-        }
-      }
-
-      return conflicts;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      new Notice(`Auto Note Importer: Unable to check for conflicts: ${message}. Proceeding with sync.`);
+    if (!record) {
       return [];
     }
+
+    const conflicts: ConflictInfo[] = [];
+
+    for (const [field, obsidianValue] of Object.entries(obsidianFields)) {
+      const airtableValue = record.fields[field];
+
+      if (airtableValue !== undefined && !areValuesEqual(obsidianValue, airtableValue)) {
+        conflicts.push({
+          field,
+          obsidianValue,
+          airtableValue,
+          recordId,
+          filePath
+        });
+      }
+    }
+
+    return conflicts;
   }
 
   /**
@@ -84,9 +78,10 @@ export class ConflictResolver {
       case 'manual':
         return this.resolveManual(conflicts, recordId);
 
-      default:
-        // Fallback to obsidian-wins
-        return await this.airtableClient.updateRecord(recordId, fieldsToSync);
+      default: {
+        const _exhaustive: never = this.settings.conflictResolution;
+        throw new Error(`Unknown conflict resolution mode: ${_exhaustive}`);
+      }
     }
   }
 
@@ -133,7 +128,6 @@ export class ConflictResolver {
     return {
       success: false,
       recordId,
-      updatedFields: {},
       error: `Conflicts detected in fields: ${conflictFields}`
     };
   }

@@ -38,14 +38,11 @@ export interface RemoteNote {
 }
 
 /**
- * Result of a sync operation.
+ * Result of a sync operation (discriminated union on `success`).
  */
-export interface SyncResult {
-  success: boolean;
-  recordId: string;
-  updatedFields: Record<string, unknown>;
-  error?: string;
-}
+export type SyncResult =
+  | { success: true; recordId: string; updatedFields: Record<string, unknown> }
+  | { success: false; recordId: string; error: string };
 
 /**
  * Information about a field conflict between Obsidian and Airtable.

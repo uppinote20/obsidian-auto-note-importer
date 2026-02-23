@@ -15,6 +15,6 @@ export type SystemField = typeof SYSTEM_FIELDS[number];
 /**
  * Check if a field is a system field.
  */
-export function isSystemField(fieldName: string): boolean {
-  return SYSTEM_FIELDS.includes(fieldName as SystemField);
+export function isSystemField(fieldName: string): fieldName is SystemField {
+  return (SYSTEM_FIELDS as readonly string[]).includes(fieldName);
 }

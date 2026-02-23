@@ -1,6 +1,5 @@
 /**
  * Airtable API client service.
- * Refactored from fetcher.ts with improved structure.
  */
 
 import { requestUrl } from "obsidian";
@@ -55,6 +54,20 @@ export class AirtableClient {
   }
 
   /**
+   * Extracts a human-readable error message from an API response.
+   */
+  private extractErrorDetails(response: { status: number; json?: unknown }): string {
+    let details = `HTTP ${response.status}`;
+    try {
+      const errorJson = response.json as { error?: { message?: string } } | undefined;
+      details += `: ${errorJson?.error?.message || JSON.stringify(errorJson)}`;
+    } catch {
+      // Response body isn't valid JSON
+    }
+    return details;
+  }
+
+  /**
    * Fetches all notes from Airtable with pagination.
    */
   async fetchNotes(): Promise<RemoteNote[]> {
@@ -75,14 +88,7 @@ export class AirtableClient {
       );
 
       if (response.status !== 200) {
-        let errorDetails = `HTTP ${response.status}`;
-        try {
-          const errorJson = response.json;
-          errorDetails += `: ${errorJson?.error?.message || JSON.stringify(errorJson)}`;
-        } catch {
-          // Ignore if response body isn't valid JSON
-        }
-        throw new Error(`Failed to fetch remote notes: ${errorDetails}`);
+        throw new Error(`Failed to fetch remote notes: ${this.extractErrorDetails(response)}`);
       }
 
       const json = response.json;
@@ -111,28 +117,29 @@ export class AirtableClient {
 
     const url = `${this.getBaseUrl()}/${recordId}`;
 
-    try {
-      const response = await this.rateLimiter.execute(() =>
-        requestUrl({
-          url,
-          method: "GET",
-          headers: this.getHeaders(),
-        })
-      );
+    const response = await this.rateLimiter.execute(() =>
+      requestUrl({
+        url,
+        method: "GET",
+        headers: this.getHeaders(),
+      })
+    );
 
-      if (response.status !== 200) {
-        return null;
-      }
-
-      const json = response.json;
-      return {
-        id: json.id,
-        primaryField: json.id,
-        fields: json.fields
-      };
-    } catch {
+    if (response.status === 404) {
       return null;
     }
+
+    if (response.status !== 200) {
+      const errorDetails = this.extractErrorDetails(response);
+      throw new Error(`Failed to fetch record ${recordId}: ${errorDetails}`);
+    }
+
+    const json = response.json;
+    return {
+      id: json.id,
+      primaryField: json.id,
+      fields: json.fields
+    };
   }
 
   /**
@@ -153,18 +160,10 @@ export class AirtableClient {
       );
 
       if (response.status !== 200) {
-        let errorDetails = `HTTP ${response.status}`;
-        try {
-          const errorJson = response.json;
-          errorDetails += `: ${errorJson?.error?.message || JSON.stringify(errorJson)}`;
-        } catch {
-          // Ignore if response body isn't valid JSON
-        }
         return {
           success: false,
           recordId,
-          updatedFields: {},
-          error: `Failed to update Airtable record: ${errorDetails}`
+          error: `Failed to update Airtable record: ${this.extractErrorDetails(response)}`
         };
       }
 
@@ -178,7 +177,6 @@ export class AirtableClient {
       return {
         success: false,
         recordId,
-        updatedFields: {},
         error: error instanceof Error ? error.message : "Unknown error occurred"
       };
     }
@@ -216,33 +214,24 @@ export class AirtableClient {
       );
 
       if (response.status !== 200) {
-        let errorDetails = `HTTP ${response.status}`;
-        try {
-          const errorJson = response.json;
-          errorDetails += `: ${errorJson?.error?.message || JSON.stringify(errorJson)}`;
-        } catch {
-          // Ignore if response body isn't valid JSON
-        }
-
+        const errorDetails = this.extractErrorDetails(response);
         return updates.map(update => ({
-          success: false,
+          success: false as const,
           recordId: update.recordId,
-          updatedFields: {},
           error: `Failed to batch update Airtable records: ${errorDetails}`
         }));
       }
 
       const json = response.json;
       return json.records.map((record: { id: string; fields: Record<string, unknown> }) => ({
-        success: true,
+        success: true as const,
         recordId: record.id,
         updatedFields: record.fields,
       }));
     } catch (error) {
       return updates.map(update => ({
-        success: false,
+        success: false as const,
         recordId: update.recordId,
-        updatedFields: {},
         error: error instanceof Error ? error.message : "Unknown error occurred"
       }));
     }
