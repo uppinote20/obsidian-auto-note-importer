@@ -1,35 +1,18 @@
 /**
  * Auto Note Importer - Main Plugin Entry Point
  *
- * This plugin syncs notes bidirectionally between Airtable and Obsidian.
- * Refactored for better separation of concerns and maintainability.
+ * Orchestrates Airtable <-> Obsidian sync via services, core logic, and file operations.
  */
 
 import { Plugin, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
-
-// Types
-import type { AutoNoteImporterSettings, RemoteNote, SyncMode, SyncScope, NoteCreationResult } from './types';
+import type { AutoNoteImporterSettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult } from './types';
 import { DEFAULT_SETTINGS } from './types';
-
-// Constants
 import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from './constants';
-
-// Services
 import { AirtableClient, FieldCache, RateLimiter } from './services';
-
-// Core
 import { SyncQueue, ConflictResolver } from './core';
-
-// File Operations
 import { FrontmatterParser, FileWatcher } from './file-operations';
-
-// Builders
 import { parseTemplate, buildMarkdownContent } from './builders';
-
-// UI
 import { AutoNoteImporterSettingTab } from './ui';
-
-// Utils
 import { sanitizeFileName, sanitizeFolderPath, validateAndSanitizeFilename } from './utils';
 
 /**
@@ -72,9 +55,15 @@ export default class AutoNoteImporterPlugin extends Plugin {
     this.frontmatterParser = new FrontmatterParser(this.app);
     this.conflictResolver = new ConflictResolver(this.settings, this.airtableClient);
 
-    this.syncQueue = new SyncQueue(async (request) => {
-      await this.processSyncRequest(request.mode, request.scope, request.filePaths);
-    });
+    this.syncQueue = new SyncQueue(
+      async (request) => {
+        await this.processSyncRequest(request.mode, request.scope, request.filePaths);
+      },
+      (error) => {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Sync failed: ${message}`);
+      }
+    );
 
     this.fileWatcher = new FileWatcher(
       this.app,
@@ -98,7 +87,6 @@ export default class AutoNoteImporterPlugin extends Plugin {
    * Commands requiring bidirectional sync use checkCallback to hide when disabled.
    */
   private registerCommands(): void {
-    // Sync from Airtable (always available)
     this.addCommand({
       id: "sync-current-from-airtable",
       name: "Sync current note from Airtable",
@@ -111,64 +99,21 @@ export default class AutoNoteImporterPlugin extends Plugin {
       callback: () => this.syncQueue.enqueue('from-airtable', 'all')
     });
 
-    // Sync to Airtable (hidden when bidirectional sync disabled)
-    this.addCommand({
-      id: "sync-current-to-airtable",
-      name: "Sync current note to Airtable",
-      checkCallback: (checking) => {
-        if (!this.settings.bidirectionalSync) return false;
-        if (!checking) this.syncQueue.enqueue('to-airtable', 'current');
-        return true;
-      }
-    });
+    this.addBidirectionalCommand("sync-current-to-airtable", "Sync current note to Airtable", 'to-airtable', 'current');
+    this.addBidirectionalCommand("sync-modified-to-airtable", "Sync modified notes to Airtable", 'to-airtable', 'modified');
+    this.addBidirectionalCommand("sync-all-to-airtable", "Sync all notes to Airtable", 'to-airtable', 'all');
+    this.addBidirectionalCommand("bidirectional-sync-current", "Bidirectional sync current note (with formulas)", 'bidirectional', 'current');
+    this.addBidirectionalCommand("bidirectional-sync-modified", "Bidirectional sync modified notes (with formulas)", 'bidirectional', 'modified');
+    this.addBidirectionalCommand("bidirectional-sync-all", "Bidirectional sync all notes (with formulas)", 'bidirectional', 'all');
+  }
 
+  private addBidirectionalCommand(id: string, name: string, mode: SyncMode, scope: SyncScope): void {
     this.addCommand({
-      id: "sync-modified-to-airtable",
-      name: "Sync modified notes to Airtable",
+      id,
+      name,
       checkCallback: (checking) => {
         if (!this.settings.bidirectionalSync) return false;
-        if (!checking) this.syncQueue.enqueue('to-airtable', 'modified');
-        return true;
-      }
-    });
-
-    this.addCommand({
-      id: "sync-all-to-airtable",
-      name: "Sync all notes to Airtable",
-      checkCallback: (checking) => {
-        if (!this.settings.bidirectionalSync) return false;
-        if (!checking) this.syncQueue.enqueue('to-airtable', 'all');
-        return true;
-      }
-    });
-
-    // Bidirectional sync (hidden when bidirectional sync disabled)
-    this.addCommand({
-      id: "bidirectional-sync-current",
-      name: "Bidirectional sync current note (with formulas)",
-      checkCallback: (checking) => {
-        if (!this.settings.bidirectionalSync) return false;
-        if (!checking) this.syncQueue.enqueue('bidirectional', 'current');
-        return true;
-      }
-    });
-
-    this.addCommand({
-      id: "bidirectional-sync-modified",
-      name: "Bidirectional sync modified notes (with formulas)",
-      checkCallback: (checking) => {
-        if (!this.settings.bidirectionalSync) return false;
-        if (!checking) this.syncQueue.enqueue('bidirectional', 'modified');
-        return true;
-      }
-    });
-
-    this.addCommand({
-      id: "bidirectional-sync-all",
-      name: "Bidirectional sync all notes (with formulas)",
-      checkCallback: (checking) => {
-        if (!this.settings.bidirectionalSync) return false;
-        if (!checking) this.syncQueue.enqueue('bidirectional', 'all');
+        if (!checking) this.syncQueue.enqueue(mode, scope);
         return true;
       }
     });
@@ -248,7 +193,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         if (!activeView?.file) {
           throw new Error("No active markdown file");
         }
-        if (!activeView.file.path.startsWith(folderPath)) {
+        if (!activeView.file.path.startsWith(folderPath + '/')) {
           throw new Error("Current file is not in the sync folder");
         }
         return [activeView.file];
@@ -266,8 +211,10 @@ export default class AutoNoteImporterPlugin extends Plugin {
         return this.collectMarkdownFiles(folder);
       }
 
-      default:
-        return [];
+      default: {
+        const _exhaustive: never = scope;
+        throw new Error(`Unknown sync scope: ${_exhaustive}`);
+      }
     }
   }
 
@@ -298,7 +245,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
     const file = activeView.file;
     const folderPath = normalizePath(this.settings.folderPath);
-    if (!file.path.startsWith(folderPath)) {
+    if (!file.path.startsWith(folderPath + '/')) {
       new Notice("Auto Note Importer: Current file is not in the sync folder");
       return;
     }
@@ -309,17 +256,23 @@ export default class AutoNoteImporterPlugin extends Plugin {
       return;
     }
 
-    const remoteNote = await this.airtableClient.fetchRecord(recordId);
-    if (!remoteNote) {
-      new Notice("Auto Note Importer: Record not found in Airtable");
-      return;
-    }
+    this.fileWatcher.setSyncing(true);
+    try {
+      const remoteNote = await this.airtableClient.fetchRecord(recordId);
+      if (!remoteNote) {
+        new Notice("Auto Note Importer: Record not found in Airtable");
+        return;
+      }
 
-    const result = await this.createNoteFromRemote(remoteNote);
-    if (result === "updated") {
-      new Notice("Auto Note Importer: Current note updated from Airtable");
-    } else if (result === "skipped") {
-      new Notice("Auto Note Importer: No changes detected");
+      const result = await this.createNoteFromRemote(remoteNote);
+      if (result === "updated") {
+        new Notice("Auto Note Importer: Current note updated from Airtable");
+      } else if (result === "skipped") {
+        new Notice("Auto Note Importer: No changes detected");
+      }
+    } finally {
+      this.fileWatcher.clearPending();
+      this.fileWatcher.setSyncing(false);
     }
   }
 
@@ -332,35 +285,42 @@ export default class AutoNoteImporterPlugin extends Plugin {
       await this.app.vault.createFolder(folderPath);
     }
 
-    const remoteNotes = await this.airtableClient.fetchNotes();
+    this.fileWatcher.setSyncing(true);
+    try {
+      const remoteNotes = await this.airtableClient.fetchNotes();
 
-    let existingPrimaryFields: Set<string> | null = null;
-    if (!this.settings.allowOverwrite) {
-      existingPrimaryFields = await this.frontmatterParser.loadExistingPrimaryFields(folderPath);
-    }
-
-    let createdCount = 0;
-    let updatedCount = 0;
-    let skippedCount = 0;
-
-    for (const note of remoteNotes) {
-      const shouldProcess = this.settings.allowOverwrite ||
-        !existingPrimaryFields?.has(note.primaryField);
-
-      if (shouldProcess) {
-        const result = await this.createNoteFromRemote(note);
-        if (result === "created") createdCount++;
-        if (result === "updated") updatedCount++;
-      } else {
-        skippedCount++;
+      let existingPrimaryFields: Set<string> | null = null;
+      if (!this.settings.allowOverwrite) {
+        existingPrimaryFields = await this.frontmatterParser.loadExistingPrimaryFields(folderPath);
       }
-    }
 
-    let summary = `Auto Note Importer: Sync complete: ${createdCount} created, ${updatedCount} updated.`;
-    if (skippedCount > 0) {
-      summary += ` (${skippedCount} skipped)`;
+      let createdCount = 0;
+      let updatedCount = 0;
+      let skippedCount = 0;
+      let errorCount = 0;
+
+      for (const note of remoteNotes) {
+        const shouldProcess = this.settings.allowOverwrite ||
+          !existingPrimaryFields?.has(note.primaryField);
+
+        if (shouldProcess) {
+          const result = await this.createNoteFromRemote(note);
+          if (result === "created") createdCount++;
+          else if (result === "updated") updatedCount++;
+          else if (result === "error") errorCount++;
+        } else {
+          skippedCount++;
+        }
+      }
+
+      let summary = `Auto Note Importer: Sync complete: ${createdCount} created, ${updatedCount} updated.`;
+      if (skippedCount > 0) summary += ` (${skippedCount} skipped)`;
+      if (errorCount > 0) summary += ` (${errorCount} errors)`;
+      new Notice(summary);
+    } finally {
+      this.fileWatcher.clearPending();
+      this.fileWatcher.setSyncing(false);
     }
-    new Notice(summary);
   }
 
   /**
@@ -399,7 +359,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       }
     } catch {
       new Notice(`Auto Note Importer: Failed to save note: ${safeTitle}`);
-      return "skipped";
+      return "error";
     }
   }
 
@@ -424,7 +384,11 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
         const sanitized = sanitizeFileName(String(rawValue));
         return sanitized || note.primaryField;
-      } catch {
+      } catch (error) {
+        if (this.settings.debugMode) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: Filename field error: ${message}`);
+        }
         const sanitized = sanitizeFileName(String(rawValue));
         return sanitized || note.primaryField;
       }
@@ -483,7 +447,6 @@ export default class AutoNoteImporterPlugin extends Plugin {
   private async syncFilesToAirtable(files: TFile[]): Promise<void> {
     const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
 
-    // Auto-load field cache if empty (prevents read-only fields from being pushed)
     let cachedFields = this.fieldCache.getFields(cacheKey);
     if (!cachedFields && this.settings.apiKey && this.settings.baseId && this.settings.tableId) {
       try {
@@ -492,39 +455,76 @@ export default class AutoNoteImporterPlugin extends Plugin {
           this.settings.baseId,
           this.settings.tableId
         );
-      } catch {
-        new Notice("Auto Note Importer: Field metadata unavailable. Sync may fail for computed fields.");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Field metadata unavailable: ${message}`);
       }
     }
 
-    const batchUpdates: Array<{ recordId: string; fields: Record<string, unknown> }> = [];
+    const batchUpdates: BatchUpdate[] = [];
+    let errorCount = 0;
+    const skipConflictDetection = this.conflictResolver.shouldSkipConflictDetection();
 
     for (const file of files) {
       const recordId = this.frontmatterParser.getRecordId(file);
-      if (!recordId) continue;
+      if (!recordId) {
+        if (this.settings.debugMode) {
+          new Notice(`Auto Note Importer: Skipping ${file.name} (no primaryField)`);
+        }
+        continue;
+      }
 
       const fields = this.frontmatterParser.extractSyncableFields(file, cachedFields);
-      if (fields) {
-        batchUpdates.push({ recordId, fields });
+      if (!fields) continue;
+
+      if (!skipConflictDetection) {
+        try {
+          const conflicts = await this.conflictResolver.detectConflicts(recordId, fields, file.path);
+          if (conflicts.length > 0) {
+            const result = await this.conflictResolver.resolve(conflicts, fields, recordId);
+            if (result.success) {
+              // Already synced via resolve — no batch needed
+            } else {
+              errorCount++;
+            }
+            continue;
+          }
+        } catch (error) {
+          errorCount++;
+          if (this.settings.debugMode) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            new Notice(`Auto Note Importer: Conflict check failed for ${file.name}: ${message}`);
+          }
+          continue;
+        }
       }
+
+      batchUpdates.push({ recordId, fields });
     }
 
-    if (batchUpdates.length === 0) return;
-
     let syncedCount = 0;
-    let errorCount = 0;
 
     for (let i = 0; i < batchUpdates.length; i += AIRTABLE_BATCH_SIZE) {
       const batch = batchUpdates.slice(i, i + AIRTABLE_BATCH_SIZE);
 
       try {
         const results = await this.airtableClient.batchUpdate(batch);
-        results.forEach(result => {
-          if (result.success) syncedCount++;
-          else errorCount++;
-        });
-      } catch {
+        const failures: string[] = [];
+        for (const result of results) {
+          if (result.success) {
+            syncedCount++;
+          } else {
+            errorCount++;
+            failures.push(result.error);
+          }
+        }
+        if (failures.length > 0) {
+          new Notice(`Auto Note Importer: Batch errors: ${failures.join('; ')}`);
+        }
+      } catch (error) {
         errorCount += batch.length;
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Batch update failed: ${message}`);
       }
     }
 
