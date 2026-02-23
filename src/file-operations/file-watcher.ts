@@ -3,7 +3,7 @@
  */
 
 import type { App, TFile, EventRef } from "obsidian";
-import { normalizePath } from "obsidian";
+import { normalizePath, Notice } from "obsidian";
 import { DEBUG_DELAY_MULTIPLIER } from '../constants';
 import type { AutoNoteImporterSettings } from '../types';
 
@@ -88,10 +88,11 @@ export class FileWatcher {
    * Handles a file change event.
    */
   private handleFileChange(file: TFile): void {
+    if (this.isSyncing) return;
+
     const folderPath = normalizePath(this.settings.folderPath);
 
-    // Check if the file is in our target folder
-    if (!file.path.startsWith(folderPath)) {
+    if (!file.path.startsWith(folderPath + '/')) {
       return;
     }
 
@@ -123,7 +124,11 @@ export class FileWatcher {
         try {
           const files = this.getPendingFiles();
           await this.onFilesReady(files);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: File sync failed: ${message}`);
         } finally {
+          this.pendingFiles.clear();
           this.isSyncing = false;
         }
       }
@@ -131,7 +136,7 @@ export class FileWatcher {
   }
 
   /**
-   * Gets all pending files and clears the pending set.
+   * Gets all pending files as TFile references (resolves paths via vault).
    */
   getPendingFiles(): TFile[] {
     const files: TFile[] = [];
@@ -145,46 +150,9 @@ export class FileWatcher {
   }
 
   /**
-   * Adds a file to the pending set.
-   */
-  addPendingFile(path: string): void {
-    this.pendingFiles.add(path);
-  }
-
-  /**
-   * Removes a file from the pending set.
-   */
-  removePendingFile(path: string): void {
-    this.pendingFiles.delete(path);
-  }
-
-  /**
    * Clears all pending files.
    */
   clearPending(): void {
     this.pendingFiles.clear();
-  }
-
-  /**
-   * Gets the count of pending files.
-   */
-  get pendingCount(): number {
-    return this.pendingFiles.size;
-  }
-
-  /**
-   * Cleans up non-existent files from the pending set.
-   */
-  cleanup(): void {
-    const toRemove: string[] = [];
-
-    for (const filePath of this.pendingFiles) {
-      const file = this.app.vault.getAbstractFileByPath(filePath);
-      if (!file || !('extension' in file)) {
-        toRemove.push(filePath);
-      }
-    }
-
-    toRemove.forEach(path => this.pendingFiles.delete(path));
   }
 }

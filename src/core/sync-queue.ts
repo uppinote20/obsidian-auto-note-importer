@@ -4,12 +4,17 @@
  */
 
 import { generateId } from '../utils';
-import type { SyncRequest, SyncMode, SyncScope, QueueStatus } from '../types';
+import type { SyncRequest, SyncMode, SyncScope } from '../types';
 
 /**
  * Processor function type for handling sync requests.
  */
 export type SyncProcessor = (request: SyncRequest) => Promise<void>;
+
+/**
+ * Error callback type for sync failures.
+ */
+export type SyncErrorCallback = (error: unknown, request: SyncRequest) => void;
 
 /**
  * Manages sync requests in a queue to prevent race conditions.
@@ -19,9 +24,11 @@ export class SyncQueue {
   private isProcessing = false;
   private currentRequest: SyncRequest | null = null;
   private processor: SyncProcessor;
+  private onError?: SyncErrorCallback;
 
-  constructor(processor: SyncProcessor) {
+  constructor(processor: SyncProcessor, onError?: SyncErrorCallback) {
     this.processor = processor;
+    this.onError = onError;
   }
 
   /**
@@ -81,7 +88,7 @@ export class SyncQueue {
       try {
         await this.processor(this.currentRequest);
       } catch (error) {
-        console.error('Sync request failed:', error);
+        this.onError?.(error, this.currentRequest);
       }
 
       this.currentRequest = null;
@@ -90,42 +97,4 @@ export class SyncQueue {
     this.isProcessing = false;
   }
 
-  /**
-   * Gets the current queue status.
-   */
-  get status(): QueueStatus {
-    return {
-      isProcessing: this.isProcessing,
-      pendingCount: this.queue.length,
-      currentRequest: this.currentRequest
-    };
-  }
-
-  /**
-   * Checks if the queue is currently processing.
-   */
-  get processing(): boolean {
-    return this.isProcessing;
-  }
-
-  /**
-   * Gets the number of pending requests.
-   */
-  get pendingCount(): number {
-    return this.queue.length;
-  }
-
-  /**
-   * Clears all pending requests.
-   */
-  clear(): void {
-    this.queue = [];
-  }
-
-  /**
-   * Checks if there's a pending request matching the criteria.
-   */
-  hasPending(mode: SyncMode, scope?: SyncScope): boolean {
-    return this.queue.some(r => r.mode === mode && (!scope || r.scope === scope));
-  }
 }
