@@ -140,6 +140,140 @@ Content here`;
     });
   });
 
+  describe('extractSyncableFields', () => {
+    it('should exclude fields not present in Airtable when cachedFields is provided', () => {
+      const mockApp = {
+        metadataCache: {
+          getFileCache: vi.fn().mockReturnValue({
+            frontmatter: {
+              primaryField: 'rec123',
+              Name: 'Test',
+              Count: 100,
+              Status: 'Todo',
+              created: '2026-02-25',
+              status: 'imported',
+              position: { start: { line: 0 }, end: { line: 5 } }
+            }
+          })
+        },
+        vault: { getAbstractFileByPath: vi.fn() }
+      };
+      const parser = new FrontmatterParser(mockApp as any);
+      const mockFile = { path: 'test.md' } as any;
+
+      const cachedFields = [
+        { id: 'fld1', name: 'Name', type: 'singleLineText' },
+        { id: 'fld2', name: 'Count', type: 'number' },
+        { id: 'fld3', name: 'Status', type: 'singleSelect' },
+        { id: 'fld4', name: 'Cal', type: 'formula' }
+      ];
+
+      const result = parser.extractSyncableFields(mockFile, cachedFields);
+
+      expect(result).toEqual({ Name: 'Test', Count: 100, Status: 'Todo' });
+      expect(result).not.toHaveProperty('created');
+      expect(result).not.toHaveProperty('status');
+      expect(result).not.toHaveProperty('Cal');
+      expect(result).not.toHaveProperty('primaryField');
+    });
+
+    it('should include all non-system fields when no cachedFields provided', () => {
+      const mockApp = {
+        metadataCache: {
+          getFileCache: vi.fn().mockReturnValue({
+            frontmatter: {
+              primaryField: 'rec123',
+              Name: 'Test',
+              Count: 100,
+              created: '2026-02-25',
+              status: 'imported',
+              position: { start: { line: 0 }, end: { line: 5 } }
+            }
+          })
+        },
+        vault: { getAbstractFileByPath: vi.fn() }
+      };
+      const parser = new FrontmatterParser(mockApp as any);
+      const mockFile = { path: 'test.md' } as any;
+
+      const result = parser.extractSyncableFields(mockFile, undefined);
+
+      expect(result).toHaveProperty('Name');
+      expect(result).toHaveProperty('Count');
+      expect(result).toHaveProperty('created');
+      expect(result).toHaveProperty('status');
+      expect(result).not.toHaveProperty('primaryField');
+    });
+
+    it('should return null when no primaryField exists', () => {
+      const mockApp = {
+        metadataCache: {
+          getFileCache: vi.fn().mockReturnValue({
+            frontmatter: { Name: 'Test', Count: 100 }
+          })
+        },
+        vault: { getAbstractFileByPath: vi.fn() }
+      };
+      const parser = new FrontmatterParser(mockApp as any);
+      const mockFile = { path: 'test.md' } as any;
+
+      const result = parser.extractSyncableFields(mockFile, []);
+      expect(result).toBeNull();
+    });
+
+    it('should return null when all fields are filtered out', () => {
+      const mockApp = {
+        metadataCache: {
+          getFileCache: vi.fn().mockReturnValue({
+            frontmatter: {
+              primaryField: 'rec123',
+              Cal: 200,
+              position: { start: { line: 0 }, end: { line: 3 } }
+            }
+          })
+        },
+        vault: { getAbstractFileByPath: vi.fn() }
+      };
+      const parser = new FrontmatterParser(mockApp as any);
+      const mockFile = { path: 'test.md' } as any;
+
+      const cachedFields = [
+        { id: 'fld1', name: 'Cal', type: 'formula' }
+      ];
+
+      const result = parser.extractSyncableFields(mockFile, cachedFields);
+      expect(result).toBeNull();
+    });
+
+    it('should skip null and undefined values', () => {
+      const mockApp = {
+        metadataCache: {
+          getFileCache: vi.fn().mockReturnValue({
+            frontmatter: {
+              primaryField: 'rec123',
+              Name: 'Test',
+              Empty: null,
+              Missing: undefined,
+              position: { start: { line: 0 }, end: { line: 4 } }
+            }
+          })
+        },
+        vault: { getAbstractFileByPath: vi.fn() }
+      };
+      const parser = new FrontmatterParser(mockApp as any);
+      const mockFile = { path: 'test.md' } as any;
+
+      const cachedFields = [
+        { id: 'fld1', name: 'Name', type: 'singleLineText' },
+        { id: 'fld2', name: 'Empty', type: 'singleLineText' },
+        { id: 'fld3', name: 'Missing', type: 'singleLineText' }
+      ];
+
+      const result = parser.extractSyncableFields(mockFile, cachedFields);
+      expect(result).toEqual({ Name: 'Test' });
+    });
+  });
+
   describe('edge cases', () => {
     it('should handle frontmatter with only dashes', () => {
       const parser = createParser();

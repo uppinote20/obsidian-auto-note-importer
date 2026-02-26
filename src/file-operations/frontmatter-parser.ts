@@ -55,10 +55,10 @@ export class FrontmatterParser {
         continue;
       }
 
-      // Check if field is read-only (formula, rollup, etc.)
+      // When field metadata is available, only sync fields that exist in Airtable and are writable
       if (cachedFields) {
         const fieldInfo = cachedFields.find(f => f.name === key);
-        if (fieldInfo && isReadOnlyFieldType(fieldInfo.type)) {
+        if (!fieldInfo || isReadOnlyFieldType(fieldInfo.type)) {
           continue;
         }
       }
