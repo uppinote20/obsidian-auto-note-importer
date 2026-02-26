@@ -1,248 +1,338 @@
-import { Plugin, TFile, TFolder, normalizePath, Notice } from "obsidian";
-import { AutoNoteImporterSettings, DEFAULT_SETTINGS, AutoNoteImporterSettingTab } from "./settings";
-import { fetchNotes, RemoteNote } from "./fetcher";
-import { buildMarkdownContent, parseTemplate } from "./note-builder";
-// import { sanitizeFileName } from "./utils";
-import { formatYamlValue, sanitizeFolderPath, validateAndSanitizeFilename, sanitizeFileName } from "./utils";
+/**
+ * Auto Note Importer - Main Plugin Entry Point
+ *
+ * Orchestrates Airtable <-> Obsidian sync via services, core logic, and file operations.
+ */
+
+import { Plugin, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
+import type { AutoNoteImporterSettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult } from './types';
+import { DEFAULT_SETTINGS } from './types';
+import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from './constants';
+import { AirtableClient, FieldCache, RateLimiter } from './services';
+import { SyncQueue, ConflictResolver } from './core';
+import { FrontmatterParser, FileWatcher } from './file-operations';
+import { parseTemplate, buildMarkdownContent } from './builders';
+import { AutoNoteImporterSettingTab } from './ui';
+import { sanitizeFileName, sanitizeFolderPath, validateAndSanitizeFilename } from './utils';
 
 /**
- * The main plugin class for Auto Note Importer.
- * Handles loading settings, scheduling synchronization, fetching remote notes,
- * and creating/updating local notes in Obsidian.
+ * Main plugin class for Auto Note Importer.
  */
 export default class AutoNoteImporterPlugin extends Plugin {
-  // Stores the plugin settings.
   settings: AutoNoteImporterSettings;
-  // Holds the ID of the interval timer used for scheduled synchronization.
-  // Null if scheduling is disabled or not started.
-  intervalId: number | null = null;
-  // Reference to the settings tab for accessing cached field information
-  settingTab: AutoNoteImporterSettingTab;
+  private intervalId: number | null = null;
+  private settingTab: AutoNoteImporterSettingTab;
 
-  // When plugin loaded
+  // Services
+  private airtableClient: AirtableClient;
+  private fieldCache: FieldCache;
+  private rateLimiter: RateLimiter;
+
+  // Core
+  private syncQueue: SyncQueue;
+  private conflictResolver: ConflictResolver;
+
+  // File Operations
+  private frontmatterParser: FrontmatterParser;
+  private fileWatcher: FileWatcher;
+
   async onload() {
-
     await this.loadSettings();
-    this.settingTab = new AutoNoteImporterSettingTab(this.app, this);
-    this.addSettingTab(this.settingTab);
-    
-    this.addCommand({
-      id: "sync-notes-now",
-      name: "Sync notes now",
-      callback: async () => {
-        new Notice("Auto Note Importer: 🚀 Starting sync...");
-        await this.syncNotes();
-      }
-    });
-
+    this.initializeServices();
+    this.registerCommands();
     this.startScheduler();
   }
 
-  // When plugin unloaded
-  onunload() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-    }
+  /**
+   * Initializes all service instances.
+   */
+  private initializeServices(): void {
+    this.rateLimiter = new RateLimiter();
+    this.rateLimiter.setDebugMode(this.settings.debugMode);
+    this.fieldCache = new FieldCache();
+    this.airtableClient = new AirtableClient(this.settings, this.rateLimiter);
+
+    this.frontmatterParser = new FrontmatterParser(this.app);
+    this.conflictResolver = new ConflictResolver(this.settings, this.airtableClient);
+
+    this.syncQueue = new SyncQueue(
+      async (request) => {
+        await this.processSyncRequest(request.mode, request.scope, request.filePaths);
+      },
+      (error) => {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Sync failed: ${message}`);
+      }
+    );
+
+    this.fileWatcher = new FileWatcher(
+      this.app,
+      this.settings,
+      async (files) => {
+        if (this.settings.autoSyncFormulas) {
+          await this.syncQueue.enqueue('bidirectional', 'modified', files.map(f => f.path));
+        } else {
+          await this.syncQueue.enqueue('to-airtable', 'modified', files.map(f => f.path));
+        }
+      }
+    );
+    this.fileWatcher.setup();
+
+    this.settingTab = new AutoNoteImporterSettingTab(this.app, this, this.fieldCache);
+    this.addSettingTab(this.settingTab);
   }
 
-  // Load settings from data storage
-  async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  /**
+   * Registers all plugin commands.
+   * Commands requiring bidirectional sync use checkCallback to hide when disabled.
+   */
+  private registerCommands(): void {
+    this.addCommand({
+      id: "sync-current-from-airtable",
+      name: "Sync current note from Airtable",
+      callback: () => this.syncQueue.enqueue('from-airtable', 'current')
+    });
+
+    this.addCommand({
+      id: "sync-all-from-airtable",
+      name: "Sync all notes from Airtable",
+      callback: () => this.syncQueue.enqueue('from-airtable', 'all')
+    });
+
+    this.addBidirectionalCommand("sync-current-to-airtable", "Sync current note to Airtable", 'to-airtable', 'current');
+    this.addBidirectionalCommand("sync-modified-to-airtable", "Sync modified notes to Airtable", 'to-airtable', 'modified');
+    this.addBidirectionalCommand("sync-all-to-airtable", "Sync all notes to Airtable", 'to-airtable', 'all');
+    this.addBidirectionalCommand("bidirectional-sync-current", "Bidirectional sync current note (with formulas)", 'bidirectional', 'current');
+    this.addBidirectionalCommand("bidirectional-sync-modified", "Bidirectional sync modified notes (with formulas)", 'bidirectional', 'modified');
+    this.addBidirectionalCommand("bidirectional-sync-all", "Bidirectional sync all notes (with formulas)", 'bidirectional', 'all');
   }
 
-  // Save settings to data storage
-  async saveSettings() {
-    await this.saveData(this.settings);
+  private addBidirectionalCommand(id: string, name: string, mode: SyncMode, scope: SyncScope): void {
+    this.addCommand({
+      id,
+      name,
+      checkCallback: (checking) => {
+        if (!this.settings.bidirectionalSync) return false;
+        if (!checking) this.syncQueue.enqueue(mode, scope);
+        return true;
+      }
+    });
   }
 
-  startScheduler() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-    }
+  /**
+   * Processes a sync request from the queue.
+   */
+  private async processSyncRequest(mode: SyncMode, scope: SyncScope, filePaths?: string[]): Promise<void> {
+    const statusBarItem = this.addStatusBarItem();
 
-    // Starts the automatic synchronization scheduler based on the interval
-    if (this.settings.syncInterval > 0) {
-      this.intervalId = window.setInterval(async () => {
-        await this.syncNotes();
-      }, this.settings.syncInterval * 60 * 1000);
+    try {
+      const files = filePaths
+        ? filePaths.map(p => this.app.vault.getAbstractFileByPath(p)).filter((f): f is TFile => f instanceof TFile)
+        : await this.getFilesToSync(scope);
+
+      if (files.length === 0 && mode !== 'from-airtable') {
+        new Notice(`Auto Note Importer: No files to sync for scope: ${scope}`);
+        return;
+      }
+
+      switch (mode) {
+        case 'to-airtable':
+          statusBarItem.setText(`Syncing ${files.length} file(s) to Airtable...`);
+          await this.syncFilesToAirtable(files);
+          new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
+          break;
+
+        case 'from-airtable':
+          if (scope === 'current') {
+            statusBarItem.setText("Syncing current note from Airtable...");
+            await this.syncCurrentFromAirtable();
+          } else {
+            statusBarItem.setText("Syncing from Airtable...");
+            await this.syncFromAirtable();
+          }
+          break;
+
+        case 'bidirectional':
+          statusBarItem.setText(`Phase 1/2 - Syncing ${files.length} file(s) to Airtable...`);
+          await this.syncFilesToAirtable(files);
+
+          if (this.settings.autoSyncFormulas) {
+            const delay = this.settings.debugMode
+              ? this.settings.formulaSyncDelay * DEBUG_DELAY_MULTIPLIER
+              : this.settings.formulaSyncDelay;
+            statusBarItem.setText(`Waiting ${delay}ms for formulas...`);
+            await this.sleep(delay);
+
+            statusBarItem.setText("Phase 2/2 - Fetching computed results...");
+            await this.syncFromAirtable();
+            new Notice("Auto Note Importer: Bidirectional sync complete!");
+          } else {
+            new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
+          }
+          break;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Auto Note Importer: Sync failed: ${message}`);
+    } finally {
+      statusBarItem.remove();
     }
   }
 
   /**
-   * Performs the core synchronization process:
-   * 1. Fetches notes from the remote source (e.g., Airtable).
-   * 2. Determines which notes need to be created or updated based on settings.
-   * 3. Calls `createNoteFromRemote` for each note to be processed.
-   * 4. Displays status notices (start, completion, errors).
+   * Gets files to sync based on scope.
    */
-  async syncNotes() {
-    const statusBarItem = this.addStatusBarItem();
-    
-    try {
-      statusBarItem.setText("Auto Note Importer: Preparing...");
-      const folderPath = normalizePath(this.settings.folderPath);
-      if (!await this.app.vault.adapter.exists(folderPath)) {
-        await this.app.vault.createFolder(folderPath);
+  private async getFilesToSync(scope: SyncScope): Promise<TFile[]> {
+    const folderPath = normalizePath(this.settings.folderPath);
+
+    switch (scope) {
+      case 'current': {
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!activeView?.file) {
+          throw new Error("No active markdown file");
+        }
+        if (!activeView.file.path.startsWith(folderPath + '/')) {
+          throw new Error("Current file is not in the sync folder");
+        }
+        return [activeView.file];
       }
 
-      statusBarItem.setText("Auto Note Importer: Fetching from Airtable...");
-      const remoteNotes = await fetchNotes(this.settings);
+      case 'modified': {
+        return this.fileWatcher.getPendingFiles();
+      }
 
-      let existingPrimaryField: Set<string> | null = null;
-      if (!this.settings.allowOverwrite) {
-        existingPrimaryField = await this.loadExistingPrimaryField(this.settings.folderPath);
+      case 'all': {
+        const folder = this.app.vault.getAbstractFileByPath(folderPath);
+        if (!(folder instanceof TFolder)) {
+          throw new Error("Sync folder not found");
         }
-      
+        return this.collectMarkdownFiles(folder);
+      }
+
+      default: {
+        const _exhaustive: never = scope;
+        throw new Error(`Unknown sync scope: ${_exhaustive}`);
+      }
+    }
+  }
+
+  /**
+   * Collects all markdown files from a folder recursively.
+   */
+  private collectMarkdownFiles(folder: TFolder): TFile[] {
+    const files: TFile[] = [];
+    for (const child of folder.children) {
+      if (child instanceof TFile && child.extension === 'md') {
+        files.push(child);
+      } else if (child instanceof TFolder) {
+        files.push(...this.collectMarkdownFiles(child));
+      }
+    }
+    return files;
+  }
+
+  /**
+   * Syncs only the current note from Airtable.
+   */
+  private async syncCurrentFromAirtable(): Promise<void> {
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!activeView?.file) {
+      new Notice("Auto Note Importer: No active markdown file");
+      return;
+    }
+
+    const file = activeView.file;
+    const folderPath = normalizePath(this.settings.folderPath);
+    if (!file.path.startsWith(folderPath + '/')) {
+      new Notice("Auto Note Importer: Current file is not in the sync folder");
+      return;
+    }
+
+    const recordId = this.frontmatterParser.getRecordId(file);
+    if (!recordId) {
+      new Notice("Auto Note Importer: No primaryField found in current file");
+      return;
+    }
+
+    this.fileWatcher.setSyncing(true);
+    try {
+      const remoteNote = await this.airtableClient.fetchRecord(recordId);
+      if (!remoteNote) {
+        new Notice("Auto Note Importer: Record not found in Airtable");
+        return;
+      }
+
+      const result = await this.createNoteFromRemote(remoteNote);
+      if (result === "updated") {
+        new Notice("Auto Note Importer: Current note updated from Airtable");
+      } else if (result === "skipped") {
+        new Notice("Auto Note Importer: No changes detected");
+      }
+    } finally {
+      this.fileWatcher.clearPending();
+      this.fileWatcher.setSyncing(false);
+    }
+  }
+
+  /**
+   * Syncs all notes from Airtable to Obsidian.
+   */
+  private async syncFromAirtable(): Promise<void> {
+    const folderPath = normalizePath(this.settings.folderPath);
+    if (!await this.app.vault.adapter.exists(folderPath)) {
+      await this.app.vault.createFolder(folderPath);
+    }
+
+    this.fileWatcher.setSyncing(true);
+    try {
+      const remoteNotes = await this.airtableClient.fetchNotes();
+
+      let existingPrimaryFields: Set<string> | null = null;
+      if (!this.settings.allowOverwrite) {
+        existingPrimaryFields = await this.frontmatterParser.loadExistingPrimaryFields(folderPath);
+      }
+
       let createdCount = 0;
       let updatedCount = 0;
       let skippedCount = 0;
-      
-      for (let i = 0; i < remoteNotes.length; i++) {
-        const note = remoteNotes[i];
-        const shouldProcess = this.settings.allowOverwrite || (existingPrimaryField && !existingPrimaryField.has(note.primaryField));
+      let errorCount = 0;
 
-        // Update status bar with progress
-        statusBarItem.setText(`Auto Note Importer: Processing ${i + 1}/${remoteNotes.length}`);
+      for (const note of remoteNotes) {
+        const shouldProcess = this.settings.allowOverwrite ||
+          !existingPrimaryFields?.has(note.primaryField);
 
         if (shouldProcess) {
           const result = await this.createNoteFromRemote(note);
           if (result === "created") createdCount++;
-          if (result === "updated") updatedCount++;
+          else if (result === "updated") updatedCount++;
+          else if (result === "error") errorCount++;
         } else {
           skippedCount++;
         }
       }
 
-      // Clean up status bar
-      statusBarItem.remove();
-      
-      let summary = `Auto Note Importer: ✅ Sync complete: ${createdCount} created, ${updatedCount} updated.`;
-      if (skippedCount > 0) {
-        summary += ` (${skippedCount} skipped)`;
-      }
+      let summary = `Auto Note Importer: Sync complete: ${createdCount} created, ${updatedCount} updated.`;
+      if (skippedCount > 0) summary += ` (${skippedCount} skipped)`;
+      if (errorCount > 0) summary += ` (${errorCount} errors)`;
       new Notice(summary);
-    } catch (error: any) {
-      statusBarItem.remove();
-      new Notice(`Auto Note Importer: ❌ Error during sync. ${error.message || "Please check your Airtable settings and network connection."}`);
+    } finally {
+      this.fileWatcher.clearPending();
+      this.fileWatcher.setSyncing(false);
     }
   }
 
   /**
-   * Scans the target folder for existing notes and extracts the value of the `primaryField` from their frontmatter.
-   * Recursively searches subfolders to handle subfolder organization.
-   * @param folderPath The path to the folder where notes are stored.
-   * @returns A Promise that resolves to a Set containing the primaryField values of existing notes.
+   * Creates or updates a note from a remote Airtable record.
    */
-  async loadExistingPrimaryField(folderPath: string): Promise<Set<string>> {
-    const folder = this.app.vault.getAbstractFileByPath(normalizePath(folderPath));
-    const primaryField = new Set<string>();
-
-    if (folder instanceof TFolder) {
-      await this.scanFolderRecursively(folder, primaryField, 0, 10); // Max depth of 10
-    }
-    return primaryField;
-  }
-
-  /**
-   * Recursively scans a folder and its subfolders for markdown files with primaryField frontmatter.
-   * @param folder The folder to scan
-   * @param primaryField The Set to add found primaryField values to
-   * @param currentDepth Current recursion depth
-   * @param maxDepth Maximum recursion depth to prevent infinite loops
-   */
-  private async scanFolderRecursively(folder: TFolder, primaryField: Set<string>, currentDepth = 0, maxDepth = 10): Promise<void> {
-    if (currentDepth >= maxDepth) {
-      return; // Prevent excessive recursion
-    }
-
-    for (const file of folder.children) {
-      if (file instanceof TFile && file.extension === "md") {
-        const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-        if (frontmatter && frontmatter.primaryField) {
-          primaryField.add(String(frontmatter.primaryField));
-        }
-      } else if (file instanceof TFolder) {
-        // Recursively scan subfolders with depth tracking
-        await this.scanFolderRecursively(file, primaryField, currentDepth + 1, maxDepth);
-      }
-    }
-  }
-
-  /**
-   * Creates or updates a single note file in Obsidian based on a RemoteNote object.
-   * - Determines the filename based on settings or primary field.
-   * - Sanitizes the filename.
-   * - Checks if the file exists and whether overwriting is allowed.
-   * - Generates content using a template or the default builder.
-   * - Writes the content to the vault (creates or modifies the file).
-   * @param note The RemoteNote object containing the data for the note.
-   * @returns A Promise resolving to "created", "updated", or "skipped" based on the action taken.
-   */
-  async createNoteFromRemote(note: RemoteNote): Promise<"created" | "updated" | "skipped"> {
-    let safeTitle: string;
-
-    if (this.settings.filenameFieldName && note.fields.hasOwnProperty(this.settings.filenameFieldName)) {
-      const rawFilenameValue = note.fields[this.settings.filenameFieldName];
-
-      try {
-        // Get field type from cached fields to determine validation approach
-        const cacheKey = `${this.settings.baseId}-${this.settings.tableId}`;
-        const cachedFields = this.settingTab?.getCachedFields(cacheKey);
-        const fieldInfo = cachedFields?.find((f: {name: string; type: string}) => f.name === this.settings.filenameFieldName);
-        const fieldType = fieldInfo?.type;
-
-        if (fieldType === 'formula') {
-          // Apply strict validation only to formula fields
-          const validatedTitle = validateAndSanitizeFilename(rawFilenameValue);
-          if (validatedTitle) {
-            safeTitle = validatedTitle;
-          } else {
-            new Notice(`Auto Note Importer: ⚠️ Invalid filename from Formula field "${this.settings.filenameFieldName}". Using record ID as fallback.`);
-            safeTitle = note.primaryField;
-          }
-        } else {
-          // For other field types, just sanitize without strict validation
-          const sanitizedTitle = sanitizeFileName(String(rawFilenameValue));
-          safeTitle = sanitizedTitle || note.primaryField;
-        }
-      } catch (error) {
-        // Fallback to basic sanitization without console logging
-        const sanitizedTitle = sanitizeFileName(String(rawFilenameValue));
-        safeTitle = sanitizedTitle || note.primaryField;
-      }
-    } else {
-      // Fallback to primaryField (Airtable record ID) - already safe, no sanitization needed
-      safeTitle = note.primaryField;
-    }
-
-    // Final fallback if somehow we don't have a title
-    if (!safeTitle || safeTitle.trim() === '') {
-      safeTitle = note.id || 'untitled';
-    }
-    
-    // Determine the folder path based on subfolder field settings
-    let finalFolderPath = this.settings.folderPath;
-    
-    if (this.settings.subfolderFieldName && note.fields.hasOwnProperty(this.settings.subfolderFieldName)) {
-      const subfolderValue = note.fields[this.settings.subfolderFieldName];
-      if (subfolderValue !== null && subfolderValue !== undefined) {
-        const trimmedValue = String(subfolderValue).trim();
-        if (trimmedValue) {
-          const sanitizedSubfolder = sanitizeFolderPath(trimmedValue);
-          if (sanitizedSubfolder) {
-            finalFolderPath = `${this.settings.folderPath}/${sanitizedSubfolder}`;
-          }
-        }
-      }
-    }
-    
+  private async createNoteFromRemote(note: RemoteNote): Promise<NoteCreationResult> {
+    const safeTitle = this.determineFilename(note);
+    const finalFolderPath = this.determineFolderPath(note);
     const folderPath = normalizePath(finalFolderPath);
-    
-    // Ensure the folder exists (create if needed)
+
     if (!await this.app.vault.adapter.exists(folderPath)) {
       await this.app.vault.createFolder(folderPath);
     }
-    
+
     const filePath = normalizePath(`${folderPath}/${safeTitle}.md`);
     const existingFile = this.app.vault.getAbstractFileByPath(filePath);
 
@@ -250,84 +340,236 @@ export default class AutoNoteImporterPlugin extends Plugin {
       return "skipped";
     }
 
-    let content: string;
+    let content = await this.buildNoteContent(note);
+    content = this.frontmatterParser.ensurePrimaryField(content, note.primaryField);
 
-    if (this.settings.templatePath) {
-      const templateFile = this.app.vault.getAbstractFileByPath(normalizePath(this.settings.templatePath));
-      if (templateFile instanceof TFile) {
-        try {
-          const templateContent = await this.app.vault.read(templateFile);
-          content = parseTemplate(templateContent, note);
-        } catch (templateError) {
-          new Notice(`Auto Note Importer: ❌ Template error: ${templateError.message || 'Unknown error'}. Using default format.`);
-          content = buildMarkdownContent(note);
-        }
-      } else {
-        content = buildMarkdownContent(note);
-      }
-    } else {
-      content = buildMarkdownContent(note);
-    }
-  
-    // --- Ensure primaryField exists in frontmatter for consistency and duplicate checking ---
-    const frontmatterRegex = /^---\s*([\s\S]*?)\s*---/;
-    const match = content.match(frontmatterRegex);
-    let hasPrimaryFieldKey = false;
-
-    const primaryFieldYamlLine = `primaryField: ${formatYamlValue(note.primaryField)}\n`;
-
-    if (match && match[1]) {
-      // Frontmatter exists, check if primaryField key is present
-      if (/^\s*primaryField\s*:/m.test(match[1])) {
-          hasPrimaryFieldKey = true;
-      }
-    }
-
-    if (!hasPrimaryFieldKey) {
-      if (match) {
-        // Frontmatter exists, but primaryField key is missing. Inject it safely.
-        const frontmatterEnd = content.indexOf('\n---\n', 4);
-        if (frontmatterEnd !== -1) {
-          // Well-formed frontmatter: insert before closing ---
-          content = content.slice(0, frontmatterEnd) + '\n' + primaryFieldYamlLine.trim() + content.slice(frontmatterEnd);
-        } else {
-          // Try alternative frontmatter ending patterns
-          const altEnd = content.indexOf('\n---', 4);
-          if (altEnd !== -1) {
-            content = content.slice(0, altEnd) + '\n' + primaryFieldYamlLine.trim() + content.slice(altEnd);
-          } else {
-            // Malformed frontmatter: add after opening line
-            const firstNewline = content.indexOf('\n', 3);
-            if (firstNewline !== -1) {
-              content = content.slice(0, firstNewline + 1) + primaryFieldYamlLine + content.slice(firstNewline + 1);
-            }
-          }
-        }
-      } else {
-        // No frontmatter exists. Create a new frontmatter block at the beginning.
-        const newFrontmatter = `---\n${primaryFieldYamlLine}---\n\n`;
-        // Add a newline if content isn't empty and doesn't start with one
-        const separator = (content.length > 0 && !content.startsWith('\n')) ? '\n' : '';
-        content = newFrontmatter + separator + content;
-      }
-    }
-    
     try {
       if (existingFile instanceof TFile) {
         const currentContent = await this.app.vault.read(existingFile);
         if (currentContent !== content) {
           await this.app.vault.modify(existingFile, content);
           return "updated";
-        } else {
-          return "skipped";
         }
+        return "skipped";
       } else {
         await this.app.vault.create(filePath, content);
         return "created";
       }
-    } catch (writeError) {
-      new Notice(`Auto Note Importer: ❌ Failed to save note: ${safeTitle}`);
-      return "skipped";
+    } catch {
+      new Notice(`Auto Note Importer: Failed to save note: ${safeTitle}`);
+      return "error";
     }
+  }
+
+  /**
+   * Determines the filename for a note.
+   */
+  private determineFilename(note: RemoteNote): string {
+    if (!this.settings.filenameFieldName ||
+        !Object.prototype.hasOwnProperty.call(note.fields, this.settings.filenameFieldName)) {
+      return note.primaryField;
+    }
+
+    const rawValue = note.fields[this.settings.filenameFieldName];
+
+    try {
+      const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
+      const fieldInfo = this.fieldCache.getField(cacheKey, this.settings.filenameFieldName);
+
+      if (fieldInfo?.type === 'formula') {
+        const validated = validateAndSanitizeFilename(rawValue);
+        if (validated) return validated;
+        new Notice(`Auto Note Importer: Invalid filename from Formula field. Using record ID.`);
+        return note.primaryField;
+      }
+    } catch (error) {
+      if (this.settings.debugMode) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Filename field error: ${message}`);
+      }
+    }
+
+    return sanitizeFileName(String(rawValue)) || note.primaryField;
+  }
+
+  /**
+   * Determines the folder path for a note.
+   */
+  private determineFolderPath(note: RemoteNote): string {
+    if (!this.settings.subfolderFieldName) {
+      return this.settings.folderPath;
+    }
+
+    const subfolderValue = note.fields[this.settings.subfolderFieldName];
+    if (subfolderValue == null) {
+      return this.settings.folderPath;
+    }
+
+    const sanitized = sanitizeFolderPath(String(subfolderValue).trim());
+    if (!sanitized) {
+      return this.settings.folderPath;
+    }
+
+    return `${this.settings.folderPath}/${sanitized}`;
+  }
+
+  /**
+   * Builds the content for a note.
+   */
+  private async buildNoteContent(note: RemoteNote): Promise<string> {
+    if (this.settings.templatePath) {
+      const templateFile = this.app.vault.getAbstractFileByPath(
+        normalizePath(this.settings.templatePath)
+      );
+      if (templateFile instanceof TFile) {
+        try {
+          const templateContent = await this.app.vault.read(templateFile);
+          return parseTemplate(templateContent, note);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: Template error: ${message}. Using default format.`);
+        }
+      }
+    }
+    return buildMarkdownContent(note);
+  }
+
+  /**
+   * Syncs files to Airtable.
+   */
+  private async syncFilesToAirtable(files: TFile[]): Promise<void> {
+    const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
+
+    let cachedFields = this.fieldCache.getFields(cacheKey);
+    if (!cachedFields && this.settings.apiKey && this.settings.baseId && this.settings.tableId) {
+      try {
+        cachedFields = await this.fieldCache.fetchFields(
+          this.settings.apiKey,
+          this.settings.baseId,
+          this.settings.tableId
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Field metadata unavailable: ${message}`);
+      }
+    }
+
+    const batchUpdates: BatchUpdate[] = [];
+    let errorCount = 0;
+    const skipConflictDetection = this.conflictResolver.shouldSkipConflictDetection();
+
+    for (const file of files) {
+      const recordId = this.frontmatterParser.getRecordId(file);
+      if (!recordId) {
+        if (this.settings.debugMode) {
+          new Notice(`Auto Note Importer: Skipping ${file.name} (no primaryField)`);
+        }
+        continue;
+      }
+
+      const fields = this.frontmatterParser.extractSyncableFields(file, cachedFields);
+      if (!fields) continue;
+
+      if (!skipConflictDetection) {
+        try {
+          const conflicts = await this.conflictResolver.detectConflicts(recordId, fields, file.path);
+          if (conflicts.length > 0) {
+            const result = await this.conflictResolver.resolve(conflicts, fields, recordId);
+            if (!result.success) {
+              errorCount++;
+            }
+            continue;
+          }
+        } catch (error) {
+          errorCount++;
+          if (this.settings.debugMode) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            new Notice(`Auto Note Importer: Conflict check failed for ${file.name}: ${message}`);
+          }
+          continue;
+        }
+      }
+
+      batchUpdates.push({ recordId, fields });
+    }
+
+    let syncedCount = 0;
+
+    for (let i = 0; i < batchUpdates.length; i += AIRTABLE_BATCH_SIZE) {
+      const batch = batchUpdates.slice(i, i + AIRTABLE_BATCH_SIZE);
+
+      try {
+        const results = await this.airtableClient.batchUpdate(batch);
+        const failures: string[] = [];
+        for (const result of results) {
+          if (result.success) {
+            syncedCount++;
+          } else {
+            errorCount++;
+            failures.push(result.error);
+          }
+        }
+        if (failures.length > 0) {
+          new Notice(`Auto Note Importer: Batch errors: ${failures.join('; ')}`);
+        }
+      } catch (error) {
+        errorCount += batch.length;
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Batch update failed: ${message}`);
+      }
+    }
+
+    if (errorCount > 0) {
+      new Notice(`Auto Note Importer: ${syncedCount} synced, ${errorCount} errors`);
+    }
+
+    this.fileWatcher.clearPending();
+  }
+
+  /**
+   * Starts the automatic sync scheduler.
+   */
+  startScheduler(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+
+    if (this.settings.syncInterval > 0) {
+      this.intervalId = window.setInterval(
+        () => this.syncQueue.enqueue('from-airtable', 'all'),
+        this.settings.syncInterval * 60 * 1000
+      );
+    }
+  }
+
+  async loadSettings(): Promise<void> {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
+
+    // Update service settings
+    this.rateLimiter?.setDebugMode(this.settings.debugMode);
+    this.airtableClient?.updateSettings(this.settings);
+    this.conflictResolver?.updateSettings(this.settings);
+
+    // Reconfigure file watcher (applies watchForChanges setting without reload)
+    if (this.fileWatcher) {
+      this.fileWatcher.teardown();
+      this.fileWatcher.updateSettings(this.settings);
+      this.fileWatcher.setup();
+    }
+  }
+
+  onunload(): void {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
+    this.fileWatcher?.teardown();
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
