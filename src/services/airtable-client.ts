@@ -44,6 +44,15 @@ export class AirtableClient {
   }
 
   /**
+   * Validates that a record ID has the expected Airtable format.
+   */
+  private validateRecordId(recordId: string): void {
+    if (!recordId || !recordId.startsWith('rec')) {
+      throw new Error(`Invalid Airtable record ID: ${recordId}`);
+    }
+  }
+
+  /**
    * Builds authorization headers for API requests.
    */
   private getHeaders(): Record<string, string> {
@@ -114,6 +123,7 @@ export class AirtableClient {
    */
   async fetchRecord(recordId: string): Promise<RemoteNote | null> {
     this.validateSettings();
+    this.validateRecordId(recordId);
 
     const url = `${this.getBaseUrl()}/${recordId}`;
 
@@ -147,6 +157,7 @@ export class AirtableClient {
    */
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult> {
     this.validateSettings();
+    this.validateRecordId(recordId);
 
     try {
       const url = `${this.getBaseUrl()}/${recordId}`;
