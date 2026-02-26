@@ -22,7 +22,6 @@ export type SyncErrorCallback = (error: unknown, request: SyncRequest) => void;
 export class SyncQueue {
   private queue: SyncRequest[] = [];
   private isProcessing = false;
-  private currentRequest: SyncRequest | null = null;
   private processor: SyncProcessor;
   private onError?: SyncErrorCallback;
 
@@ -83,15 +82,13 @@ export class SyncQueue {
     this.isProcessing = true;
 
     while (this.queue.length > 0) {
-      this.currentRequest = this.queue.shift()!;
+      const request = this.queue.shift()!;
 
       try {
-        await this.processor(this.currentRequest);
+        await this.processor(request);
       } catch (error) {
-        this.onError?.(error, this.currentRequest);
+        this.onError?.(error, request);
       }
-
-      this.currentRequest = null;
     }
 
     this.isProcessing = false;

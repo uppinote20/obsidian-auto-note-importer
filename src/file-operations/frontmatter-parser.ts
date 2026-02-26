@@ -2,7 +2,8 @@
  * Frontmatter parsing and manipulation utilities.
  */
 
-import type { App, TFile, TFolder } from "obsidian";
+import type { App } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import { MAX_FOLDER_DEPTH, isSystemField, isReadOnlyFieldType } from '../constants';
 import { formatYamlValue } from '../utils';
 import type { AirtableField } from '../types';
@@ -50,8 +51,7 @@ export class FrontmatterParser {
         continue;
       }
 
-      // Skip null/undefined values
-      if (value === null || value === undefined) {
+      if (value == null) {
         continue;
       }
 
@@ -80,39 +80,29 @@ export class FrontmatterParser {
   ensurePrimaryField(content: string, primaryField: string): string {
     const frontmatterRegex = /^---\s*([\s\S]*?)\s*---/;
     const match = content.match(frontmatterRegex);
-    let hasPrimaryFieldKey = false;
+    const primaryFieldEntry = `primaryField: ${formatYamlValue(primaryField)}`;
 
-    const primaryFieldYamlLine = `primaryField: ${formatYamlValue(primaryField)}\n`;
-
-    if (match && match[1]) {
-      if (/^\s*primaryField\s*:/m.test(match[1])) {
-        hasPrimaryFieldKey = true;
-      }
+    // Already has primaryField -- return as-is
+    if (match?.[1] && /^\s*primaryField\s*:/m.test(match[1])) {
+      return content;
     }
 
-    if (!hasPrimaryFieldKey) {
-      if (match) {
-        // Frontmatter exists, but primaryField key is missing
-        const frontmatterEnd = content.indexOf('\n---\n', 4);
-        if (frontmatterEnd !== -1) {
-          content = content.slice(0, frontmatterEnd) + '\n' + primaryFieldYamlLine.trim() + content.slice(frontmatterEnd);
-        } else {
-          const altEnd = content.indexOf('\n---', 4);
-          if (altEnd !== -1) {
-            content = content.slice(0, altEnd) + '\n' + primaryFieldYamlLine.trim() + content.slice(altEnd);
-          } else {
-            const firstNewline = content.indexOf('\n', 3);
-            if (firstNewline !== -1) {
-              content = content.slice(0, firstNewline + 1) + primaryFieldYamlLine + content.slice(firstNewline + 1);
-            }
-          }
-        }
-      } else {
-        // No frontmatter exists
-        const newFrontmatter = `---\n${primaryFieldYamlLine}---\n\n`;
-        const separator = (content.length > 0 && !content.startsWith('\n')) ? '\n' : '';
-        content = newFrontmatter + separator + content;
-      }
+    // No frontmatter exists -- prepend new frontmatter block
+    if (!match) {
+      const separator = (content.length > 0 && !content.startsWith('\n')) ? '\n' : '';
+      return `---\n${primaryFieldEntry}\n---\n\n${separator}${content}`;
+    }
+
+    // Frontmatter exists but missing primaryField -- inject before closing ---
+    const closingIndex = content.indexOf('\n---', 4);
+    if (closingIndex !== -1) {
+      return content.slice(0, closingIndex) + '\n' + primaryFieldEntry + content.slice(closingIndex);
+    }
+
+    // Fallback: inject after opening ---
+    const firstNewline = content.indexOf('\n', 3);
+    if (firstNewline !== -1) {
+      return content.slice(0, firstNewline + 1) + primaryFieldEntry + '\n' + content.slice(firstNewline + 1);
     }
 
     return content;
@@ -126,8 +116,8 @@ export class FrontmatterParser {
     const folder = this.app.vault.getAbstractFileByPath(folderPath);
     const primaryFields = new Set<string>();
 
-    if (folder && 'children' in folder) {
-      await this.scanFolderRecursively(folder as TFolder, primaryFields, 0, MAX_FOLDER_DEPTH);
+    if (folder instanceof TFolder) {
+      await this.scanFolderRecursively(folder, primaryFields, 0, MAX_FOLDER_DEPTH);
     }
     return primaryFields;
   }
@@ -145,14 +135,14 @@ export class FrontmatterParser {
       return;
     }
 
-    for (const file of folder.children) {
-      if ('extension' in file && (file as TFile).extension === "md") {
-        const frontmatter = this.app.metadataCache.getFileCache(file as TFile)?.frontmatter;
+    for (const child of folder.children) {
+      if (child instanceof TFile && child.extension === "md") {
+        const frontmatter = this.app.metadataCache.getFileCache(child)?.frontmatter;
         if (frontmatter?.primaryField) {
           primaryFields.add(String(frontmatter.primaryField));
         }
-      } else if ('children' in file) {
-        await this.scanFolderRecursively(file as TFolder, primaryFields, currentDepth + 1, maxDepth);
+      } else if (child instanceof TFolder) {
+        await this.scanFolderRecursively(child, primaryFields, currentDepth + 1, maxDepth);
       }
     }
   }

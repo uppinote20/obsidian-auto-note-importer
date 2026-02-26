@@ -46,7 +46,7 @@ export function parseTemplate(template: string, note: RemoteNote): string {
     const key = String(rawKey).trim();
     const value = getNestedValue(record, key);
 
-    if (value === null || value === undefined) return "";
+    if (value == null) return "";
 
     if (Array.isArray(value)) {
       const items = value.map(item =>
@@ -86,7 +86,7 @@ export function buildMarkdownContent(note: RemoteNote): string {
   const fields = note.fields;
 
   const metadata = buildBasesMetadata(note);
-  const contentSections = buildContentSections(fields as Record<string, unknown>);
+  const contentSections = buildContentSections(fields);
 
   return `${metadata}\n\n${contentSections}`;
 }
@@ -100,12 +100,12 @@ function buildBasesMetadata(note: RemoteNote): string {
 
   metadata.push(`primaryField: ${formatYamlValue(note.primaryField)}`);
 
-  Object.entries(fields).forEach(([key, value]) => {
+  for (const [key, value] of Object.entries(fields)) {
     const formattedValue = formatFieldForBases(key, value);
     if (formattedValue !== null) {
       metadata.push(`${key}: ${formattedValue}`);
     }
-  });
+  }
 
   if (!Object.prototype.hasOwnProperty.call(fields, 'created')) {
     metadata.push(`created: ${new Date().toISOString().split('T')[0]}`);

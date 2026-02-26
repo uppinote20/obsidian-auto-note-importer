@@ -12,8 +12,7 @@
  * @returns A YAML-compatible string representation.
  */
 export function formatYamlValue(value: unknown): string {
-  if (value === null) return '';
-  if (value === undefined) return '';
+  if (value == null) return '';
   if (typeof value === 'boolean') return String(value);
   if (typeof value === 'number' && isFinite(value)) return String(value);
 
@@ -30,7 +29,7 @@ export function formatYamlValue(value: unknown): string {
  * @returns Formatted string or null if value should be omitted
  */
 export function formatFieldForBases(key: string, value: unknown): string | null {
-  if (value === null || value === undefined) {
+  if (value == null) {
     return '""';
   }
 

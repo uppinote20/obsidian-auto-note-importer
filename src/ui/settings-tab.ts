@@ -127,9 +127,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         try {
           dropdown.addOption("", "-- Select base. --");
           const bases = await this.fieldCache.fetchBases(this.plugin.settings.apiKey);
-          bases.forEach(base => {
+          for (const base of bases) {
             dropdown.addOption(base.id, base.name);
-          });
+          }
           dropdown.setValue(this.plugin.settings.baseId);
           dropdown.onChange(async (value) => {
             this.plugin.settings.baseId = value;
@@ -159,9 +159,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             this.plugin.settings.apiKey,
             this.plugin.settings.baseId
           );
-          tables.forEach(table => {
+          for (const table of tables) {
             dropdown.addOption(table.id, table.name);
-          });
+          }
           dropdown.setValue(this.plugin.settings.tableId);
           dropdown.onChange(async (value) => {
             this.plugin.settings.tableId = value;
@@ -210,9 +210,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           const supportedFields = fields.filter(field => isFieldTypeSupported(field.type));
           const unsupportedCount = fields.length - supportedFields.length;
 
-          supportedFields.forEach(field => {
+          for (const field of supportedFields) {
             dropdown.addOption(field.name, `${field.name} (${field.type})`);
-          });
+          }
 
           if (unsupportedCount > 0) {
             dropdown.addOption("", `--- ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ---`);
@@ -322,9 +322,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             postSave?.();
           });
-        (input.inputEl as HTMLInputElement).type = "number";
-        (input.inputEl as HTMLInputElement).min = "0";
-        if (step) (input.inputEl as HTMLInputElement).step = step;
+        const el = input.inputEl as HTMLInputElement;
+        el.type = "number";
+        el.min = "0";
+        if (step) el.step = step;
       });
   }
 

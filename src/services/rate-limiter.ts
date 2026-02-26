@@ -12,7 +12,6 @@ export class RateLimiter {
   private lastRequest = 0;
   private baseInterval: number;
   private minInterval: number;
-  private debugMode = false;
 
   /**
    * Creates a new RateLimiter.
@@ -28,7 +27,6 @@ export class RateLimiter {
    * @param enabled Whether debug mode is enabled
    */
   setDebugMode(enabled: boolean): void {
-    this.debugMode = enabled;
     this.minInterval = enabled
       ? this.baseInterval * DEBUG_DELAY_MULTIPLIER
       : this.baseInterval;
@@ -50,7 +48,7 @@ export class RateLimiter {
     }
 
     this.lastRequest = Date.now();
-    return await requestFn();
+    return requestFn();
   }
 
   /**

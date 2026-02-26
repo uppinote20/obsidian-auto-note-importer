@@ -69,11 +69,10 @@ export class ConflictResolver {
   ): Promise<SyncResult> {
     switch (this.settings.conflictResolution) {
       case 'obsidian-wins':
-        // Sync all fields, overwriting Airtable
-        return await this.airtableClient.updateRecord(recordId, fieldsToSync);
+        return this.airtableClient.updateRecord(recordId, fieldsToSync);
 
       case 'airtable-wins':
-        return await this.resolveAirtableWins(conflicts, fieldsToSync, recordId);
+        return this.resolveAirtableWins(conflicts, fieldsToSync, recordId);
 
       case 'manual':
         return this.resolveManual(conflicts, recordId);
@@ -108,7 +107,7 @@ export class ConflictResolver {
     }
 
     if (Object.keys(nonConflictedFields).length > 0) {
-      return await this.airtableClient.updateRecord(recordId, nonConflictedFields);
+      return this.airtableClient.updateRecord(recordId, nonConflictedFields);
     }
 
     return {

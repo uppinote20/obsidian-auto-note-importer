@@ -132,7 +132,6 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
       if (files.length === 0 && mode !== 'from-airtable') {
         new Notice(`Auto Note Importer: No files to sync for scope: ${scope}`);
-        statusBarItem.remove();
         return;
       }
 
@@ -172,12 +171,11 @@ export default class AutoNoteImporterPlugin extends Plugin {
           }
           break;
       }
-
-      statusBarItem.remove();
     } catch (error) {
-      statusBarItem.remove();
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Sync failed: ${message}`);
+    } finally {
+      statusBarItem.remove();
     }
   }
 
@@ -367,57 +365,52 @@ export default class AutoNoteImporterPlugin extends Plugin {
    * Determines the filename for a note.
    */
   private determineFilename(note: RemoteNote): string {
-    if (this.settings.filenameFieldName &&
-        Object.prototype.hasOwnProperty.call(note.fields, this.settings.filenameFieldName)) {
-      const rawValue = note.fields[this.settings.filenameFieldName];
+    if (!this.settings.filenameFieldName ||
+        !Object.prototype.hasOwnProperty.call(note.fields, this.settings.filenameFieldName)) {
+      return note.primaryField;
+    }
 
-      try {
-        const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
-        const fieldInfo = this.fieldCache.getField(cacheKey, this.settings.filenameFieldName);
+    const rawValue = note.fields[this.settings.filenameFieldName];
 
-        if (fieldInfo?.type === 'formula') {
-          const validated = validateAndSanitizeFilename(rawValue);
-          if (validated) return validated;
-          new Notice(`Auto Note Importer: Invalid filename from Formula field. Using record ID.`);
-          return note.primaryField;
-        }
+    try {
+      const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
+      const fieldInfo = this.fieldCache.getField(cacheKey, this.settings.filenameFieldName);
 
-        const sanitized = sanitizeFileName(String(rawValue));
-        return sanitized || note.primaryField;
-      } catch (error) {
-        if (this.settings.debugMode) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
-          new Notice(`Auto Note Importer: Filename field error: ${message}`);
-        }
-        const sanitized = sanitizeFileName(String(rawValue));
-        return sanitized || note.primaryField;
+      if (fieldInfo?.type === 'formula') {
+        const validated = validateAndSanitizeFilename(rawValue);
+        if (validated) return validated;
+        new Notice(`Auto Note Importer: Invalid filename from Formula field. Using record ID.`);
+        return note.primaryField;
+      }
+    } catch (error) {
+      if (this.settings.debugMode) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Filename field error: ${message}`);
       }
     }
 
-    return note.primaryField;
+    return sanitizeFileName(String(rawValue)) || note.primaryField;
   }
 
   /**
    * Determines the folder path for a note.
    */
   private determineFolderPath(note: RemoteNote): string {
-    let finalPath = this.settings.folderPath;
-
-    if (this.settings.subfolderFieldName &&
-        Object.prototype.hasOwnProperty.call(note.fields, this.settings.subfolderFieldName)) {
-      const subfolderValue = note.fields[this.settings.subfolderFieldName];
-      if (subfolderValue != null) {
-        const trimmed = String(subfolderValue).trim();
-        if (trimmed) {
-          const sanitized = sanitizeFolderPath(trimmed);
-          if (sanitized) {
-            finalPath = `${this.settings.folderPath}/${sanitized}`;
-          }
-        }
-      }
+    if (!this.settings.subfolderFieldName) {
+      return this.settings.folderPath;
     }
 
-    return finalPath;
+    const subfolderValue = note.fields[this.settings.subfolderFieldName];
+    if (subfolderValue == null) {
+      return this.settings.folderPath;
+    }
+
+    const sanitized = sanitizeFolderPath(String(subfolderValue).trim());
+    if (!sanitized) {
+      return this.settings.folderPath;
+    }
+
+    return `${this.settings.folderPath}/${sanitized}`;
   }
 
   /**
@@ -482,9 +475,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
           const conflicts = await this.conflictResolver.detectConflicts(recordId, fields, file.path);
           if (conflicts.length > 0) {
             const result = await this.conflictResolver.resolve(conflicts, fields, recordId);
-            if (result.success) {
-              // Already synced via resolve — no batch needed
-            } else {
+            if (!result.success) {
               errorCount++;
             }
             continue;
