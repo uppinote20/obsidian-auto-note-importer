@@ -10,6 +10,7 @@ vi.mock('obsidian', () => ({
 }));
 
 import { ConflictResolver } from '../../src/core/conflict-resolver';
+import type { AirtableClient } from '../../src/services/airtable-client';
 import { createMockAirtableClient, MockAirtableClient } from '../__mocks__/airtable-client.mock';
 import type { AutoNoteImporterSettings, ConflictInfo } from '../../src/types';
 
@@ -44,21 +45,21 @@ describe('ConflictResolver', () => {
   describe('shouldSkipConflictDetection', () => {
     it('should return true for obsidian-wins mode (CR-2.1)', () => {
       const settings = createSettings('obsidian-wins');
-      resolver = new ConflictResolver(settings, mockAirtableClient as any);
+      resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(true);
     });
 
     it('should return false for airtable-wins mode (CR-2.2)', () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockAirtableClient as any);
+      resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(false);
     });
 
     it('should return false for manual mode', () => {
       const settings = createSettings('manual');
-      resolver = new ConflictResolver(settings, mockAirtableClient as any);
+      resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(false);
     });
@@ -67,7 +68,7 @@ describe('ConflictResolver', () => {
   describe('detectConflicts', () => {
     it('should return empty array when record not found', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockAirtableClient as any);
+      resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
       mockAirtableClient.fetchRecord.mockResolvedValue(null);
 
@@ -82,7 +83,7 @@ describe('ConflictResolver', () => {
 
     it('should detect conflicting field values', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockAirtableClient as any);
+      resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
       mockAirtableClient.fetchRecord.mockResolvedValue({
         id: 'rec123',
@@ -113,7 +114,7 @@ describe('ConflictResolver', () => {
 
     it('should not detect conflict when values are equal', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockAirtableClient as any);
+      resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
       mockAirtableClient.fetchRecord.mockResolvedValue({
         id: 'rec123',
@@ -131,7 +132,7 @@ describe('ConflictResolver', () => {
 
     it('should not detect conflict for new fields in obsidian', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockAirtableClient as any);
+      resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
       mockAirtableClient.fetchRecord.mockResolvedValue({
         id: 'rec123',
@@ -149,7 +150,7 @@ describe('ConflictResolver', () => {
 
     it('should propagate fetch errors to caller', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockAirtableClient as any);
+      resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
       mockAirtableClient.fetchRecord.mockRejectedValue(new Error('Network error'));
 
@@ -171,7 +172,7 @@ describe('ConflictResolver', () => {
     describe('obsidian-wins mode (CR-1.1)', () => {
       it('should sync all fields, overwriting Airtable', async () => {
         const settings = createSettings('obsidian-wins');
-        resolver = new ConflictResolver(settings, mockAirtableClient as any);
+        resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
         const conflicts = [createConflict('field1')];
         const fieldsToSync = {
@@ -195,7 +196,7 @@ describe('ConflictResolver', () => {
     describe('airtable-wins mode (CR-1.2)', () => {
       it('should skip conflicted fields and sync non-conflicted fields only', async () => {
         const settings = createSettings('airtable-wins');
-        resolver = new ConflictResolver(settings, mockAirtableClient as any);
+        resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
         const conflicts = [createConflict('field1')];
         const fieldsToSync = {
@@ -219,7 +220,7 @@ describe('ConflictResolver', () => {
 
       it('should return success without calling updateRecord if all fields conflicted', async () => {
         const settings = createSettings('airtable-wins');
-        resolver = new ConflictResolver(settings, mockAirtableClient as any);
+        resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
         const conflicts = [createConflict('field1')];
         const fieldsToSync = { field1: 'obsidian-value' };
@@ -235,7 +236,7 @@ describe('ConflictResolver', () => {
     describe('manual mode (CR-1.3)', () => {
       it('should not sync and return error', async () => {
         const settings = createSettings('manual');
-        resolver = new ConflictResolver(settings, mockAirtableClient as any);
+        resolver = new ConflictResolver(settings, mockAirtableClient as unknown as AirtableClient);
 
         const conflicts = [createConflict('field1')];
         const fieldsToSync = { field1: 'obsidian-value' };
@@ -252,7 +253,7 @@ describe('ConflictResolver', () => {
   describe('updateSettings', () => {
     it('should update internal settings reference', () => {
       const initialSettings = createSettings('obsidian-wins');
-      resolver = new ConflictResolver(initialSettings, mockAirtableClient as any);
+      resolver = new ConflictResolver(initialSettings, mockAirtableClient as unknown as AirtableClient);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(true);
 
