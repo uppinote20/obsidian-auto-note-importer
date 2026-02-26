@@ -2,8 +2,8 @@
  * File watcher for detecting changes in the sync folder.
  */
 
-import type { App, TFile, EventRef } from "obsidian";
-import { normalizePath, Notice } from "obsidian";
+import type { App, EventRef } from "obsidian";
+import { TFile, normalizePath, Notice } from "obsidian";
 import { DEBUG_DELAY_MULTIPLIER } from '../constants';
 import type { AutoNoteImporterSettings } from '../types';
 
@@ -22,7 +22,8 @@ export class FileWatcher {
   private debounceTimer: NodeJS.Timeout | null = null;
   private onFilesReady: FilesReadyCallback;
   private eventRef: EventRef | null = null;
-  private isSyncing = false;
+  private externalSyncing = false;
+  private internalSyncing = false;
 
   constructor(
     app: App,
@@ -42,17 +43,17 @@ export class FileWatcher {
   }
 
   /**
-   * Sets the syncing state.
+   * Sets the external syncing state (called by main.ts during pull sync).
    */
   setSyncing(syncing: boolean): void {
-    this.isSyncing = syncing;
+    this.externalSyncing = syncing;
   }
 
   /**
-   * Checks if currently syncing.
+   * Checks if currently syncing (external or internal).
    */
   get syncing(): boolean {
-    return this.isSyncing;
+    return this.externalSyncing || this.internalSyncing;
   }
 
   /**
@@ -64,8 +65,8 @@ export class FileWatcher {
     }
 
     this.eventRef = this.app.vault.on('modify', (file) => {
-      if ('extension' in file && (file as TFile).extension === 'md') {
-        this.handleFileChange(file as TFile);
+      if (file instanceof TFile && file.extension === 'md') {
+        this.handleFileChange(file);
       }
     });
   }
@@ -88,7 +89,7 @@ export class FileWatcher {
    * Handles a file change event.
    */
   private handleFileChange(file: TFile): void {
-    if (this.isSyncing) return;
+    if (this.syncing) return;
 
     const folderPath = normalizePath(this.settings.folderPath);
 
@@ -119,8 +120,8 @@ export class FileWatcher {
     }
 
     this.debounceTimer = setTimeout(async () => {
-      if (!this.isSyncing && this.pendingFiles.size > 0) {
-        this.isSyncing = true;
+      if (!this.syncing && this.pendingFiles.size > 0) {
+        this.internalSyncing = true;
         try {
           const files = this.getPendingFiles();
           await this.onFilesReady(files);
@@ -129,7 +130,7 @@ export class FileWatcher {
           new Notice(`Auto Note Importer: File sync failed: ${message}`);
         } finally {
           this.pendingFiles.clear();
-          this.isSyncing = false;
+          this.internalSyncing = false;
         }
       }
     }, this.getDebounceTime());
@@ -142,8 +143,8 @@ export class FileWatcher {
     const files: TFile[] = [];
     for (const filePath of this.pendingFiles) {
       const file = this.app.vault.getAbstractFileByPath(filePath);
-      if (file && 'extension' in file) {
-        files.push(file as TFile);
+      if (file instanceof TFile) {
+        files.push(file);
       }
     }
     return files;
