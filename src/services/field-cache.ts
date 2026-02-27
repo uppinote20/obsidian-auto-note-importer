@@ -20,20 +20,9 @@ export class FieldCache {
    */
   private clearCacheIfApiKeyChanged(apiKey: string): void {
     if (this.lastApiKey !== apiKey) {
-      this.cachedBases = null;
-      this.cachedTables.clear();
-      this.cachedFields.clear();
+      this.clearBases();
       this.lastApiKey = apiKey;
     }
-  }
-
-  /**
-   * Clears all cached metadata (bases, tables, fields).
-   */
-  clearAll(): void {
-    this.cachedBases = null;
-    this.cachedTables.clear();
-    this.cachedFields.clear();
   }
 
   /**
