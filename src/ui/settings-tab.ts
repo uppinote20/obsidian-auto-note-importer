@@ -141,7 +141,14 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           const message = error instanceof Error ? error.message : 'Check PAT or network.';
           new Notice(`Auto Note Importer: Failed to fetch Airtable bases. ${message}`);
         }
-      });
+      })
+      .addExtraButton(button => button
+        .setIcon("refresh-cw")
+        .setTooltip("Refresh base list")
+        .onClick(() => {
+          this.fieldCache.clearBases();
+          this.debounceDisplay();
+        }));
 
     if (this.plugin.settings.baseId) {
       this.renderTableSelector(containerEl);
@@ -172,7 +179,14 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           const message = error instanceof Error ? error.message : 'Check base ID or network.';
           new Notice(`Auto Note Importer: Failed to fetch Airtable tables. ${message}`);
         }
-      });
+      })
+      .addExtraButton(button => button
+        .setIcon("refresh-cw")
+        .setTooltip("Refresh table list")
+        .onClick(() => {
+          this.fieldCache.clearTables(this.plugin.settings.baseId);
+          this.debounceDisplay();
+        }));
 
     if (this.plugin.settings.tableId) {
       this.renderFieldSelectors(containerEl);
@@ -227,7 +241,14 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           const message = error instanceof Error ? error.message : 'Check table ID or network.';
           new Notice(`Auto Note Importer: Failed to fetch table fields. ${message}`);
         }
-      });
+      })
+      .addExtraButton(button => button
+        .setIcon("refresh-cw")
+        .setTooltip("Refresh field list")
+        .onClick(() => {
+          this.fieldCache.clearFields(this.plugin.settings.baseId, this.plugin.settings.tableId);
+          this.debounceDisplay();
+        }));
   }
 
   private renderBidirectionalSyncSettings(containerEl: HTMLElement): void {
