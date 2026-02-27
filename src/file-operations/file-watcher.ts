@@ -125,11 +125,11 @@ export class FileWatcher {
         try {
           const files = this.getPendingFiles();
           await this.onFilesReady(files);
+          this.pendingFiles.clear();
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error';
           new Notice(`Auto Note Importer: File sync failed: ${message}`);
         } finally {
-          this.pendingFiles.clear();
           this.internalSyncing = false;
         }
       }
