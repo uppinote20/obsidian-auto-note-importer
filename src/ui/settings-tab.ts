@@ -4,7 +4,7 @@
  */
 
 import { App, PluginSettingTab, Setting, Notice } from "obsidian";
-import type { Plugin } from "obsidian";
+import type { ExtraButtonComponent, Plugin } from "obsidian";
 import { FieldCache } from '../services';
 import { isFieldTypeSupported } from '../constants';
 import type { AutoNoteImporterSettings, ConflictResolutionMode } from '../types';
@@ -33,13 +33,23 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     this.fieldCache = fieldCache;
   }
 
-  private debounceDisplay(delay = 100) {
+  private debounceDisplay(delay = 100): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
     this.debounceTimer = setTimeout(() => {
       this.display();
     }, delay);
+  }
+
+  private configureRefreshButton(button: ExtraButtonComponent, tooltip: string, clearCache: () => void): ExtraButtonComponent {
+    return button
+      .setIcon("refresh-cw")
+      .setTooltip(tooltip)
+      .onClick(() => {
+        clearCache();
+        this.debounceDisplay();
+      });
   }
 
   display(): void {
@@ -141,7 +151,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           const message = error instanceof Error ? error.message : 'Check PAT or network.';
           new Notice(`Auto Note Importer: Failed to fetch Airtable bases. ${message}`);
         }
-      });
+      })
+      .addExtraButton(button => this.configureRefreshButton(button, "Refresh base list", () => {
+        this.fieldCache.clearBases();
+      }));
 
     if (this.plugin.settings.baseId) {
       this.renderTableSelector(containerEl);
@@ -172,7 +185,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           const message = error instanceof Error ? error.message : 'Check base ID or network.';
           new Notice(`Auto Note Importer: Failed to fetch Airtable tables. ${message}`);
         }
-      });
+      })
+      .addExtraButton(button => this.configureRefreshButton(button, "Refresh table list", () => {
+        this.fieldCache.clearTables(this.plugin.settings.baseId);
+      }));
 
     if (this.plugin.settings.tableId) {
       this.renderFieldSelectors(containerEl);
@@ -227,7 +243,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           const message = error instanceof Error ? error.message : 'Check table ID or network.';
           new Notice(`Auto Note Importer: Failed to fetch table fields. ${message}`);
         }
-      });
+      })
+      .addExtraButton(button => this.configureRefreshButton(button, "Refresh field list", () => {
+        this.fieldCache.clearFields(this.plugin.settings.baseId, this.plugin.settings.tableId);
+      }));
   }
 
   private renderBidirectionalSyncSettings(containerEl: HTMLElement): void {

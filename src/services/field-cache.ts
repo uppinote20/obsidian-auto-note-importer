@@ -20,11 +20,38 @@ export class FieldCache {
    */
   private clearCacheIfApiKeyChanged(apiKey: string): void {
     if (this.lastApiKey !== apiKey) {
-      this.cachedBases = null;
-      this.cachedTables.clear();
-      this.cachedFields.clear();
+      this.clearBases();
       this.lastApiKey = apiKey;
     }
+  }
+
+  /**
+   * Clears cached bases (and dependent tables/fields).
+   */
+  clearBases(): void {
+    this.cachedBases = null;
+    this.cachedTables.clear();
+    this.cachedFields.clear();
+  }
+
+  /**
+   * Clears cached tables for a specific base (and dependent fields).
+   */
+  clearTables(baseId: string): void {
+    this.cachedTables.delete(baseId);
+    // Clear fields that belong to this base
+    for (const key of this.cachedFields.keys()) {
+      if (key.startsWith(`${baseId}-`)) {
+        this.cachedFields.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Clears cached fields for a specific base/table combination.
+   */
+  clearFields(baseId: string, tableId: string): void {
+    this.cachedFields.delete(this.getCacheKey(baseId, tableId));
   }
 
   /**
