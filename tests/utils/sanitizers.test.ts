@@ -114,6 +114,22 @@ describe('sanitizeFolderPath', () => {
   it('should normalize multiple spaces in segments', () => {
     expect(sanitizeFolderPath('folder   name/other')).toBe('folder name/other');
   });
+
+  it('should filter out dot-dot segments to prevent path traversal', () => {
+    expect(sanitizeFolderPath('../secret')).toBe('secret');
+    expect(sanitizeFolderPath('folder/../other')).toBe('folder/other');
+    expect(sanitizeFolderPath('a/../../b')).toBe('a/b');
+  });
+
+  it('should filter out dot segments', () => {
+    expect(sanitizeFolderPath('./current')).toBe('current');
+    expect(sanitizeFolderPath('a/./b/../c')).toBe('a/b/c');
+  });
+
+  it('should preserve segments starting with dot', () => {
+    expect(sanitizeFolderPath('.obsidian/plugins')).toBe('.obsidian/plugins');
+    expect(sanitizeFolderPath('a/.hidden/b')).toBe('a/.hidden/b');
+  });
 });
 
 describe('validateAndSanitizeFilename', () => {
