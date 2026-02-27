@@ -19,7 +19,7 @@ export class FileWatcher {
   private app: App;
   private settings: AutoNoteImporterSettings;
   private pendingFiles: Set<string> = new Set();
-  private debounceTimer: NodeJS.Timeout | null = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private onFilesReady: FilesReadyCallback;
   private eventRef: EventRef | null = null;
   private externalSyncing = false;
