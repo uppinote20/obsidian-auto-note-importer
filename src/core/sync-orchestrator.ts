@@ -309,14 +309,16 @@ export class SyncOrchestrator {
   }
 
   private determineFolderPath(note: RemoteNote): string {
-    const subfolderValue = this.settings.subfolderFieldName
-      ? note.fields[this.settings.subfolderFieldName]
-      : null;
+    if (!this.settings.subfolderFieldName) {
+      return this.settings.folderPath;
+    }
 
-    const sanitized = subfolderValue != null
-      ? sanitizeFolderPath(String(subfolderValue).trim())
-      : '';
+    const subfolderValue = note.fields[this.settings.subfolderFieldName];
+    if (subfolderValue == null) {
+      return this.settings.folderPath;
+    }
 
+    const sanitized = sanitizeFolderPath(String(subfolderValue).trim());
     if (!sanitized) {
       return this.settings.folderPath;
     }
@@ -405,17 +407,17 @@ export class SyncOrchestrator {
 
       try {
         const results = await this.airtableClient.batchUpdate(batch);
-        const failureErrors: string[] = [];
+        const failures: string[] = [];
         for (const result of results) {
           if (result.success) {
             syncedCount++;
           } else {
             errorCount++;
-            failureErrors.push(result.error);
+            failures.push(result.error);
           }
         }
-        if (failureErrors.length > 0) {
-          new Notice(`Auto Note Importer: Batch errors: ${failureErrors.join('; ')}`);
+        if (failures.length > 0) {
+          new Notice(`Auto Note Importer: Batch errors: ${failures.join('; ')}`);
         }
       } catch (error) {
         errorCount += batch.length;

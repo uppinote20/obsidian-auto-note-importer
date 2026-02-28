@@ -53,6 +53,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
     this.frontmatterParser = new FrontmatterParser(this.app);
     this.conflictResolver = new ConflictResolver(this.settings, this.airtableClient);
 
+    // Initialization order: FileWatcher → SyncOrchestrator → SyncQueue
+    // FileWatcher callback captures this.syncQueue via closure. This is safe because
+    // setup() is called after syncQueue is assigned, and callbacks fire asynchronously (debounced).
     this.fileWatcher = new FileWatcher(
       this.app,
       this.settings,
