@@ -19,7 +19,7 @@ export class FileWatcher {
   private app: App;
   private settings: AutoNoteImporterSettings;
   private pendingFiles: Set<string> = new Set();
-  private debounceTimer: NodeJS.Timeout | null = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private onFilesReady: FilesReadyCallback;
   private eventRef: EventRef | null = null;
   private externalSyncing = false;
@@ -125,11 +125,11 @@ export class FileWatcher {
         try {
           const files = this.getPendingFiles();
           await this.onFilesReady(files);
+          this.pendingFiles.clear();
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error';
           new Notice(`Auto Note Importer: File sync failed: ${message}`);
         } finally {
-          this.pendingFiles.clear();
           this.internalSyncing = false;
         }
       }

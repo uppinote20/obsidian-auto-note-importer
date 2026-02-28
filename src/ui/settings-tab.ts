@@ -25,7 +25,7 @@ export interface SettingsPlugin extends Plugin {
 export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: SettingsPlugin;
   private fieldCache: FieldCache;
-  private debounceTimer: NodeJS.Timeout | null = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(app: App, plugin: SettingsPlugin, fieldCache: FieldCache) {
     super(app, plugin);

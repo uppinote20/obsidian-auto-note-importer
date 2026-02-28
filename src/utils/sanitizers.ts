@@ -48,7 +48,7 @@ export function sanitizeFolderPath(path: string): string {
     .replace(/\s+/g, " ")
     .split("/")
     .map(segment => segment.trim().slice(0, MAX_FILENAME_LENGTH))
-    .filter(segment => segment.length > 0)
+    .filter(segment => segment.length > 0 && segment !== '.' && segment !== '..')
     .join("/");
 }
 
