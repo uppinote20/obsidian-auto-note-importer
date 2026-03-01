@@ -349,7 +349,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderDebugSettings(containerEl: HTMLElement): void {
-    containerEl.createEl('h3', { text: 'Debug' });
+    new Setting(containerEl).setName('Debug').setHeading();
 
     new Setting(containerEl)
       .setName("Debug mode (slow sync)")
