@@ -85,7 +85,8 @@ export class SyncQueue {
     this.isProcessing = true;
 
     while (this.queue.length > 0) {
-      const request = this.queue.shift()!;
+      const request = this.queue.shift();
+      if (!request) break;
 
       try {
         await this.processor(request);

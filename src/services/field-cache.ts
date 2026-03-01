@@ -98,9 +98,8 @@ export class FieldCache {
   async fetchTables(apiKey: string, baseId: string): Promise<AirtableTable[]> {
     this.clearCacheIfApiKeyChanged(apiKey);
 
-    if (this.cachedTables.has(baseId)) {
-      return this.cachedTables.get(baseId)!;
-    }
+    const cachedTables = this.cachedTables.get(baseId);
+    if (cachedTables) return cachedTables;
 
     const response = await requestUrl({
       url: `${AIRTABLE_META_API_URL}/bases/${baseId}/tables`,
@@ -128,9 +127,8 @@ export class FieldCache {
     this.clearCacheIfApiKeyChanged(apiKey);
 
     const cacheKey = this.getCacheKey(baseId, tableId);
-    if (this.cachedFields.has(cacheKey)) {
-      return this.cachedFields.get(cacheKey)!;
-    }
+    const cachedFields = this.cachedFields.get(cacheKey);
+    if (cachedFields) return cachedFields;
 
     const response = await requestUrl({
       url: `${AIRTABLE_META_API_URL}/bases/${baseId}/tables`,
