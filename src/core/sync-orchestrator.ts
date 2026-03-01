@@ -64,22 +64,7 @@ export class SyncOrchestrator {
     const statusBarItem = this.statusBar.createItem();
 
     try {
-      const files = filePaths
-        ? filePaths.map(p => this.app.vault.getAbstractFileByPath(p)).filter((f): f is TFile => f instanceof TFile)
-        : await this.getFilesToSync(scope);
-
-      if (files.length === 0 && mode !== 'from-airtable') {
-        new Notice(`Auto Note Importer: No files to sync for scope: ${scope}`);
-        return;
-      }
-
       switch (mode) {
-        case 'to-airtable':
-          statusBarItem.setText(`Syncing ${files.length} file(s) to Airtable...`);
-          await this.syncFilesToAirtable(files);
-          new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
-          break;
-
         case 'from-airtable':
           if (scope === 'current') {
             statusBarItem.setText("Syncing current note from Airtable...");
@@ -90,24 +75,41 @@ export class SyncOrchestrator {
           }
           break;
 
-        case 'bidirectional':
-          statusBarItem.setText(`Phase 1/2 - Syncing ${files.length} file(s) to Airtable...`);
-          await this.syncFilesToAirtable(files);
+        case 'to-airtable':
+        case 'bidirectional': {
+          const files = filePaths
+            ? filePaths.map(p => this.app.vault.getAbstractFileByPath(p)).filter((f): f is TFile => f instanceof TFile)
+            : await this.getFilesToSync(scope);
 
-          if (this.settings.autoSyncFormulas) {
-            const delay = this.settings.debugMode
-              ? this.settings.formulaSyncDelay * DEBUG_DELAY_MULTIPLIER
-              : this.settings.formulaSyncDelay;
-            statusBarItem.setText(`Waiting ${delay}ms for formulas...`);
-            await this.sleep(delay);
+          if (files.length === 0) {
+            new Notice(`Auto Note Importer: No files to sync for scope: ${scope}`);
+            return;
+          }
 
-            statusBarItem.setText("Phase 2/2 - Fetching computed results...");
-            await this.syncFromAirtable();
-            new Notice("Auto Note Importer: Bidirectional sync complete!");
-          } else {
+          if (mode === 'to-airtable') {
+            statusBarItem.setText(`Syncing ${files.length} file(s) to Airtable...`);
+            await this.syncFilesToAirtable(files);
             new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
+          } else {
+            statusBarItem.setText(`Phase 1/2 - Syncing ${files.length} file(s) to Airtable...`);
+            await this.syncFilesToAirtable(files);
+
+            if (this.settings.autoSyncFormulas) {
+              const delay = this.settings.debugMode
+                ? this.settings.formulaSyncDelay * DEBUG_DELAY_MULTIPLIER
+                : this.settings.formulaSyncDelay;
+              statusBarItem.setText(`Waiting ${delay}ms for formulas...`);
+              await this.sleep(delay);
+
+              statusBarItem.setText("Phase 2/2 - Fetching computed results...");
+              await this.syncFromAirtable();
+              new Notice("Auto Note Importer: Bidirectional sync complete!");
+            } else {
+              new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
+            }
           }
           break;
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
