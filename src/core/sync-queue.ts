@@ -1,6 +1,9 @@
 /**
  * Sync queue for managing concurrent sync requests.
  * Prevents race conditions by queuing requests instead of dropping them.
+ *
+ * @handbook 6.2-state-management
+ * @handbook 9.1-sync-flow
  */
 
 import { generateId } from '../utils';

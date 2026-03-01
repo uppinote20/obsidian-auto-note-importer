@@ -1,5 +1,7 @@
 /**
  * Airtable field type constants.
+ *
+ * @handbook 7.3-read-only-field-protection
  */
 
 /**

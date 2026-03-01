@@ -1,5 +1,7 @@
 /**
  * Field caching service for Airtable metadata.
+ *
+ * @handbook 9.7-field-cache
  */
 
 import { requestUrl } from "obsidian";

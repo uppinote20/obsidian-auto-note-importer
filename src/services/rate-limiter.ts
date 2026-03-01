@@ -1,5 +1,7 @@
 /**
  * Rate limiter service to prevent overwhelming the Airtable API.
+ *
+ * @handbook 9.6-api-patterns
  */
 
 import { RATE_LIMIT_INTERVAL_MS, DEBUG_DELAY_MULTIPLIER } from '../constants';

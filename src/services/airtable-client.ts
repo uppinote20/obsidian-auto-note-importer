@@ -1,5 +1,8 @@
 /**
  * Airtable API client service.
+ *
+ * @handbook 6.1-error-handling
+ * @handbook 9.6-api-patterns
  */
 
 import { requestUrl } from "obsidian";

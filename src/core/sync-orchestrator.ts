@@ -2,6 +2,10 @@
  * Sync Orchestrator - Coordinates all sync operations between Airtable and Obsidian.
  *
  * Extracted from main.ts to separate sync orchestration from plugin lifecycle management.
+ *
+ * @handbook 4.2-sync-architecture
+ * @handbook 5.3-statusbar-abstraction
+ * @handbook 9.1-sync-flow
  */
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";

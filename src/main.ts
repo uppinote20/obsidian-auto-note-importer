@@ -2,6 +2,11 @@
  * Auto Note Importer - Main Plugin Entry Point
  *
  * Orchestrates Airtable <-> Obsidian sync via services, core logic, and file operations.
+ *
+ * @handbook 4.2-sync-architecture
+ * @handbook 9.2-service-initialization-order
+ * @handbook 9.3-settings-update-pattern
+ * @handbook 9.4-conditional-command-visibility
  */
 
 import { Plugin, Notice } from "obsidian";

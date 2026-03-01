@@ -1,5 +1,7 @@
 /**
  * Frontmatter parsing and manipulation utilities.
+ *
+ * @handbook 7.3-read-only-field-protection
  */
 
 import type { App } from "obsidian";

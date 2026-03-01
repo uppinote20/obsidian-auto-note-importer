@@ -1,5 +1,7 @@
 /**
  * File and path sanitization utilities.
+ *
+ * @handbook 7.1-input-validation
  */
 
 /**

@@ -1,5 +1,7 @@
 /**
  * Conflict detection and resolution for bidirectional sync.
+ *
+ * @handbook 9.5-conflict-resolution-modes
  */
 
 import { Notice } from "obsidian";

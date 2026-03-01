@@ -1,5 +1,7 @@
 /**
  * File watcher for detecting changes in the sync folder.
+ *
+ * @handbook 6.2-state-management
  */
 
 import type { App, EventRef } from "obsidian";
