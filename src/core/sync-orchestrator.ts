@@ -278,8 +278,9 @@ export class SyncOrchestrator {
         await this.app.vault.create(filePath, content);
         return "created";
       }
-    } catch {
-      new Notice(`Auto Note Importer: Failed to save note: ${safeTitle}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Auto Note Importer: Failed to save note: ${safeTitle}${this.settings.debugMode ? ` (${message})` : ''}`);
       return "error";
     }
   }
