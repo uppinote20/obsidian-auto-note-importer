@@ -28,6 +28,9 @@ function isRetryableResponse(value: unknown): value is RetryableResponse {
  * Parses the Retry-After header value into milliseconds.
  * Handles case-insensitive header lookup.
  * Returns DEFAULT_RETRY_DELAY_MS when header is absent or unparseable.
+ *
+ * Note: Only supports delay-seconds format (e.g. "30").
+ * HTTP-date format (RFC 7231 §7.1.3) falls back to DEFAULT_RETRY_DELAY_MS.
  */
 function parseRetryAfter(headers: Record<string, string>): number {
   const key = Object.keys(headers).find(k => k.toLowerCase() === 'retry-after');

@@ -20,8 +20,17 @@ describe('RateLimiter', () => {
   });
 
   describe('constructor', () => {
-    it('should use default interval from constants', () => {
-      expect(RATE_LIMIT_INTERVAL_MS).toBe(200);
+    it('should use default interval from constants', async () => {
+      const limiter = new RateLimiter();
+      const mockFn = vi.fn().mockResolvedValue('result');
+
+      await limiter.execute(mockFn);
+      const secondPromise = limiter.execute(mockFn);
+
+      await vi.advanceTimersByTimeAsync(RATE_LIMIT_INTERVAL_MS);
+      await secondPromise;
+
+      expect(mockFn).toHaveBeenCalledTimes(2);
     });
 
     it('should accept custom interval and enforce it', async () => {
@@ -298,6 +307,16 @@ describe('RateLimiter', () => {
 
       expect(mockFn).toHaveBeenCalledTimes(2);
       expect(result).toEqual(responseOk);
+    });
+
+    it('should pass through null return values without retry', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const mockFn = vi.fn().mockResolvedValue(null);
+
+      const result = await limiter.execute(mockFn);
+
+      expect(mockFn).toHaveBeenCalledTimes(1);
+      expect(result).toBeNull();
     });
 
     it('should use default delay for invalid Retry-After value', async () => {
