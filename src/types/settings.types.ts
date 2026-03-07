@@ -1,5 +1,6 @@
 /**
  * Settings type definitions for the Auto Note Importer plugin.
+ * @handbook 9.3-settings-update-pattern
  */
 
 /**

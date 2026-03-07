@@ -1,5 +1,6 @@
 /**
  * YAML formatting utilities.
+ * @handbook 4.3-data-flow
  */
 
 /**

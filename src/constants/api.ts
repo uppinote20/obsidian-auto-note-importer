@@ -1,5 +1,6 @@
 /**
  * API-related constants.
+ * @handbook 9.6-api-patterns
  */
 
 /**

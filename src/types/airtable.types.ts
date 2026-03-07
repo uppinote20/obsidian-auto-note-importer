@@ -1,5 +1,6 @@
 /**
  * Airtable-related type definitions.
+ * @handbook 2.1-naming-rules
  */
 
 /**

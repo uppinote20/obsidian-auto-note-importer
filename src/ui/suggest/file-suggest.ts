@@ -1,5 +1,6 @@
 /**
  * File path autocomplete suggestion.
+ * @handbook 5.1-ui-components
  */
 
 import { App, TFile, AbstractInputSuggest } from "obsidian";

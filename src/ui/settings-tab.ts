@@ -1,6 +1,7 @@
 /**
  * Settings tab UI for the Auto Note Importer plugin.
  * UI-only - delegates API calls to FieldCache.
+ * @handbook 5.1-ui-components
  */
 
 import { App, PluginSettingTab, Setting, Notice } from "obsidian";

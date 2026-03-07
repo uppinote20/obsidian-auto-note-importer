@@ -1,5 +1,6 @@
 /**
  * Folder path autocomplete suggestion.
+ * @handbook 5.1-ui-components
  */
 
 import { App, TFolder, AbstractInputSuggest } from "obsidian";

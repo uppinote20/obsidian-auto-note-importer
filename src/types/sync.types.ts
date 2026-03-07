@@ -1,5 +1,6 @@
 /**
  * Sync-related type definitions.
+ * @handbook 4.2-sync-architecture
  */
 
 import type { SyncScope } from './settings.types';
