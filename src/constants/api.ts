@@ -24,6 +24,16 @@ export const DEBUG_DELAY_MULTIPLIER = 5;
 export const MAX_FOLDER_DEPTH = 10;
 
 /**
+ * Maximum number of retry attempts for 429 (rate-limited) responses.
+ */
+export const MAX_RETRY_ATTEMPTS = 3;
+
+/**
+ * Default delay when Retry-After header is absent (in milliseconds).
+ */
+export const DEFAULT_RETRY_DELAY_MS = 30_000;
+
+/**
  * Airtable API base URL.
  */
 export const AIRTABLE_API_BASE_URL = 'https://api.airtable.com/v0';
