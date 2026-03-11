@@ -1,5 +1,6 @@
 export type {
   ConflictResolutionMode,
+  BasesFileLocation,
   SyncScope,
   AutoNoteImporterSettings,
 } from './settings.types';

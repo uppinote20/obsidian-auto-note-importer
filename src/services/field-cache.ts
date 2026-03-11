@@ -164,6 +164,13 @@ export class FieldCache {
   }
 
   /**
+   * Gets cached tables for a specific base.
+   */
+  getTablesForBase(baseId: string): AirtableTable[] | undefined {
+    return this.cachedTables.get(baseId);
+  }
+
+  /**
    * Gets cached fields for a specific base/table combination.
    */
   getFields(cacheKey: string): AirtableField[] | undefined {

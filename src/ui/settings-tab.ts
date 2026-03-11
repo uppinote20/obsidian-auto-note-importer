@@ -8,7 +8,7 @@ import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type { ExtraButtonComponent, Plugin } from "obsidian";
 import { FieldCache } from '../services';
 import { isFieldTypeSupported } from '../constants';
-import type { AutoNoteImporterSettings, ConflictResolutionMode } from '../types';
+import type { AutoNoteImporterSettings, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
 
 /**
@@ -122,6 +122,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           this.plugin.settings.allowOverwrite = value;
           await this.plugin.saveSettings();
         }));
+
+    // Bases database settings
+    this.renderBasesSettings(containerEl);
 
     // Bidirectional sync settings
     this.renderBidirectionalSyncSettings(containerEl);
@@ -248,6 +251,63 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addExtraButton(button => this.configureRefreshButton(button, "Refresh field list", () => {
         this.fieldCache.clearFields(this.plugin.settings.baseId, this.plugin.settings.tableId);
       }));
+  }
+
+  private renderBasesSettings(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName('Bases database').setHeading();
+
+    new Setting(containerEl)
+      .setName('Auto-generate Bases database file')
+      .setDesc('Create a .base file after sync for table/card view in Obsidian Bases.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.generateBasesFile)
+        .onChange(async (value) => {
+          this.plugin.settings.generateBasesFile = value;
+          await this.plugin.saveSettings();
+          this.debounceDisplay();
+        }));
+
+    if (this.plugin.settings.generateBasesFile) {
+      new Setting(containerEl)
+        .setName('Database file location')
+        .setDesc('Where to create the .base file.')
+        .addDropdown(dropdown => dropdown
+          .addOption('vault-root', 'Vault root')
+          .addOption('synced-folder', 'Inside synced folder')
+          .addOption('custom', 'Custom path')
+          .setValue(this.plugin.settings.basesFileLocation)
+          .onChange(async (value: BasesFileLocation) => {
+            this.plugin.settings.basesFileLocation = value;
+            await this.plugin.saveSettings();
+            this.debounceDisplay();
+          }));
+
+      if (this.plugin.settings.basesFileLocation === 'custom') {
+        new Setting(containerEl)
+          .setName('Custom path')
+          .setDesc('Folder path for the .base file.')
+          .addText(text => {
+            const input = text
+              .setPlaceholder('Bases')
+              .setValue(this.plugin.settings.basesCustomPath)
+              .onChange(async (value) => {
+                this.plugin.settings.basesCustomPath = value;
+                await this.plugin.saveSettings();
+              });
+            new FolderSuggest(this.app, input.inputEl as HTMLInputElement);
+          });
+      }
+
+      new Setting(containerEl)
+        .setName('Regenerate on each sync')
+        .setDesc('Recreate .base file on every sync. Disable to preserve manual edits.')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.basesRegenerateOnSync)
+          .onChange(async (value) => {
+            this.plugin.settings.basesRegenerateOnSync = value;
+            await this.plugin.saveSettings();
+          }));
+    }
   }
 
   private renderBidirectionalSyncSettings(containerEl: HTMLElement): void {
