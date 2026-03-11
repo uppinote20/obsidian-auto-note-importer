@@ -11,3 +11,7 @@ export const App = vi.fn();
 export const TFile = vi.fn();
 
 export const TFolder = vi.fn();
+
+export function normalizePath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+}
