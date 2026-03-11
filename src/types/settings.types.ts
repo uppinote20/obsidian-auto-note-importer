@@ -63,7 +63,7 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   fileWatchDebounce: 2000,
   autoSyncFormulas: true,
   formulaSyncDelay: 1500,
-  generateBasesFile: true,
+  generateBasesFile: false,
   basesFileLocation: 'vault-root',
   basesCustomPath: '',
   basesRegenerateOnSync: false,

@@ -84,5 +84,5 @@ export function collectFieldNames(notes: RemoteNote[]): string[] {
     }
   }
 
-  return [...seen];
+  return [...seen].sort();
 }

@@ -158,16 +158,13 @@ describe('collectFieldNames', () => {
     fields,
   });
 
-  it('should collect unique field names from multiple notes', () => {
+  it('should collect unique field names sorted alphabetically', () => {
     const notes = [
       createNote({ title: 'A', status: 'done' }),
       createNote({ title: 'B', category: 'tech' }),
     ];
     const result = collectFieldNames(notes);
-    expect(result).toContain('title');
-    expect(result).toContain('status');
-    expect(result).toContain('category');
-    expect(result).toHaveLength(3);
+    expect(result).toEqual(['category', 'status', 'title']);
   });
 
   it('should deduplicate field names', () => {
@@ -192,15 +189,14 @@ describe('collectFieldNames', () => {
     expect(result).toEqual([]);
   });
 
-  it('should handle notes with different field sets', () => {
+  it('should handle notes with different field sets in sorted order', () => {
     const notes = [
+      createNote({ c: 3 }),
       createNote({ a: 1 }),
       createNote({ b: 2 }),
-      createNote({ c: 3 }),
     ];
     const result = collectFieldNames(notes);
-    expect(result).toHaveLength(3);
-    expect(new Set(result)).toEqual(new Set(['a', 'b', 'c']));
+    expect(result).toEqual(['a', 'b', 'c']);
   });
 
   it('should include all field types (null, objects, arrays)', () => {

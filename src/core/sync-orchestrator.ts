@@ -442,17 +442,23 @@ export class SyncOrchestrator {
     this.fileWatcher.clearPending();
   }
 
-  private resolveTableName(): string {
-    const tables = this.fieldCache.getTablesForBase(this.settings.baseId);
+  private async resolveTableName(): Promise<string> {
+    let tables = this.fieldCache.getTablesForBase(this.settings.baseId);
+    if (!tables && this.settings.apiKey && this.settings.baseId) {
+      try {
+        tables = await this.fieldCache.fetchTables(this.settings.apiKey, this.settings.baseId);
+      } catch { /* fallback to folder name */ }
+    }
     const table = tables?.find(t => t.id === this.settings.tableId);
     const name = table?.name ?? (this.settings.folderPath || 'Database');
-    return sanitizeFileName(name) || 'Database';
+    const sanitized = sanitizeFileName(name) || 'Database';
+    return sanitized.replace(/\.base$/i, '');
   }
 
   private async generateBasesFileIfNeeded(remoteNotes: RemoteNote[]): Promise<void> {
     if (!this.settings.generateBasesFile || remoteNotes.length === 0) return;
 
-    const tableName = this.resolveTableName();
+    const tableName = await this.resolveTableName();
     const filePath = resolveBasesFilePath(this.settings, tableName);
 
     const existingFile = this.app.vault.getAbstractFileByPath(filePath);
