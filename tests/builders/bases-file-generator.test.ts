@@ -141,7 +141,7 @@ describe('resolveBasesFilePath', () => {
     expect(result).not.toContain('//');
   });
 
-  it('should handle table names with .base extension already', () => {
+  it('should append .base even if table name already ends with .base (caller strips it)', () => {
     const result = resolveBasesFilePath(baseOptions, 'Already.base');
     expect(result).toBe('Already.base.base');
   });
