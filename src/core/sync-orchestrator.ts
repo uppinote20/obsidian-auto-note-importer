@@ -105,6 +105,8 @@ export class SyncOrchestrator {
               await this.syncFromAirtable();
               new Notice("Auto Note Importer: Bidirectional sync complete!");
             } else {
+              // Bases file is not generated here because syncFromAirtable() is skipped,
+              // so no remoteNotes are available to derive column definitions from.
               new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
             }
           }
@@ -447,7 +449,12 @@ export class SyncOrchestrator {
     if (!tables && this.settings.apiKey && this.settings.baseId) {
       try {
         tables = await this.fieldCache.fetchTables(this.settings.apiKey, this.settings.baseId);
-      } catch { /* fallback to folder name */ }
+      } catch (error) {
+        if (this.settings.debugMode) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: Table name fetch failed, using folder name: ${message}`);
+        }
+      }
     }
     const table = tables?.find(t => t.id === this.settings.tableId);
     const name = table?.name ?? (this.settings.folderPath || 'Database');
