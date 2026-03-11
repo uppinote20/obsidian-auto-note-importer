@@ -14,7 +14,7 @@ import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from '../constants';
 import { AirtableClient, FieldCache } from '../services';
 import { ConflictResolver } from './conflict-resolver';
 import { FrontmatterParser, FileWatcher } from '../file-operations';
-import { parseTemplate, buildMarkdownContent } from '../builders';
+import { parseTemplate, buildMarkdownContent, generateBasesContent, resolveBasesFilePath, collectFieldNames } from '../builders';
 import { sanitizeFileName, sanitizeFolderPath, validateAndSanitizeFilename } from '../utils';
 
 export interface StatusBarHandle {
@@ -105,6 +105,8 @@ export class SyncOrchestrator {
               await this.syncFromAirtable();
               new Notice("Auto Note Importer: Bidirectional sync complete!");
             } else {
+              // Bases file is not generated here because syncFromAirtable() is skipped,
+              // so no remoteNotes are available to derive column definitions from.
               new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
             }
           }
@@ -243,6 +245,8 @@ export class SyncOrchestrator {
       if (skippedCount > 0) summary += ` (${skippedCount} skipped)`;
       if (errorCount > 0) summary += ` (${errorCount} errors)`;
       new Notice(summary);
+
+      await this.generateBasesFileIfNeeded(remoteNotes);
     } finally {
       this.fileWatcher.clearPending();
       this.fileWatcher.setSyncing(false);
@@ -438,6 +442,56 @@ export class SyncOrchestrator {
     }
 
     this.fileWatcher.clearPending();
+  }
+
+  private async resolveTableName(): Promise<string> {
+    let tables = this.fieldCache.getTablesForBase(this.settings.baseId);
+    if (!tables && this.settings.apiKey && this.settings.baseId) {
+      try {
+        tables = await this.fieldCache.fetchTables(this.settings.apiKey, this.settings.baseId);
+      } catch (error) {
+        if (this.settings.debugMode) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: Table name fetch failed, using folder name: ${message}`);
+        }
+      }
+    }
+    const table = tables?.find(t => t.id === this.settings.tableId);
+    const name = table?.name ?? (this.settings.folderPath || 'Database');
+    const sanitized = sanitizeFileName(name) || 'Database';
+    return sanitized.replace(/\.base$/i, '');
+  }
+
+  private async generateBasesFileIfNeeded(remoteNotes: RemoteNote[]): Promise<void> {
+    if (!this.settings.generateBasesFile || remoteNotes.length === 0) return;
+
+    const tableName = await this.resolveTableName();
+    const filePath = resolveBasesFilePath(this.settings, tableName);
+
+    const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+    if (!this.settings.basesRegenerateOnSync && existingFile) return;
+
+    try {
+      const fieldNames = collectFieldNames(remoteNotes);
+      const content = generateBasesContent(this.settings.folderPath, fieldNames);
+
+      if (existingFile instanceof TFile) {
+        const currentContent = await this.app.vault.read(existingFile);
+        if (currentContent === content) return;
+        await this.app.vault.modify(existingFile, content);
+        new Notice('Auto Note Importer: Bases database file updated.');
+      } else {
+        const dir = filePath.substring(0, filePath.lastIndexOf('/'));
+        if (dir) {
+          try { await this.app.vault.createFolder(dir); } catch { /* already exists */ }
+        }
+        await this.app.vault.create(filePath, content);
+        new Notice('Auto Note Importer: Bases database file created.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Auto Note Importer: Failed to create Bases file: ${message}`);
+    }
   }
 
   private sleep(ms: number): Promise<void> {

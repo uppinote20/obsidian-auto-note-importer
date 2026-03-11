@@ -9,6 +9,11 @@
 export type ConflictResolutionMode = 'obsidian-wins' | 'airtable-wins' | 'manual';
 
 /**
+ * Location options for the generated Bases database file.
+ */
+export type BasesFileLocation = 'vault-root' | 'synced-folder' | 'custom';
+
+/**
  * Sync scope options for determining which files to sync.
  */
 export type SyncScope = 'current' | 'modified' | 'all';
@@ -32,6 +37,10 @@ export interface AutoNoteImporterSettings {
   fileWatchDebounce: number;
   autoSyncFormulas: boolean;
   formulaSyncDelay: number;
+  generateBasesFile: boolean;
+  basesFileLocation: BasesFileLocation;
+  basesCustomPath: string;
+  basesRegenerateOnSync: boolean;
   debugMode: boolean;
 }
 
@@ -54,5 +63,9 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   fileWatchDebounce: 2000,
   autoSyncFormulas: true,
   formulaSyncDelay: 1500,
+  generateBasesFile: false,
+  basesFileLocation: 'vault-root',
+  basesCustomPath: '',
+  basesRegenerateOnSync: false,
   debugMode: false,
 };

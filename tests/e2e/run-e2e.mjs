@@ -65,7 +65,7 @@ function evalInObsidian(targetId, expression, timeout = 20000) {
         ws.close();
       }
     });
-    ws.addEventListener('error', (err) => { clearTimeout(timer); reject(err); });
+    ws.addEventListener('error', (err) => { clearTimeout(timer); ws.close(); reject(err); });
   });
 }
 
@@ -241,6 +241,10 @@ async function cleanup() {
       const file = app.vault.getAbstractFileByPath(p.settings.folderPath + '/' + name);
       if (file) await app.vault.delete(file);
     }
+
+    // Delete any .base files created during tests
+    const basesFiles = app.vault.getFiles().filter(f => f.extension === 'base' && f.basename.includes('E2E'));
+    for (const f of basesFiles) await app.vault.delete(f);
     return '"cleaned"';
   })()`, 15000);
   log('Test records and files cleaned up');
@@ -285,6 +289,60 @@ async function test(name, fn) {
         return JSON.stringify({ fileCount: files.length });
       })()`, 15000);
       return { pass: r.fileCount >= 8, detail: `${r.fileCount} files` };
+    });
+
+    await test('from-airtable / bases file generation', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const folderPath = p.settings.folderPath;
+
+        // Enable bases generation, vault-root location
+        p.settings.generateBasesFile = true;
+        p.settings.basesFileLocation = 'vault-root';
+        p.settings.basesRegenerateOnSync = false;
+
+        // Delete existing .base file if any (find by table name or folder name)
+        const existingBases = app.vault.getFiles().filter(f => f.extension === 'base');
+        for (const f of existingBases) await app.vault.delete(f);
+
+        // Sync from Airtable
+        await p.syncQueue.enqueue('from-airtable', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+
+        // Check .base file was created
+        const basesFiles = app.vault.getFiles().filter(f => f.extension === 'base');
+        if (basesFiles.length === 0) {
+          return JSON.stringify({ pass: false, detail: 'No .base file created' });
+        }
+
+        const baseFile = basesFiles[0];
+        const content = await app.vault.read(baseFile);
+
+        // Verify YAML structure
+        const hasFilter = content.includes('file.inFolder("' + folderPath + '")');
+        const hasTableView = content.includes('type: table');
+        const hasFileName = content.includes('file.name');
+        const hasNotePrefix = content.includes('note.');
+
+        // Verify regenerate=false skips existing file
+        const contentBefore = content;
+        await p.syncQueue.enqueue('from-airtable', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        const contentAfter = await app.vault.read(baseFile);
+        const skipWorks = contentBefore === contentAfter;
+
+        // Cleanup
+        await app.vault.delete(baseFile);
+        p.settings.generateBasesFile = true;
+
+        return JSON.stringify({
+          pass: hasFilter && hasTableView && hasFileName && hasNotePrefix && skipWorks,
+          detail: 'filter=' + hasFilter + ' table=' + hasTableView + ' fileName=' + hasFileName + ' notePrefix=' + hasNotePrefix + ' skipExisting=' + skipWorks,
+          path: baseFile.path
+        });
+      })()`, 30000);
+      return { pass: r.pass, detail: r.detail || 'ok' };
     });
 
     await test('from-airtable / current', async () => {
