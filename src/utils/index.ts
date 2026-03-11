@@ -5,6 +5,7 @@ export {
 } from './sanitizers';
 
 export {
+  escapeYamlString,
   formatYamlValue,
   formatFieldForBases,
 } from './yaml-formatter';

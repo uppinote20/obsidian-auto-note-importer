@@ -9,6 +9,7 @@
 
 import { normalizePath } from 'obsidian';
 import type { BasesFileLocation, RemoteNote } from '../types';
+import { escapeYamlString } from '../utils';
 
 const YAML_SPECIAL_CHARS = /[:#{}[\],&*?|>!%@`"'\\\n]/;
 
@@ -17,7 +18,7 @@ const YAML_SPECIAL_CHARS = /[:#{}[\],&*?|>!%@`"'\\\n]/;
  */
 function quoteIfNeeded(value: string): string {
   if (YAML_SPECIAL_CHARS.test(value)) {
-    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    return `"${escapeYamlString(value)}"`;
   }
   return value;
 }
@@ -29,7 +30,7 @@ function quoteIfNeeded(value: string): string {
  * derived from the synced notes' field names.
  */
 export function generateBasesContent(folderPath: string, fieldNames: string[]): string {
-  const escapedPath = folderPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const escapedPath = escapeYamlString(folderPath);
   const lines: string[] = [];
 
   lines.push('filters:');

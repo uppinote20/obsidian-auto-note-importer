@@ -4,6 +4,13 @@
  */
 
 /**
+ * Escapes backslashes and double quotes for safe use in YAML double-quoted strings.
+ */
+export function escapeYamlString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
  * Formats a JavaScript value into a YAML-compatible string representation.
  * - Strings are quoted and escaped (backslashes and double quotes).
  * - Numbers (finite) and booleans are unquoted.
@@ -18,8 +25,8 @@ export function formatYamlValue(value: unknown): string {
   if (typeof value === 'number' && isFinite(value)) return String(value);
 
   const strValue = String(value);
-  const escapedValue = strValue.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `"${escapedValue}"`;
+  return `"${escapeYamlString(strValue)}"`;
+
 }
 
 /**
