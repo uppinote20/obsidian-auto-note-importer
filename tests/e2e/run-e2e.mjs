@@ -65,7 +65,7 @@ function evalInObsidian(targetId, expression, timeout = 20000) {
         ws.close();
       }
     });
-    ws.addEventListener('error', (err) => { clearTimeout(timer); reject(err); });
+    ws.addEventListener('error', (err) => { clearTimeout(timer); ws.close(); reject(err); });
   });
 }
 
