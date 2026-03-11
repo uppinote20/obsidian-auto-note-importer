@@ -285,7 +285,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       if (this.plugin.settings.basesFileLocation === 'custom') {
         new Setting(containerEl)
           .setName('Custom path')
-          .setDesc('Folder path for the .base file.')
+          .setDesc('Folder path for the .base file. Leave empty to use vault root.')
           .addText(text => {
             const input = text
               .setPlaceholder('Bases')
@@ -311,6 +311,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderBidirectionalSyncSettings(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName('Bidirectional sync').setHeading();
+
     new Setting(containerEl)
       .setName("Enable bidirectional sync")
       .setDesc("When enabled, changes made in Obsidian will be synced back to Airtable.")
