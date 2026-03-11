@@ -35,6 +35,12 @@ export const MAX_RETRY_ATTEMPTS = 3;
 export const DEFAULT_RETRY_DELAY_MS = 30_000;
 
 /**
+ * Base delay for network error retries with exponential backoff (in milliseconds).
+ * Actual delays: 1s → 2s → 4s (attempt 0, 1, 2).
+ */
+export const NETWORK_RETRY_BASE_DELAY_MS = 1_000;
+
+/**
  * Airtable API base URL.
  */
 export const AIRTABLE_API_BASE_URL = 'https://api.airtable.com/v0';

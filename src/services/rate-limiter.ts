@@ -9,12 +9,27 @@ import {
   DEBUG_DELAY_MULTIPLIER,
   MAX_RETRY_ATTEMPTS,
   DEFAULT_RETRY_DELAY_MS,
+  NETWORK_RETRY_BASE_DELAY_MS,
 } from '../constants';
 
 /** Shape of a response that can be checked for 429 status. */
 interface RetryableResponse {
   status: number;
   headers: Record<string, string>;
+}
+
+/**
+ * Classifies whether a thrown error is transient (worth retrying) or permanent.
+ * - No status property → network error (DNS, timeout, connection reset) → transient
+ * - 408/429 → transient
+ * - 4xx → permanent (auth, validation errors)
+ * - 5xx and others → transient
+ */
+function isTransientError(error: unknown): boolean {
+  const status = (error as Record<string, unknown>)?.status;
+  if (typeof status !== 'number') return true;
+  if (status === 408 || status === 429) return true;
+  return status < 400 || status >= 500;
 }
 
 /** Duck-type check: does the value look like an HTTP response with status and headers? */
@@ -93,18 +108,27 @@ export class RateLimiter {
       }
 
       this.lastRequest = Date.now();
-      const result = await requestFn();
 
-      if (isRetryableResponse(result) && result.status === 429) {
-        if (attempt >= this.maxRetries) return result;
-        await this.sleep(parseRetryAfter(result.headers));
-        continue;
+      try {
+        const result = await requestFn();
+
+        if (isRetryableResponse(result) && result.status === 429) {
+          if (attempt >= this.maxRetries) return result;
+          await this.sleep(parseRetryAfter(result.headers));
+          continue;
+        }
+
+        return result;
+      } catch (error) {
+        if (!isTransientError(error) || attempt >= this.maxRetries) {
+          throw error;
+        }
+        const backoffDelay = NETWORK_RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        await this.sleep(backoffDelay);
       }
-
-      return result;
     }
 
-    /* istanbul ignore next -- unreachable: loop always returns */
+    /* istanbul ignore next -- unreachable: loop always returns or throws */
     throw new Error('Unexpected state in rate limiter retry loop');
   }
 
