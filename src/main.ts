@@ -21,23 +21,23 @@ import { AutoNoteImporterSettingTab } from './ui';
  * Main plugin class for Auto Note Importer.
  */
 export default class AutoNoteImporterPlugin extends Plugin {
-  settings: AutoNoteImporterSettings;
+  settings!: AutoNoteImporterSettings;
   private intervalId: number | null = null;
-  private settingTab: AutoNoteImporterSettingTab;
+  private settingTab!: AutoNoteImporterSettingTab;
 
-  // Services
-  private airtableClient: AirtableClient;
-  private fieldCache: FieldCache;
-  private rateLimiter: RateLimiter;
+  // Services (initialized in onload → initializeServices)
+  private airtableClient!: AirtableClient;
+  private fieldCache!: FieldCache;
+  private rateLimiter!: RateLimiter;
 
   // Core
-  private syncQueue: SyncQueue;
-  private conflictResolver: ConflictResolver;
-  private syncOrchestrator: SyncOrchestrator;
+  private syncQueue!: SyncQueue;
+  private conflictResolver!: ConflictResolver;
+  private syncOrchestrator!: SyncOrchestrator;
 
   // File Operations
-  private frontmatterParser: FrontmatterParser;
-  private fileWatcher: FileWatcher;
+  private frontmatterParser!: FrontmatterParser;
+  private fileWatcher!: FileWatcher;
 
   async onload() {
     await this.loadSettings();

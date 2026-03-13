@@ -26,6 +26,16 @@ function createSettings(overrides: Partial<AutoNoteImporterSettings> = {}): Auto
   };
 }
 
+function mockResponse(json: unknown) {
+  return {
+    status: 200,
+    json,
+    headers: {},
+    text: '',
+    arrayBuffer: new ArrayBuffer(0),
+  };
+}
+
 describe('AirtableClient view parameter', () => {
   let rateLimiter: RateLimiter;
 
@@ -38,13 +48,7 @@ describe('AirtableClient view parameter', () => {
     const settings = createSettings({ viewId: '' });
     const client = new AirtableClient(settings, rateLimiter);
 
-    mockRequestUrl.mockResolvedValueOnce({
-      status: 200,
-      json: { records: [] },
-      headers: {},
-      text: '',
-      arrayBuffer: new ArrayBuffer(0),
-    });
+    mockRequestUrl.mockResolvedValueOnce(mockResponse({ records: [] }));
 
     await client.fetchNotes();
 
@@ -56,13 +60,7 @@ describe('AirtableClient view parameter', () => {
     const settings = createSettings({ viewId: 'viwTestView123' });
     const client = new AirtableClient(settings, rateLimiter);
 
-    mockRequestUrl.mockResolvedValueOnce({
-      status: 200,
-      json: { records: [] },
-      headers: {},
-      text: '',
-      arrayBuffer: new ArrayBuffer(0),
-    });
+    mockRequestUrl.mockResolvedValueOnce(mockResponse({ records: [] }));
 
     await client.fetchNotes();
 
@@ -75,25 +73,13 @@ describe('AirtableClient view parameter', () => {
     const client = new AirtableClient(settings, rateLimiter);
 
     mockRequestUrl
-      .mockResolvedValueOnce({
-        status: 200,
-        json: {
-          records: [{ id: 'rec1', fields: { title: 'Note 1' } }],
-          offset: 'nextPage123',
-        },
-        headers: {},
-        text: '',
-        arrayBuffer: new ArrayBuffer(0),
-      })
-      .mockResolvedValueOnce({
-        status: 200,
-        json: {
-          records: [{ id: 'rec2', fields: { title: 'Note 2' } }],
-        },
-        headers: {},
-        text: '',
-        arrayBuffer: new ArrayBuffer(0),
-      });
+      .mockResolvedValueOnce(mockResponse({
+        records: [{ id: 'rec1', fields: { title: 'Note 1' } }],
+        offset: 'nextPage123',
+      }))
+      .mockResolvedValueOnce(mockResponse({
+        records: [{ id: 'rec2', fields: { title: 'Note 2' } }],
+      }));
 
     const notes = await client.fetchNotes();
 
