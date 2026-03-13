@@ -1,0 +1,75 @@
+name: Release Notes Drafter
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+jobs:
+  draft-release-notes:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Draft Release Notes
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            PR #${{ github.event.pull_request.number }} has been merged.
+
+            Your task: analyze this merged PR and append its release notes to an existing draft GitHub release.
+
+            ## Steps
+
+            1. Run `gh pr view ${{ github.event.pull_request.number }} --json title,body,files` to understand the PR.
+            2. Run `gh pr diff ${{ github.event.pull_request.number }}` to see the actual code changes.
+            3. Check for an existing draft release: `gh release list --json tagName,isDraft,name | head -5`
+            4. Write a concise release note entry in English for this PR:
+               - One line summary with PR reference (e.g., "- Add Airtable view filtering support (#22)")
+               - 2-4 sub-bullets for key details if the change is significant
+               - Categorize under: New Features, Bug Fixes, Performance, Maintenance, or Other Changes
+               - `docs:`, `test:`, `chore:` PRs go under "Other Changes"
+            5. If a draft release exists:
+               - Get its current body: `gh release view <tag> --json body -q .body`
+               - Append the new entry under the correct category (create the category header if it doesn't exist)
+               - Write the FULL updated notes to /tmp/release-notes.md, then update: `gh release edit <tag> --notes-file /tmp/release-notes.md`
+            6. If no draft release exists:
+               - Determine the next version from the latest tag (`git tag --sort=-creatordate | head -1`)
+               - Write notes to /tmp/release-notes.md, then create: `gh release create <next-tag> --draft --title "<next-tag>" --notes-file /tmp/release-notes.md`
+               - For version: if PR title starts with `feat` bump minor, otherwise bump patch
+
+            IMPORTANT: Always use the Write tool to create /tmp/release-notes.md, then pass it via --notes-file. Never pass long notes inline via --notes.
+
+            ## Format
+
+            ```
+            ## What's Changed
+
+            ### New Features
+            - Summary of change (#PR)
+              - Detail 1
+              - Detail 2
+
+            ### Bug Fixes
+            ...
+
+            ### Other Changes
+            ...
+            ```
+
+            ## Rules
+            - Write release notes in English
+            - Be concise but informative — focus on what changed and why it matters
+            - Do NOT include internal refactoring details unless they affect the public API
+            - Do NOT mention Claude, AI, or automation in the notes
+          claude_args: '--model claude-sonnet-4-6 --max-turns 15 --allowedTools "Write,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr list:*),Bash(gh release:*),Bash(git tag:*),Bash(git log:*),Bash(git diff:*)"'

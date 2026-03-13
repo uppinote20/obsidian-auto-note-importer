@@ -23,13 +23,23 @@ jobs:
           npm install
           npm run build
 
-      - name: Create release
+      - name: Create or update release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
 
-          gh release create "$tag" \
-            --title="$tag" \
-            --draft \
-            main.js manifest.json
+          # Check for existing draft release (created by release-drafter)
+          existing=$(gh release list --json tagName,isDraft -q '.[] | select(.isDraft) | .tagName' | head -1)
+
+          if [ -n "$existing" ]; then
+            # Upload assets to existing draft and update tag/title
+            gh release upload "$existing" main.js manifest.json --clobber
+            gh release edit "$existing" --tag "$tag" --title "$tag"
+          else
+            # No draft exists — create a new one
+            gh release create "$tag" \
+              --title="$tag" \
+              --draft \
+              main.js manifest.json
+          fi
