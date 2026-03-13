@@ -53,6 +53,13 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       });
   }
 
+  hide(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -309,8 +316,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .addOption('synced-folder', 'Inside synced folder')
           .addOption('custom', 'Custom path')
           .setValue(this.plugin.settings.basesFileLocation)
-          .onChange(async (value: BasesFileLocation) => {
-            this.plugin.settings.basesFileLocation = value;
+          .onChange(async (value) => {
+            this.plugin.settings.basesFileLocation = value as BasesFileLocation;
             await this.plugin.saveSettings();
             this.debounceDisplay();
           }));
@@ -366,8 +373,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .addOption('obsidian-wins', 'Obsidian wins (overwrite Airtable)')
           .addOption('airtable-wins', 'Airtable wins (overwrite Obsidian)')
           .setValue(this.plugin.settings.conflictResolution)
-          .onChange(async (value: ConflictResolutionMode) => {
-            this.plugin.settings.conflictResolution = value;
+          .onChange(async (value) => {
+            this.plugin.settings.conflictResolution = value as ConflictResolutionMode;
             await this.plugin.saveSettings();
           }));
 
