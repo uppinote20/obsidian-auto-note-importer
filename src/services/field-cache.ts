@@ -43,12 +43,12 @@ export class FieldCache {
    */
   clearTables(baseId: string): void {
     this.cachedTables.delete(baseId);
-    // Clear fields and views that belong to this base
-    for (const key of [...this.cachedFields.keys(), ...this.cachedViews.keys()]) {
-      if (key.startsWith(`${baseId}-`)) {
-        this.cachedFields.delete(key);
-        this.cachedViews.delete(key);
-      }
+    const prefix = `${baseId}-`;
+    for (const key of this.cachedFields.keys()) {
+      if (key.startsWith(prefix)) this.cachedFields.delete(key);
+    }
+    for (const key of this.cachedViews.keys()) {
+      if (key.startsWith(prefix)) this.cachedViews.delete(key);
     }
   }
 
@@ -124,15 +124,9 @@ export class FieldCache {
   }
 
   /**
-   * Fetches fields for a specific table.
+   * Fetches and caches both fields and views for a table in a single API call.
    */
-  async fetchFields(apiKey: string, baseId: string, tableId: string): Promise<AirtableField[]> {
-    this.clearCacheIfApiKeyChanged(apiKey);
-
-    const cacheKey = this.getCacheKey(baseId, tableId);
-    const cachedFields = this.cachedFields.get(cacheKey);
-    if (cachedFields) return cachedFields;
-
+  private async fetchTableMetadata(apiKey: string, baseId: string, tableId: string): Promise<void> {
     const response = await requestUrl({
       url: `${AIRTABLE_META_API_URL}/bases/${baseId}/tables`,
       method: "GET",
@@ -140,7 +134,7 @@ export class FieldCache {
     });
 
     if (response.status !== 200) {
-      throw new Error(`Failed to fetch table fields: HTTP ${response.status}`);
+      throw new Error(`Failed to fetch table metadata: HTTP ${response.status}`);
     }
 
     const json = response.json;
@@ -149,6 +143,8 @@ export class FieldCache {
     if (!table) {
       throw new Error(`Table with ID ${tableId} not found`);
     }
+
+    const cacheKey = this.getCacheKey(baseId, tableId);
 
     const fields: AirtableField[] = table.fields.map((f: {
       id: string;
@@ -161,9 +157,32 @@ export class FieldCache {
       type: f.type,
       description: f.description
     }));
-
     this.cachedFields.set(cacheKey, fields);
-    return fields;
+
+    const views: AirtableView[] = (table.views || []).map((v: {
+      id: string;
+      name: string;
+      type: string;
+    }) => ({
+      id: v.id,
+      name: v.name,
+      type: v.type
+    }));
+    this.cachedViews.set(cacheKey, views);
+  }
+
+  /**
+   * Fetches fields for a specific table.
+   */
+  async fetchFields(apiKey: string, baseId: string, tableId: string): Promise<AirtableField[]> {
+    this.clearCacheIfApiKeyChanged(apiKey);
+
+    const cacheKey = this.getCacheKey(baseId, tableId);
+    const cached = this.cachedFields.get(cacheKey);
+    if (cached) return cached;
+
+    await this.fetchTableMetadata(apiKey, baseId, tableId);
+    return this.cachedFields.get(cacheKey)!;
   }
 
   /**
@@ -176,35 +195,8 @@ export class FieldCache {
     const cached = this.cachedViews.get(cacheKey);
     if (cached) return cached;
 
-    const response = await requestUrl({
-      url: `${AIRTABLE_META_API_URL}/bases/${baseId}/tables`,
-      method: "GET",
-      headers: { "Authorization": `Bearer ${apiKey}` },
-    });
-
-    if (response.status !== 200) {
-      throw new Error(`Failed to fetch table views: HTTP ${response.status}`);
-    }
-
-    const json = response.json;
-    const table = json.tables.find((t: { id: string }) => t.id === tableId);
-
-    if (!table) {
-      throw new Error(`Table with ID ${tableId} not found`);
-    }
-
-    const views: AirtableView[] = (table.views || []).map((v: {
-      id: string;
-      name: string;
-      type: string;
-    }) => ({
-      id: v.id,
-      name: v.name,
-      type: v.type
-    }));
-
-    this.cachedViews.set(cacheKey, views);
-    return views;
+    await this.fetchTableMetadata(apiKey, baseId, tableId);
+    return this.cachedViews.get(cacheKey)!;
   }
 
   /**

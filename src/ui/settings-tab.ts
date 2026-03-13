@@ -148,6 +148,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           dropdown.onChange(async (value) => {
             this.plugin.settings.baseId = value;
             this.plugin.settings.tableId = "";
+            this.plugin.settings.viewId = "";
             await this.plugin.saveSettings();
             this.debounceDisplay();
           });

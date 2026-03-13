@@ -390,7 +390,7 @@ async function test(name, fn) {
         p.airtableClient.updateSettings(p.settings);
 
         return JSON.stringify({
-          pass: allCount >= viewCount && views.length > 0,
+          pass: views.length > 0 && allCount > 0 && allCount >= viewCount,
           detail: 'views=' + views.length + ', viewFiltered=' + viewCount + ', allRecords=' + allCount + ', selectedView=' + nonDefault.name,
           viewName: nonDefault.name
         });
