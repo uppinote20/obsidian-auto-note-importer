@@ -37,8 +37,7 @@ jobs:
             4. Write a concise release note entry in English for this PR:
                - One line summary with PR reference (e.g., "- Add Airtable view filtering support (#22)")
                - 2-4 sub-bullets for key details if the change is significant
-               - Categorize under: New Features, Bug Fixes, Performance, Maintenance, or Other Changes
-               - `docs:`, `test:`, `chore:` PRs go under "Other Changes"
+               - Categorize under: New Features, Bug Fixes, Refactoring, Performance, Testing, Documentation, or Maintenance
             5. If a draft release exists:
                - Get its current body: `gh release view <tag> --json body -q .body`
                - Append the new entry under the correct category (create the category header if it doesn't exist)
