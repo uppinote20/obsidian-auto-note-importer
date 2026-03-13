@@ -25,7 +25,7 @@ export const DEBUG_DELAY_MULTIPLIER = 5;
 export const MAX_FOLDER_DEPTH = 10;
 
 /**
- * Maximum number of retry attempts for 429 (rate-limited) responses.
+ * Maximum number of retry attempts for 429 responses and transient network errors.
  */
 export const MAX_RETRY_ATTEMPTS = 3;
 
@@ -33,6 +33,13 @@ export const MAX_RETRY_ATTEMPTS = 3;
  * Default delay when Retry-After header is absent (in milliseconds).
  */
 export const DEFAULT_RETRY_DELAY_MS = 30_000;
+
+/**
+ * Base delay for network error retries with exponential backoff (in milliseconds).
+ * Delay for attempt N: NETWORK_RETRY_BASE_DELAY_MS * 2^N
+ * (e.g., 1s, 2s, 4s with MAX_RETRY_ATTEMPTS=3).
+ */
+export const NETWORK_RETRY_BASE_DELAY_MS = 1_000;
 
 /**
  * Airtable API base URL.

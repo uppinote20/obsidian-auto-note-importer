@@ -8,6 +8,7 @@ import {
   RATE_LIMIT_INTERVAL_MS,
   DEBUG_DELAY_MULTIPLIER,
   DEFAULT_RETRY_DELAY_MS,
+  NETWORK_RETRY_BASE_DELAY_MS,
 } from '../../src/constants';
 
 describe('RateLimiter', () => {
@@ -99,6 +100,7 @@ describe('RateLimiter', () => {
       const mockFn = vi.fn().mockRejectedValue(error);
 
       await expect(limiter.execute(mockFn)).rejects.toThrow('Request failed');
+      expect(mockFn).toHaveBeenCalledTimes(1);
     });
 
     it('should not delay if enough time has passed (RL-2.1)', async () => {
@@ -319,7 +321,7 @@ describe('RateLimiter', () => {
       expect(result).toBeNull();
     });
 
-    it('should use default delay for invalid Retry-After value', async () => {
+    it('should use default delay for invalid Retry-After value (parseRetryAfter)', async () => {
       const limiter = new RateLimiter(200, 3);
       const response429 = { status: 429, headers: { 'Retry-After': 'invalid' } };
       const responseOk = { status: 200, headers: {} };
@@ -337,6 +339,147 @@ describe('RateLimiter', () => {
 
       expect(mockFn).toHaveBeenCalledTimes(2);
       expect(result).toEqual(responseOk);
+    });
+  });
+
+  describe('network error retry', () => {
+    it('should retry transient errors and succeed on next attempt', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const networkError = new Error('ECONNRESET');
+      const mockFn = vi.fn()
+        .mockRejectedValueOnce(networkError)
+        .mockResolvedValueOnce('success');
+
+      const resultPromise = limiter.execute(mockFn);
+
+      // 1st attempt fails → backoff 1s (1000 * 2^0)
+      await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS);
+      // Rate-limit interval for retry
+      await vi.advanceTimersByTimeAsync(200);
+
+      const result = await resultPromise;
+
+      expect(mockFn).toHaveBeenCalledTimes(2);
+      expect(result).toBe('success');
+    });
+
+    it('should throw after exceeding max retries on transient errors', async () => {
+      const limiter = new RateLimiter(200, 2);
+      const networkError = new Error('ETIMEDOUT');
+      const mockFn = vi.fn().mockImplementation(() => { throw networkError; });
+
+      const resultPromise = limiter.execute(mockFn);
+      // Attach handler before timer flush to prevent unhandled rejection
+      resultPromise.catch(() => {});
+
+      await vi.runAllTimersAsync();
+
+      await expect(resultPromise).rejects.toThrow('ETIMEDOUT');
+      // 1 initial + 2 retries = 3 calls
+      expect(mockFn).toHaveBeenCalledTimes(3);
+    });
+
+    it('should not retry permanent errors (401)', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const authError = Object.assign(new Error('Unauthorized'), { status: 401 });
+      const mockFn = vi.fn().mockRejectedValue(authError);
+
+      await expect(limiter.execute(mockFn)).rejects.toThrow('Unauthorized');
+      expect(mockFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('should apply exponential backoff timing', async () => {
+      const limiter = new RateLimiter(0, 3);
+      const networkError = new Error('ECONNRESET');
+      const mockFn = vi.fn()
+        .mockRejectedValueOnce(networkError)
+        .mockRejectedValueOnce(networkError)
+        .mockResolvedValueOnce('ok');
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sleepSpy = vi.spyOn(limiter as any, 'sleep');
+
+      const resultPromise = limiter.execute(mockFn);
+
+      // 1st backoff: 1000 * 2^0 = 1000ms
+      await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS);
+      // 2nd backoff: 1000 * 2^1 = 2000ms
+      await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS * 2);
+
+      const result = await resultPromise;
+
+      expect(result).toBe('ok');
+      // Verify backoff delays: 1000ms (2^0) then 2000ms (2^1)
+      const backoffCalls = sleepSpy.mock.calls.filter(
+        ([ms]) => ms === NETWORK_RETRY_BASE_DELAY_MS || ms === NETWORK_RETRY_BASE_DELAY_MS * 2,
+      );
+      expect(backoffCalls).toEqual([
+        [NETWORK_RETRY_BASE_DELAY_MS],
+        [NETWORK_RETRY_BASE_DELAY_MS * 2],
+      ]);
+    });
+
+    it('should retry thrown 5xx errors as transient', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const serverError = Object.assign(new Error('Service Unavailable'), { status: 503 });
+      const mockFn = vi.fn()
+        .mockRejectedValueOnce(serverError)
+        .mockResolvedValueOnce('recovered');
+
+      const resultPromise = limiter.execute(mockFn);
+
+      await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS);
+      await vi.advanceTimersByTimeAsync(200);
+
+      const result = await resultPromise;
+
+      expect(mockFn).toHaveBeenCalledTimes(2);
+      expect(result).toBe('recovered');
+    });
+
+    it('should retry thrown 408 (Request Timeout) as transient', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const timeoutError = Object.assign(new Error('Request Timeout'), { status: 408 });
+      const mockFn = vi.fn()
+        .mockRejectedValueOnce(timeoutError)
+        .mockResolvedValueOnce('recovered');
+
+      const resultPromise = limiter.execute(mockFn);
+
+      await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS);
+      await vi.advanceTimersByTimeAsync(200);
+
+      const result = await resultPromise;
+
+      expect(mockFn).toHaveBeenCalledTimes(2);
+      expect(result).toBe('recovered');
+    });
+
+    it('should not retry non-Error thrown values', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const mockFn = vi.fn().mockRejectedValue('string error');
+
+      await expect(limiter.execute(mockFn)).rejects.toBe('string error');
+      expect(mockFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('should share retry counter between 429 and network errors', async () => {
+      const limiter = new RateLimiter(200, 2);
+      const response429 = { status: 429, headers: { 'Retry-After': '1' } };
+      const networkError = new Error('ECONNRESET');
+
+      // attempt 0: 429 response, attempts 1+: synchronous throw (avoids unhandled rejection)
+      const mockFn = vi.fn()
+        .mockResolvedValueOnce(response429)
+        .mockImplementation(() => { throw networkError; });
+
+      const resultPromise = limiter.execute(mockFn);
+      resultPromise.catch(() => {});
+
+      await vi.runAllTimersAsync();
+
+      await expect(resultPromise).rejects.toThrow('ECONNRESET');
+      expect(mockFn).toHaveBeenCalledTimes(3);
     });
   });
 });
