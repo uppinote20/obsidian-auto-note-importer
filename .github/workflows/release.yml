@@ -35,11 +35,10 @@ jobs:
           if [ -n "$existing" ]; then
             # Upload assets to existing draft and update tag/title
             gh release upload "$existing" main.js manifest.json --clobber
-            gh release edit "$existing" --tag "$tag" --title "$tag"
+            gh release edit "$existing" --tag "$tag" --title "$tag" --draft=false
           else
-            # No draft exists — create a new one
+            # No draft exists — create and publish directly
             gh release create "$tag" \
               --title="$tag" \
-              --draft \
               main.js manifest.json
           fi
