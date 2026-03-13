@@ -95,11 +95,12 @@ describe('RateLimiter', () => {
     });
 
     it('should propagate errors from request function', async () => {
-      const limiter = new RateLimiter(200, 0);
+      const limiter = new RateLimiter(200);
       const error = new Error('Request failed');
       const mockFn = vi.fn().mockRejectedValue(error);
 
       await expect(limiter.execute(mockFn)).rejects.toThrow('Request failed');
+      expect(mockFn).toHaveBeenCalledTimes(1);
     });
 
     it('should not delay if enough time has passed (RL-2.1)', async () => {
@@ -416,6 +417,50 @@ describe('RateLimiter', () => {
         [NETWORK_RETRY_BASE_DELAY_MS],
         [NETWORK_RETRY_BASE_DELAY_MS * 2],
       ]);
+    });
+
+    it('should retry thrown 5xx errors as transient', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const serverError = Object.assign(new Error('Service Unavailable'), { status: 503 });
+      const mockFn = vi.fn()
+        .mockRejectedValueOnce(serverError)
+        .mockResolvedValueOnce('recovered');
+
+      const resultPromise = limiter.execute(mockFn);
+
+      await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS);
+      await vi.advanceTimersByTimeAsync(200);
+
+      const result = await resultPromise;
+
+      expect(mockFn).toHaveBeenCalledTimes(2);
+      expect(result).toBe('recovered');
+    });
+
+    it('should retry thrown 408 (Request Timeout) as transient', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const timeoutError = Object.assign(new Error('Request Timeout'), { status: 408 });
+      const mockFn = vi.fn()
+        .mockRejectedValueOnce(timeoutError)
+        .mockResolvedValueOnce('recovered');
+
+      const resultPromise = limiter.execute(mockFn);
+
+      await vi.advanceTimersByTimeAsync(NETWORK_RETRY_BASE_DELAY_MS);
+      await vi.advanceTimersByTimeAsync(200);
+
+      const result = await resultPromise;
+
+      expect(mockFn).toHaveBeenCalledTimes(2);
+      expect(result).toBe('recovered');
+    });
+
+    it('should not retry non-Error thrown values', async () => {
+      const limiter = new RateLimiter(200, 3);
+      const mockFn = vi.fn().mockRejectedValue('string error');
+
+      await expect(limiter.execute(mockFn)).rejects.toBe('string error');
+      expect(mockFn).toHaveBeenCalledTimes(1);
     });
 
     it('should share retry counter between 429 and network errors', async () => {
