@@ -25,7 +25,7 @@ export const DEBUG_DELAY_MULTIPLIER = 5;
 export const MAX_FOLDER_DEPTH = 10;
 
 /**
- * Maximum number of retry attempts for 429 (rate-limited) responses.
+ * Maximum number of retry attempts for 429 responses and transient network errors.
  */
 export const MAX_RETRY_ATTEMPTS = 3;
 
