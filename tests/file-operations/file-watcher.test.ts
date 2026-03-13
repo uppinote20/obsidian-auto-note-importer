@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FileWatcher } from '../../src/file-operations/file-watcher';
 import type { AutoNoteImporterSettings } from '../../src/types';
 import { DEFAULT_SETTINGS } from '../../src/types';
+import { DEBUG_DELAY_MULTIPLIER } from '../../src/constants';
 // Import from 'obsidian' (aliased to mock) to ensure same module identity as source code
 import { createMockApp, createMockTFile } from 'obsidian';
 import type { App } from 'obsidian';
@@ -19,6 +20,15 @@ function createSettings(overrides: Partial<AutoNoteImporterSettings> = {}): Auto
     fileWatchDebounce: 100,
     ...overrides,
   };
+}
+
+/**
+ * Extracts the 'modify' event handler registered via vault.on().
+ */
+function getModifyHandler(mockApp: ReturnType<typeof createMockApp>): (...args: unknown[]) => void {
+  const call = mockApp.vault.on.mock.calls.find(([event]) => event === 'modify');
+  if (!call) throw new Error('No modify handler registered');
+  return call[1];
 }
 
 describe('FileWatcher', () => {
@@ -92,7 +102,7 @@ describe('FileWatcher', () => {
       mockApp.vault.getAbstractFileByPath.mockReturnValue(file);
 
       // Simulate file modify event
-      const handler = mockApp.vault.on.mock.calls[0][1];
+      const handler = getModifyHandler(mockApp);
       handler(file);
 
       // Should not fire immediately
@@ -109,7 +119,7 @@ describe('FileWatcher', () => {
       watcher.setup();
 
       const file = createMockTFile('OtherFolder/note.md');
-      const handler = mockApp.vault.on.mock.calls[0][1];
+      const handler = getModifyHandler(mockApp);
       handler(file);
 
       await vi.advanceTimersByTimeAsync(200);
@@ -123,7 +133,7 @@ describe('FileWatcher', () => {
       watcher.setSyncing(true);
 
       const file = createMockTFile('Sync/note1.md');
-      const handler = mockApp.vault.on.mock.calls[0][1];
+      const handler = getModifyHandler(mockApp);
       handler(file);
 
       await vi.advanceTimersByTimeAsync(200);
@@ -143,7 +153,7 @@ describe('FileWatcher', () => {
         .mockReturnValueOnce(file1)
         .mockReturnValueOnce(file2);
 
-      const handler = mockApp.vault.on.mock.calls[0][1];
+      const handler = getModifyHandler(mockApp);
       handler(file1);
 
       await vi.advanceTimersByTimeAsync(50);
@@ -162,15 +172,17 @@ describe('FileWatcher', () => {
       const file = createMockTFile('Sync/note1.md');
       mockApp.vault.getAbstractFileByPath.mockReturnValue(file);
 
-      const handler = mockApp.vault.on.mock.calls[0][1];
+      const handler = getModifyHandler(mockApp);
       handler(file);
+
+      const debugDebounce = 100 * DEBUG_DELAY_MULTIPLIER;
 
       // Should not fire after normal debounce
       await vi.advanceTimersByTimeAsync(100);
       expect(onFilesReady).not.toHaveBeenCalled();
 
-      // Should fire after debug multiplied debounce (100 * 5 = 500ms)
-      await vi.advanceTimersByTimeAsync(400);
+      // Should fire after debug multiplied debounce
+      await vi.advanceTimersByTimeAsync(debugDebounce - 100);
       expect(onFilesReady).toHaveBeenCalledTimes(1);
     });
   });
@@ -195,7 +207,7 @@ describe('FileWatcher', () => {
       const file = createMockTFile('Sync/note1.md');
       mockApp.vault.getAbstractFileByPath.mockReturnValue(file);
 
-      const handler = mockApp.vault.on.mock.calls[0][1];
+      const handler = getModifyHandler(mockApp);
       handler(file);
 
       const pending = watcher.getPendingFiles();
@@ -214,7 +226,7 @@ describe('FileWatcher', () => {
       watcher.updateSettings(createSettings({ folderPath: 'NewFolder' }));
 
       const file = createMockTFile('Sync/note1.md');
-      const handler = mockApp.vault.on.mock.calls[0][1];
+      const handler = getModifyHandler(mockApp);
       handler(file);
 
       await vi.advanceTimersByTimeAsync(200);

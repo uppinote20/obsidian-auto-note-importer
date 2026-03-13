@@ -53,7 +53,7 @@ export function createMockApp() {
           return createMockTFile(path);
         }
         if (folders.has(path)) {
-          return { path, children: [] };
+          return createMockTFolder(path);
         }
         return null;
       }),

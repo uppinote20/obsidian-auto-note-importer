@@ -251,12 +251,12 @@ describe('FieldCache', () => {
       }]));
 
       await cache.fetchFields('key', 'app1', 'tbl1');
-      const field = cache.getField('app1-tbl1', 'Count');
+      const field = cache.getField(cache.getCacheKey('app1', 'tbl1'), 'Count');
       expect(field?.type).toBe('number');
     });
 
     it('should return undefined for unknown field', () => {
-      const field = cache.getField('app1-tbl1', 'Unknown');
+      const field = cache.getField(cache.getCacheKey('app1', 'tbl1'), 'Unknown');
       expect(field).toBeUndefined();
     });
   });

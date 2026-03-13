@@ -107,7 +107,7 @@ describe('SyncOrchestrator', () => {
       expect(mockApp.vault.create).toHaveBeenCalled();
     });
 
-    it('should set and clear syncing flag on fileWatcher', async () => {
+    it('should set and clear syncing flag on fileWatcher in correct order', async () => {
       mockClient.fetchNotes.mockResolvedValue([]);
       mockApp.vault.adapter.exists.mockResolvedValue(true);
 
@@ -116,22 +116,26 @@ describe('SyncOrchestrator', () => {
 
       await orchestrator.processSyncRequest('from-airtable', 'all');
 
-      expect(setSyncingSpy).toHaveBeenCalledWith(true);
-      expect(setSyncingSpy).toHaveBeenCalledWith(false);
+      expect(setSyncingSpy).toHaveBeenNthCalledWith(1, true);
+      expect(setSyncingSpy).toHaveBeenNthCalledWith(2, false);
       expect(clearPendingSpy).toHaveBeenCalled();
     });
 
-    it('should remove status bar even when sync throws', async () => {
+    it('should remove status bar and reset syncing even when sync throws', async () => {
       mockClient.fetchNotes.mockRejectedValue(new Error('API down'));
+
+      const setSyncingSpy = vi.spyOn(fileWatcher, 'setSyncing');
 
       await orchestrator.processSyncRequest('from-airtable', 'all');
 
       expect(statusBar.lastItem.remove).toHaveBeenCalledTimes(1);
+      // setSyncing(false) must be called even on error (via finally block in syncFromAirtable)
+      expect(setSyncingSpy).toHaveBeenCalledWith(false);
     });
   });
 
   describe('processSyncRequest — to-airtable', () => {
-    it('should notice when no files to sync', async () => {
+    it('should clean up status bar when active file is missing', async () => {
       mockApp.workspace.getActiveViewOfType.mockReturnValue(null);
 
       await orchestrator.processSyncRequest('to-airtable', 'current');
