@@ -54,6 +54,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   hide(): void {
+    super.hide();
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
