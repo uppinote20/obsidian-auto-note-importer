@@ -36,7 +36,8 @@ export const DEFAULT_RETRY_DELAY_MS = 30_000;
 
 /**
  * Base delay for network error retries with exponential backoff (in milliseconds).
- * Actual delays: 1s → 2s → 4s (attempt 0, 1, 2).
+ * Delay for attempt N: NETWORK_RETRY_BASE_DELAY_MS * 2^N
+ * (e.g., 1s, 2s, 4s with MAX_RETRY_ATTEMPTS=3).
  */
 export const NETWORK_RETRY_BASE_DELAY_MS = 1_000;
 

@@ -18,18 +18,34 @@ interface RetryableResponse {
   headers: Record<string, string>;
 }
 
+/** Node.js/Chromium error patterns that indicate transient network failures. */
+const TRANSIENT_NETWORK_PATTERNS = [
+  'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT',
+  'EHOSTUNREACH', 'EAI_AGAIN', 'EPIPE', 'ECONNABORTED',
+  'net::ERR_', 'socket hang up',
+] as const;
+
 /**
  * Classifies whether a thrown error is transient (worth retrying) or permanent.
- * - No status property → network error (DNS, timeout, connection reset) → transient
- * - 408/429 → transient
- * - 4xx → permanent (auth, validation errors)
- * - 5xx and others → transient
+ * Uses an allowlist approach — only known patterns are retried, unknown errors fail fast.
+ * - Has numeric status: 408/429/5xx → transient, 4xx → permanent
+ * - No status: matches known network error codes/messages → transient
+ * - Unknown errors → permanent (fail fast)
  */
 function isTransientError(error: unknown): boolean {
-  const status = (error as Record<string, unknown>)?.status;
-  if (typeof status !== 'number') return true;
-  if (status === 408 || status === 429) return true;
-  return status < 400 || status >= 500;
+  if (!(error instanceof Error)) return false;
+
+  const record = error as unknown as Record<string, unknown>;
+
+  const status = record.status;
+  if (typeof status === 'number') {
+    if (status === 408 || status === 429) return true;
+    return status >= 500;
+  }
+
+  const code = record.code;
+  const searchText = typeof code === 'string' ? `${code} ${error.message}` : error.message;
+  return TRANSIENT_NETWORK_PATTERNS.some(pattern => searchText.includes(pattern));
 }
 
 /** Duck-type check: does the value look like an HTTP response with status and headers? */
@@ -57,8 +73,10 @@ function parseRetryAfter(headers: Record<string, string>): number {
 
 /**
  * Rate limiter for API requests.
- * Ensures a minimum interval between consecutive requests
- * and retries on 429 (Too Many Requests) responses.
+ * Ensures a minimum interval between consecutive requests,
+ * retries on 429 (Too Many Requests) responses,
+ * and retries transient network errors with exponential backoff.
+ * The retry budget is shared between 429 and network error retries.
  */
 export class RateLimiter {
   private lastRequest = 0;
@@ -69,7 +87,7 @@ export class RateLimiter {
   /**
    * Creates a new RateLimiter.
    * @param minInterval Minimum interval between requests in milliseconds
-   * @param maxRetries Maximum retry attempts for 429 responses
+   * @param maxRetries Maximum retry attempts for 429 responses and transient network errors
    */
   constructor(
     minInterval: number = RATE_LIMIT_INTERVAL_MS,
@@ -91,9 +109,11 @@ export class RateLimiter {
   }
 
   /**
-   * Executes a request function with rate limiting and 429 retry.
+   * Executes a request function with rate limiting and automatic retry.
    * Waits if necessary to respect the minimum interval.
    * On 429 responses, waits for the Retry-After duration and retries.
+   * On transient network errors, applies exponential backoff and retries.
+   * Both retry paths share the same maxRetries budget.
    * @param requestFn Function that makes the actual request
    * @returns Promise resolving to the request result
    */
