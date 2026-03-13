@@ -345,6 +345,59 @@ async function test(name, fn) {
       return { pass: r.pass, detail: r.detail || 'ok' };
     });
 
+    await test('from-airtable / view filter', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+
+        // 1. Verify fetchViews returns available views
+        const views = await p.fieldCache.fetchViews(
+          p.settings.apiKey, p.settings.baseId, p.settings.tableId
+        );
+        if (!views || views.length === 0) {
+          return JSON.stringify({ pass: false, detail: 'No views found in table' });
+        }
+
+        // 2. Pick the first non-default view (Grid views are usually the default)
+        const nonDefault = views.find(v => v.name !== 'Grid view') || views[0];
+
+        // 3. Sync with view filter
+        const oldViewId = p.settings.viewId;
+        p.settings.viewId = nonDefault.id;
+        p.airtableClient.updateSettings(p.settings);
+
+        await p.syncQueue.enqueue('from-airtable', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const viewFiles = app.vault.getFiles().filter(
+          f => f.path.startsWith(p.settings.folderPath + '/') && f.extension === 'md'
+        );
+        const viewCount = viewFiles.length;
+
+        // 4. Sync without view filter
+        p.settings.viewId = '';
+        p.airtableClient.updateSettings(p.settings);
+        p.settings.allowOverwrite = true;
+
+        await p.syncQueue.enqueue('from-airtable', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const allFiles = app.vault.getFiles().filter(
+          f => f.path.startsWith(p.settings.folderPath + '/') && f.extension === 'md'
+        );
+        const allCount = allFiles.length;
+
+        // Restore
+        p.settings.viewId = oldViewId;
+        p.airtableClient.updateSettings(p.settings);
+
+        return JSON.stringify({
+          pass: views.length > 0 && allCount > 0 && allCount >= viewCount,
+          detail: 'views=' + views.length + ', viewFiltered=' + viewCount + ', allRecords=' + allCount + ', selectedView=' + nonDefault.name,
+          viewName: nonDefault.name
+        });
+      })()`, 30000);
+      return { pass: r.pass, detail: r.detail || 'ok' };
+    });
+
     await test('from-airtable / current', async () => {
       const r = await run(`(async () => {
         ${HELPERS}

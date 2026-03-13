@@ -30,6 +30,15 @@ export interface AirtableTable {
 }
 
 /**
+ * Represents an Airtable view within a table.
+ */
+export interface AirtableView {
+  id: string;
+  name: string;
+  type: string;
+}
+
+/**
  * Represents a note fetched from Airtable.
  */
 export interface RemoteNote {

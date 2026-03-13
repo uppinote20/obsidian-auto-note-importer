@@ -10,6 +10,7 @@ export type {
   AirtableField,
   AirtableBase,
   AirtableTable,
+  AirtableView,
   RemoteNote,
   SyncResult,
   ConflictInfo,

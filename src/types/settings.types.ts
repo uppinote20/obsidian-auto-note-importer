@@ -25,6 +25,7 @@ export interface AutoNoteImporterSettings {
   apiKey: string;
   baseId: string;
   tableId: string;
+  viewId: string;
   folderPath: string;
   templatePath: string;
   syncInterval: number;
@@ -51,6 +52,7 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   apiKey: "",
   baseId: "",
   tableId: "",
+  viewId: "",
   folderPath: "Crawling",
   templatePath: "",
   syncInterval: 0,
