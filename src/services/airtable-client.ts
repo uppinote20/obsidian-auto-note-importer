@@ -90,7 +90,11 @@ export class AirtableClient {
     const baseUrl = this.getBaseUrl();
 
     do {
-      const url = offset ? `${baseUrl}?offset=${offset}` : baseUrl;
+      const params = new URLSearchParams();
+      if (this.settings.viewId) params.set('view', this.settings.viewId);
+      if (offset) params.set('offset', offset);
+      const query = params.toString();
+      const url = query ? `${baseUrl}?${query}` : baseUrl;
       const response = await this.rateLimiter.execute(() =>
         requestUrl({
           url,

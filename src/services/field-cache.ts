@@ -6,7 +6,7 @@
 
 import { requestUrl } from "obsidian";
 import { AIRTABLE_META_API_URL } from '../constants';
-import type { AirtableField, AirtableBase, AirtableTable } from '../types';
+import type { AirtableField, AirtableBase, AirtableTable, AirtableView } from '../types';
 
 /**
  * Caches Airtable metadata (bases, tables, fields) to minimize API calls.
@@ -15,6 +15,7 @@ export class FieldCache {
   private cachedBases: AirtableBase[] | null = null;
   private cachedTables: Map<string, AirtableTable[]> = new Map();
   private cachedFields: Map<string, AirtableField[]> = new Map();
+  private cachedViews: Map<string, AirtableView[]> = new Map();
   private lastApiKey = "";
 
   /**
@@ -34,6 +35,7 @@ export class FieldCache {
     this.cachedBases = null;
     this.cachedTables.clear();
     this.cachedFields.clear();
+    this.cachedViews.clear();
   }
 
   /**
@@ -41,10 +43,11 @@ export class FieldCache {
    */
   clearTables(baseId: string): void {
     this.cachedTables.delete(baseId);
-    // Clear fields that belong to this base
-    for (const key of this.cachedFields.keys()) {
+    // Clear fields and views that belong to this base
+    for (const key of [...this.cachedFields.keys(), ...this.cachedViews.keys()]) {
       if (key.startsWith(`${baseId}-`)) {
         this.cachedFields.delete(key);
+        this.cachedViews.delete(key);
       }
     }
   }
@@ -161,6 +164,54 @@ export class FieldCache {
 
     this.cachedFields.set(cacheKey, fields);
     return fields;
+  }
+
+  /**
+   * Fetches views for a specific table.
+   */
+  async fetchViews(apiKey: string, baseId: string, tableId: string): Promise<AirtableView[]> {
+    this.clearCacheIfApiKeyChanged(apiKey);
+
+    const cacheKey = this.getCacheKey(baseId, tableId);
+    const cached = this.cachedViews.get(cacheKey);
+    if (cached) return cached;
+
+    const response = await requestUrl({
+      url: `${AIRTABLE_META_API_URL}/bases/${baseId}/tables`,
+      method: "GET",
+      headers: { "Authorization": `Bearer ${apiKey}` },
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`Failed to fetch table views: HTTP ${response.status}`);
+    }
+
+    const json = response.json;
+    const table = json.tables.find((t: { id: string }) => t.id === tableId);
+
+    if (!table) {
+      throw new Error(`Table with ID ${tableId} not found`);
+    }
+
+    const views: AirtableView[] = (table.views || []).map((v: {
+      id: string;
+      name: string;
+      type: string;
+    }) => ({
+      id: v.id,
+      name: v.name,
+      type: v.type
+    }));
+
+    this.cachedViews.set(cacheKey, views);
+    return views;
+  }
+
+  /**
+   * Clears cached views for a specific base/table combination.
+   */
+  clearViews(baseId: string, tableId: string): void {
+    this.cachedViews.delete(this.getCacheKey(baseId, tableId));
   }
 
   /**

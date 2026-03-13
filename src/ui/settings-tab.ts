@@ -182,6 +182,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           dropdown.setValue(this.plugin.settings.tableId);
           dropdown.onChange(async (value) => {
             this.plugin.settings.tableId = value;
+            this.plugin.settings.viewId = "";
             await this.plugin.saveSettings();
             this.debounceDisplay();
           });
@@ -195,8 +196,39 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       }));
 
     if (this.plugin.settings.tableId) {
+      this.renderViewSelector(containerEl);
       this.renderFieldSelectors(containerEl);
     }
+  }
+
+  private renderViewSelector(containerEl: HTMLElement): void {
+    new Setting(containerEl)
+      .setName("Select view (optional)")
+      .setDesc("Filter synced records by an Airtable view. Leave empty to sync all records.")
+      .addDropdown(async dropdown => {
+        try {
+          dropdown.addOption("", "-- All records (no view filter) --");
+          const views = await this.fieldCache.fetchViews(
+            this.plugin.settings.apiKey,
+            this.plugin.settings.baseId,
+            this.plugin.settings.tableId
+          );
+          for (const view of views) {
+            dropdown.addOption(view.id, `${view.name} (${view.type})`);
+          }
+          dropdown.setValue(this.plugin.settings.viewId);
+          dropdown.onChange(async (value) => {
+            this.plugin.settings.viewId = value;
+            await this.plugin.saveSettings();
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Check table ID or network.';
+          new Notice(`Auto Note Importer: Failed to fetch views. ${message}`);
+        }
+      })
+      .addExtraButton(button => this.configureRefreshButton(button, "Refresh view list", () => {
+        this.fieldCache.clearViews(this.plugin.settings.baseId, this.plugin.settings.tableId);
+      }));
   }
 
   private renderFieldSelectors(containerEl: HTMLElement): void {
