@@ -7,13 +7,13 @@
 
 import { requestUrl } from "obsidian";
 import { AIRTABLE_API_BASE_URL, AIRTABLE_BATCH_SIZE } from '../constants';
-import type { AutoNoteImporterSettings, RemoteNote, SyncResult, BatchUpdate } from '../types';
+import type { AutoNoteImporterSettings, RemoteNote, SyncResult, BatchUpdate, DatabaseClient } from '../types';
 import { RateLimiter } from './rate-limiter';
 
 /**
  * Client for interacting with the Airtable API.
  */
-export class AirtableClient {
+export class AirtableClient implements DatabaseClient {
   private settings: AutoNoteImporterSettings;
   private rateLimiter: RateLimiter;
 

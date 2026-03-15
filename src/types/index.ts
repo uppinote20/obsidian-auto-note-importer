@@ -22,3 +22,5 @@ export type {
   SyncRequest,
   NoteCreationResult,
 } from './sync.types';
+
+export type { DatabaseClient } from './database.types';
