@@ -9,7 +9,7 @@ import type { AutoNoteImporterSettings } from '../../src/types';
 import { DEFAULT_SETTINGS } from '../../src/types';
 // Import from 'obsidian' (aliased to mock) to ensure same module identity as source code
 import { createMockApp, createMockTFile, createMockTFolder } from 'obsidian';
-import { createMockAirtableClient } from '../__mocks__/airtable-client.mock';
+import { createMockDatabaseClient } from '../__mocks__/database-client.mock';
 import { FieldCache } from '../../src/services/field-cache';
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
 import { FileWatcher } from '../../src/file-operations/file-watcher';
@@ -41,7 +41,7 @@ function createMockStatusBar(): StatusBarController & { lastItem: StatusBarHandl
 
 describe('SyncOrchestrator', () => {
   let mockApp: ReturnType<typeof createMockApp>;
-  let mockClient: ReturnType<typeof createMockAirtableClient>;
+  let mockClient: ReturnType<typeof createMockDatabaseClient>;
   let fieldCache: FieldCache;
   let frontmatterParser: FrontmatterParser;
   let fileWatcher: FileWatcher;
@@ -55,7 +55,7 @@ describe('SyncOrchestrator', () => {
 
     settings = createSettings();
     mockApp = createMockApp();
-    mockClient = createMockAirtableClient();
+    mockClient = createMockDatabaseClient();
     fieldCache = new FieldCache();
     frontmatterParser = new FrontmatterParser(mockApp as unknown as App);
     fileWatcher = new FileWatcher(mockApp as unknown as App, settings, vi.fn());
