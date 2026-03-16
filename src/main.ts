@@ -1,7 +1,7 @@
 /**
  * Auto Note Importer - Main Plugin Entry Point
  *
- * Orchestrates Airtable <-> Obsidian sync via services, core logic, and file operations.
+ * Orchestrates Airtable <-> Obsidian sync via ConfigManager and per-config service stacks.
  *
  * @handbook 4.2-sync-architecture
  * @handbook 9.2-service-initialization-order
@@ -9,170 +9,185 @@
  * @handbook 9.4-conditional-command-visibility
  */
 
-import { Plugin, Notice } from "obsidian";
-import type { AutoNoteImporterSettings, SyncMode, SyncScope } from './types';
+import { Plugin } from "obsidian";
+import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
 import { DEFAULT_SETTINGS } from './types';
-import { AirtableClient, FieldCache, RateLimiter } from './services';
-import { SyncQueue, ConflictResolver, SyncOrchestrator } from './core';
-import { FrontmatterParser, FileWatcher } from './file-operations';
+import { FieldCache } from './services';
+import { ConfigManager } from './core';
+import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
+import { migrateSettings } from './utils/migration';
 
 /**
  * Main plugin class for Auto Note Importer.
  */
 export default class AutoNoteImporterPlugin extends Plugin {
   settings!: AutoNoteImporterSettings;
-  private intervalId: number | null = null;
   private settingTab!: AutoNoteImporterSettingTab;
 
-  // Services (initialized in onload → initializeServices)
-  private airtableClient!: AirtableClient;
+  private configManager!: ConfigManager;
   private fieldCache!: FieldCache;
-  private rateLimiter!: RateLimiter;
-
-  // Core
-  private syncQueue!: SyncQueue;
-  private conflictResolver!: ConflictResolver;
-  private syncOrchestrator!: SyncOrchestrator;
-
-  // File Operations
-  private frontmatterParser!: FrontmatterParser;
-  private fileWatcher!: FileWatcher;
 
   async onload() {
     await this.loadSettings();
     this.initializeServices();
     this.registerCommands();
-    this.startScheduler();
   }
 
   /**
-   * Initializes all service instances.
+   * Initializes ConfigManager and shared services.
    */
   private initializeServices(): void {
-    this.rateLimiter = new RateLimiter();
-    this.rateLimiter.setDebugMode(this.settings.debugMode);
     this.fieldCache = new FieldCache();
-    this.airtableClient = new AirtableClient(this.settings, this.rateLimiter);
 
-    this.frontmatterParser = new FrontmatterParser(this.app);
-    this.conflictResolver = new ConflictResolver(this.settings, this.airtableClient);
+    const shared: SharedServices = {
+      rateLimiters: new Map(),
+      fieldCache: this.fieldCache,
+      frontmatterParser: new FrontmatterParser(this.app),
+      statusBarFactory: () => this.addStatusBarItem(),
+      getDebugMode: () => this.settings.debugMode,
+    };
 
-    // Initialization order: FileWatcher → SyncOrchestrator → SyncQueue
-    // FileWatcher callback captures this.syncQueue via closure. This is safe because
-    // setup() is called after syncQueue is assigned, and callbacks fire asynchronously (debounced).
-    this.fileWatcher = new FileWatcher(
-      this.app,
-      this.settings,
-      async (files) => {
-        const mode: SyncMode = this.settings.autoSyncFormulas ? 'bidirectional' : 'to-airtable';
-        await this.syncQueue.enqueue(mode, 'modified', files.map(f => f.path));
-      }
-    );
-
-    this.syncOrchestrator = new SyncOrchestrator(
-      this.app,
-      this.settings,
-      this.airtableClient,
-      this.fieldCache,
-      this.frontmatterParser,
-      this.fileWatcher,
-      this.conflictResolver,
-      { createItem: () => this.addStatusBarItem() }
-    );
-
-    this.syncQueue = new SyncQueue(
-      ({ mode, scope, filePaths }) => this.syncOrchestrator.processSyncRequest(mode, scope, filePaths),
-      (error) => {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        new Notice(`Auto Note Importer: Sync failed: ${message}`);
-      }
-    );
-
-    this.fileWatcher.setup();
+    this.configManager = new ConfigManager(this.app, shared);
+    this.configManager.initialize(this.settings.configs, this.settings.credentials);
 
     this.settingTab = new AutoNoteImporterSettingTab(this.app, this, this.fieldCache);
     this.addSettingTab(this.settingTab);
   }
 
   /**
-   * Registers all plugin commands.
-   * Commands requiring bidirectional sync use checkCallback to hide when disabled.
+   * Registers per-config commands for all configurations.
    */
   private registerCommands(): void {
-    this.addCommand({
-      id: "sync-current-from-airtable",
-      name: "Sync current note from Airtable",
-      callback: () => this.syncQueue.enqueue('from-airtable', 'current')
-    });
-
-    this.addCommand({
-      id: "sync-all-from-airtable",
-      name: "Sync all notes from Airtable",
-      callback: () => this.syncQueue.enqueue('from-airtable', 'all')
-    });
-
-    this.addBidirectionalCommand("sync-current-to-airtable", "Sync current note to Airtable", 'to-airtable', 'current');
-    this.addBidirectionalCommand("sync-modified-to-airtable", "Sync modified notes to Airtable", 'to-airtable', 'modified');
-    this.addBidirectionalCommand("sync-all-to-airtable", "Sync all notes to Airtable", 'to-airtable', 'all');
-    this.addBidirectionalCommand("bidirectional-sync-current", "Bidirectional sync current note (with formulas)", 'bidirectional', 'current');
-    this.addBidirectionalCommand("bidirectional-sync-modified", "Bidirectional sync modified notes (with formulas)", 'bidirectional', 'modified');
-    this.addBidirectionalCommand("bidirectional-sync-all", "Bidirectional sync all notes (with formulas)", 'bidirectional', 'all');
-  }
-
-  private addBidirectionalCommand(id: string, name: string, mode: SyncMode, scope: SyncScope): void {
-    this.addCommand({
-      id,
-      name,
-      checkCallback: (checking) => {
-        if (!this.settings.bidirectionalSync) return false;
-        if (!checking) this.syncQueue.enqueue(mode, scope);
-        return true;
-      }
-    });
+    for (const config of this.settings.configs) {
+      this.registerCommandsForConfig(config);
+    }
   }
 
   /**
-   * Starts the automatic sync scheduler.
+   * Registers sync commands for a single config entry.
+   * Uses checkCallback with dynamic lookup to avoid capturing stale references.
    */
-  startScheduler(): void {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-    }
+  private registerCommandsForConfig(config: ConfigEntry): void {
+    const configId = config.id;
+    const suffix = ` \u2014 ${config.name}`;
 
-    if (this.settings.syncInterval > 0) {
-      this.intervalId = window.setInterval(
-        () => this.syncQueue.enqueue('from-airtable', 'all'),
-        this.settings.syncInterval * 60 * 1000
-      );
-    }
+    // From Airtable commands
+    this.addCommand({
+      id: `sync-from-airtable-${configId}`,
+      name: `Sync current note from Airtable${suffix}`,
+      checkCallback: (checking) => {
+        const cfg = this.settings.configs.find(c => c.id === configId);
+        if (!cfg?.enabled) return false;
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('from-airtable', 'current');
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: `sync-all-from-airtable-${configId}`,
+      name: `Sync all notes from Airtable${suffix}`,
+      checkCallback: (checking) => {
+        const cfg = this.settings.configs.find(c => c.id === configId);
+        if (!cfg?.enabled) return false;
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('from-airtable', 'all');
+        return true;
+      },
+    });
+
+    // To Airtable commands (gated by bidirectionalSync)
+    this.addCommand({
+      id: `sync-current-to-airtable-${configId}`,
+      name: `Sync current note to Airtable${suffix}`,
+      checkCallback: (checking) => {
+        const cfg = this.settings.configs.find(c => c.id === configId);
+        if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('to-airtable', 'current');
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: `sync-modified-to-airtable-${configId}`,
+      name: `Sync modified notes to Airtable${suffix}`,
+      checkCallback: (checking) => {
+        const cfg = this.settings.configs.find(c => c.id === configId);
+        if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('to-airtable', 'modified');
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: `sync-all-to-airtable-${configId}`,
+      name: `Sync all notes to Airtable${suffix}`,
+      checkCallback: (checking) => {
+        const cfg = this.settings.configs.find(c => c.id === configId);
+        if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('to-airtable', 'all');
+        return true;
+      },
+    });
+
+    // Bidirectional commands
+    this.addCommand({
+      id: `bidirectional-sync-current-${configId}`,
+      name: `Bidirectional sync current note${suffix}`,
+      checkCallback: (checking) => {
+        const cfg = this.settings.configs.find(c => c.id === configId);
+        if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current');
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: `bidirectional-sync-modified-${configId}`,
+      name: `Bidirectional sync modified notes${suffix}`,
+      checkCallback: (checking) => {
+        const cfg = this.settings.configs.find(c => c.id === configId);
+        if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'modified');
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: `bidirectional-sync-all-${configId}`,
+      name: `Bidirectional sync all notes${suffix}`,
+      checkCallback: (checking) => {
+        const cfg = this.settings.configs.find(c => c.id === configId);
+        if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'all');
+        return true;
+      },
+    });
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const data = await this.loadData();
+    const migrated = migrateSettings(data);
+
+    if (migrated) {
+      this.settings = migrated;
+      await this.saveData(this.settings);
+    } else {
+      this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    }
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
 
-    // Update service settings
-    this.rateLimiter?.setDebugMode(this.settings.debugMode);
-    this.airtableClient?.updateSettings(this.settings);
-    this.conflictResolver?.updateSettings(this.settings);
-    this.syncOrchestrator?.updateSettings(this.settings);
-
-    // Reconfigure file watcher (applies watchForChanges setting without reload)
-    if (this.fileWatcher) {
-      this.fileWatcher.teardown();
-      this.fileWatcher.updateSettings(this.settings);
-      this.fileWatcher.setup();
+    for (const config of this.settings.configs) {
+      const credential = this.settings.credentials.find(c => c.id === config.credentialId);
+      if (credential) {
+        this.configManager.updateConfig(config.id, config, credential);
+      }
     }
   }
 
   onunload(): void {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-    }
-    this.fileWatcher?.teardown();
+    this.configManager?.destroy();
   }
 }

@@ -164,13 +164,9 @@ describe('generateId', () => {
     expect(typeof generateId()).toBe('string');
   });
 
-  it('should include timestamp', () => {
-    const before = Date.now();
+  it('should return a UUID v4 format', () => {
     const id = generateId();
-    const after = Date.now();
-    const timestamp = parseInt(id.split('-')[0], 10);
-    expect(timestamp).toBeGreaterThanOrEqual(before);
-    expect(timestamp).toBeLessThanOrEqual(after);
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
   it('should generate unique ids', () => {
@@ -179,10 +175,5 @@ describe('generateId', () => {
       ids.add(generateId());
     }
     expect(ids.size).toBe(100);
-  });
-
-  it('should match expected format', () => {
-    const id = generateId();
-    expect(id).toMatch(/^\d+-[a-z0-9]+$/);
   });
 });
