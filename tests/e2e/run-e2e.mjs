@@ -8,6 +8,8 @@
  *      /Applications/Obsidian.app/Contents/MacOS/Obsidian --remote-debugging-port=9222
  *   2. A vault with the plugin installed and configured (Airtable PAT, base, table)
  *   3. The Airtable table must have: Name (text), Count (number), Status (select), Cal (formula: Count*2)
+ *   4. For multi-config tests: a second table 'E2E-MultiConfig' (tblZO35AeSdSmI3rr)
+ *      with fields: Name (text), Value (number), Tag (singleSelect)
  *
  * Usage:
  *   node tests/e2e/run-e2e.mjs                          # auto-detect CDP target
@@ -21,9 +23,13 @@
 
 const CDP_PORT = process.env.CDP_PORT || 9222;
 const PLUGIN_ID = 'auto-note-importer';
+const MULTI_CONFIG_TABLE_ID = 'tblZO35AeSdSmI3rr';
+const MULTI_CONFIG_FOLDER = 'E2E-Multi';
+const MULTI_CONFIG_ID = 'e2e-cfg-2';
 
 // Test records created during setup — deleted during cleanup
 let testRecordIds = [];
+let multiConfigRecordIds = [];
 
 // ---------------------------------------------------------------------------
 // CDP helpers
@@ -101,25 +107,48 @@ const HELPERS = `
     await waitForCache(file, 'Count', newCount);
   }
 
-  function setMode(mode, autoFormula) {
-    const p = app.plugins.plugins['${PLUGIN_ID}'];
-    p.settings.conflictResolution = mode;
-    if (autoFormula !== undefined) p.settings.autoSyncFormulas = autoFormula;
-    p.conflictResolver.updateSettings(p.settings);
+  function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
+
+  function getConfig(idx = 0) {
+    const p = getPlugin();
+    return p.settings.configs[idx];
   }
 
-  async function fetchRecord(recordId) {
-    const p = app.plugins.plugins['${PLUGIN_ID}'];
-    const base = p.settings.baseId;
-    const table = p.settings.tableId;
+  function getCredential(config) {
+    const p = getPlugin();
+    const cfg = config || getConfig();
+    return p.settings.credentials.find(c => c.id === cfg.credentialId);
+  }
+
+  function getInstance(config) {
+    const p = getPlugin();
+    const cfg = config || getConfig();
+    return p.configManager.getInstance(cfg.id);
+  }
+
+  function setMode(mode, autoFormula, config) {
+    const cfg = config || getConfig();
+    const cred = getCredential(cfg);
+    cfg.conflictResolution = mode;
+    if (autoFormula !== undefined) cfg.autoSyncFormulas = autoFormula;
+    getInstance(cfg).updateSettings(cfg, cred);
+  }
+
+  async function fetchRecord(recordId, config) {
+    const cfg = config || getConfig();
+    const cred = getCredential(cfg);
     const resp = await fetch(
-      'https://api.airtable.com/v0/' + base + '/' + table + '/' + recordId,
-      { headers: { 'Authorization': 'Bearer ' + p.settings.apiKey } }
+      'https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '/' + recordId,
+      { headers: { 'Authorization': 'Bearer ' + cred.apiKey } }
     );
     return (await resp.json()).fields;
   }
 
-  function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
+  async function enqueueSync(mode, scope, config) {
+    const cfg = config || getConfig();
+    const inst = getInstance(cfg);
+    await inst.enqueueSyncRequest(mode, scope);
+  }
 `;
 
 // ---------------------------------------------------------------------------
@@ -149,12 +178,12 @@ async function setup() {
 
   log('=== Setup: Create test records ===');
   const r = await run(`(async () => {
-    const p = app.plugins.plugins['${PLUGIN_ID}'];
-    const base = p.settings.baseId;
-    const table = p.settings.tableId;
-    const resp = await fetch('https://api.airtable.com/v0/' + base + '/' + table, {
+    ${HELPERS}
+    const cfg = getConfig();
+    const cred = getCredential();
+    const resp = await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId, {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + p.settings.apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ records: [
         { fields: { Name: 'E2E-Pull-Test', Count: 100, Status: 'Todo' } },
         { fields: { Name: 'E2E-Push-Test', Count: 200, Status: 'In progress' } },
@@ -169,41 +198,15 @@ async function setup() {
   log(`Created ${r.length} test records: ${testRecordIds.join(', ')}`);
 }
 
-async function resetAll() {
-  await run(`(async () => {
-    ${HELPERS}
-    const p = getPlugin();
-    const base = p.settings.baseId;
-    const table = p.settings.tableId;
-    await fetch('https://api.airtable.com/v0/' + base + '/' + table, {
-      method: 'PATCH',
-      headers: { 'Authorization': 'Bearer ' + p.settings.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ records: [
-        { id: '${() => testRecordIds[0]}', fields: { Name: 'E2E-Pull-Test', Count: 100, Status: 'Todo' } },
-        { id: '${() => testRecordIds[1]}', fields: { Name: 'E2E-Push-Test', Count: 200, Status: 'In progress' } },
-        { id: '${() => testRecordIds[2]}', fields: { Name: 'E2E-Bidir-Test', Count: 300, Status: 'Done' } }
-      ]})
-    });
-    setMode('manual', false);
-    await getPlugin().syncQueue.enqueue('from-airtable', 'all');
-    await new Promise(r => setTimeout(r, 5000));
-    return '"reset"';
-  })()`.replaceAll("${() => testRecordIds[0]}", testRecordIds[0])
-      .replaceAll("${() => testRecordIds[1]}", testRecordIds[1])
-      .replaceAll("${() => testRecordIds[2]}", testRecordIds[2]),
-  20000);
-}
-
 function resetExpr() {
   // Build a reset expression using current testRecordIds
   return `(async () => {
     ${HELPERS}
-    const p = getPlugin();
-    const base = p.settings.baseId;
-    const table = p.settings.tableId;
-    await fetch('https://api.airtable.com/v0/' + base + '/' + table, {
+    const cfg = getConfig();
+    const cred = getCredential();
+    await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId, {
       method: 'PATCH',
-      headers: { 'Authorization': 'Bearer ' + p.settings.apiKey, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ records: [
         { id: '${testRecordIds[0]}', fields: { Name: 'E2E-Pull-Test', Count: 100, Status: 'Todo' } },
         { id: '${testRecordIds[1]}', fields: { Name: 'E2E-Push-Test', Count: 200, Status: 'In progress' } },
@@ -211,7 +214,7 @@ function resetExpr() {
       ]})
     });
     setMode('manual', false);
-    await getPlugin().syncQueue.enqueue('from-airtable', 'all');
+    await enqueueSync('from-airtable', 'all');
     await new Promise(r => setTimeout(r, 5000));
     return '"reset"';
   })()`;
@@ -224,21 +227,21 @@ async function doReset() {
 async function cleanup() {
   log('\n=== Cleanup: Delete test records ===');
   await run(`(async () => {
-    const p = app.plugins.plugins['${PLUGIN_ID}'];
-    const base = p.settings.baseId;
-    const table = p.settings.tableId;
+    ${HELPERS}
+    const cfg = getConfig();
+    const cred = getCredential();
     const ids = ${JSON.stringify(testRecordIds)};
 
     // Delete from Airtable
     const params = ids.map(id => 'records[]=' + id).join('&');
-    await fetch('https://api.airtable.com/v0/' + base + '/' + table + '?' + params, {
+    await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '?' + params, {
       method: 'DELETE',
-      headers: { 'Authorization': 'Bearer ' + p.settings.apiKey }
+      headers: { 'Authorization': 'Bearer ' + cred.apiKey }
     });
 
     // Delete local files
     for (const name of ['E2E-Pull-Test.md', 'E2E-Push-Test.md', 'E2E-Bidir-Test.md']) {
-      const file = app.vault.getAbstractFileByPath(p.settings.folderPath + '/' + name);
+      const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/' + name);
       if (file) await app.vault.delete(file);
     }
 
@@ -248,6 +251,44 @@ async function cleanup() {
     return '"cleaned"';
   })()`, 15000);
   log('Test records and files cleaned up');
+}
+
+async function cleanupMultiConfig() {
+  log('\n=== Cleanup: Multi-config test data ===');
+  await run(`(async () => {
+    ${HELPERS}
+    const p = getPlugin();
+    const cred = getCredential();
+    const mcIds = ${JSON.stringify(multiConfigRecordIds)};
+
+    // Delete records from second table
+    if (mcIds.length > 0) {
+      const params = mcIds.map(id => 'records[]=' + id).join('&');
+      await fetch('https://api.airtable.com/v0/' + getConfig().baseId + '/${MULTI_CONFIG_TABLE_ID}?' + params, {
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer ' + cred.apiKey }
+      });
+    }
+
+    // Delete files in E2E-Multi/ folder
+    const mcFiles = app.vault.getFiles().filter(f => f.path.startsWith('${MULTI_CONFIG_FOLDER}/'));
+    for (const f of mcFiles) await app.vault.delete(f);
+
+    // Delete E2E-Multi folder itself
+    const mcFolder = app.vault.getAbstractFileByPath('${MULTI_CONFIG_FOLDER}');
+    if (mcFolder) await app.vault.delete(mcFolder);
+
+    // Remove second config from settings
+    const cfgIdx = p.settings.configs.findIndex(c => c.id === '${MULTI_CONFIG_ID}');
+    if (cfgIdx !== -1) {
+      p.configManager.removeConfig('${MULTI_CONFIG_ID}');
+      p.settings.configs.splice(cfgIdx, 1);
+      await p.saveSettings();
+    }
+
+    return '"mc-cleaned"';
+  })()`, 15000);
+  log('Multi-config test data cleaned up');
 }
 
 // ---------------------------------------------------------------------------
@@ -283,9 +324,9 @@ async function test(name, fn) {
     await test('from-airtable / all', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
-        await getPlugin().syncQueue.enqueue('from-airtable', 'all');
+        await enqueueSync('from-airtable', 'all');
         await new Promise(r => setTimeout(r, 5000));
-        const files = app.vault.getFiles().filter(f => f.path.startsWith(getPlugin().settings.folderPath + '/'));
+        const files = app.vault.getFiles().filter(f => f.path.startsWith(getConfig().folderPath + '/'));
         return JSON.stringify({ fileCount: files.length });
       })()`, 15000);
       return { pass: r.fileCount >= 8, detail: `${r.fileCount} files` };
@@ -295,19 +336,22 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
-        const folderPath = p.settings.folderPath;
+        const cfg = getConfig();
+        const cred = getCredential();
+        const folderPath = cfg.folderPath;
 
         // Enable bases generation, vault-root location
-        p.settings.generateBasesFile = true;
-        p.settings.basesFileLocation = 'vault-root';
-        p.settings.basesRegenerateOnSync = false;
+        cfg.generateBasesFile = true;
+        cfg.basesFileLocation = 'vault-root';
+        cfg.basesRegenerateOnSync = false;
+        getInstance().updateSettings(cfg, cred);
 
         // Delete existing .base file if any (find by table name or folder name)
         const existingBases = app.vault.getFiles().filter(f => f.extension === 'base');
         for (const f of existingBases) await app.vault.delete(f);
 
         // Sync from Airtable
-        await p.syncQueue.enqueue('from-airtable', 'all');
+        await enqueueSync('from-airtable', 'all');
         await new Promise(r => setTimeout(r, 6000));
 
         // Check .base file was created
@@ -327,14 +371,14 @@ async function test(name, fn) {
 
         // Verify regenerate=false skips existing file
         const contentBefore = content;
-        await p.syncQueue.enqueue('from-airtable', 'all');
+        await enqueueSync('from-airtable', 'all');
         await new Promise(r => setTimeout(r, 6000));
         const contentAfter = await app.vault.read(baseFile);
         const skipWorks = contentBefore === contentAfter;
 
         // Cleanup
         await app.vault.delete(baseFile);
-        p.settings.generateBasesFile = true;
+        cfg.generateBasesFile = true;
 
         return JSON.stringify({
           pass: hasFilter && hasTableView && hasFileName && hasNotePrefix && skipWorks,
@@ -349,10 +393,12 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
+        const cfg = getConfig();
+        const cred = getCredential();
 
         // 1. Verify fetchViews returns available views
         const views = await p.fieldCache.fetchViews(
-          p.settings.apiKey, p.settings.baseId, p.settings.tableId
+          cred.apiKey, cfg.baseId, cfg.tableId
         );
         if (!views || views.length === 0) {
           return JSON.stringify({ pass: false, detail: 'No views found in table' });
@@ -362,32 +408,32 @@ async function test(name, fn) {
         const nonDefault = views.find(v => v.name !== 'Grid view') || views[0];
 
         // 3. Sync with view filter
-        const oldViewId = p.settings.viewId;
-        p.settings.viewId = nonDefault.id;
-        p.airtableClient.updateSettings(p.settings);
+        const oldViewId = cfg.viewId;
+        cfg.viewId = nonDefault.id;
+        getInstance().updateSettings(cfg, cred);
 
-        await p.syncQueue.enqueue('from-airtable', 'all');
+        await enqueueSync('from-airtable', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const viewFiles = app.vault.getFiles().filter(
-          f => f.path.startsWith(p.settings.folderPath + '/') && f.extension === 'md'
+          f => f.path.startsWith(cfg.folderPath + '/') && f.extension === 'md'
         );
         const viewCount = viewFiles.length;
 
         // 4. Sync without view filter
-        p.settings.viewId = '';
-        p.airtableClient.updateSettings(p.settings);
-        p.settings.allowOverwrite = true;
+        cfg.viewId = '';
+        cfg.allowOverwrite = true;
+        getInstance().updateSettings(cfg, cred);
 
-        await p.syncQueue.enqueue('from-airtable', 'all');
+        await enqueueSync('from-airtable', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const allFiles = app.vault.getFiles().filter(
-          f => f.path.startsWith(p.settings.folderPath + '/') && f.extension === 'md'
+          f => f.path.startsWith(cfg.folderPath + '/') && f.extension === 'md'
         );
         const allCount = allFiles.length;
 
         // Restore
-        p.settings.viewId = oldViewId;
-        p.airtableClient.updateSettings(p.settings);
+        cfg.viewId = oldViewId;
+        getInstance().updateSettings(cfg, cred);
 
         return JSON.stringify({
           pass: views.length > 0 && allCount > 0 && allCount >= viewCount,
@@ -401,9 +447,9 @@ async function test(name, fn) {
     await test('from-airtable / current', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
-        const file = await openAndActivate(getPlugin().settings.folderPath + '/E2E-Pull-Test.md');
+        const file = await openAndActivate(getConfig().folderPath + '/E2E-Pull-Test.md');
         try {
-          await getPlugin().syncQueue.enqueue('from-airtable', 'current');
+          await enqueueSync('from-airtable', 'current');
           await new Promise(r => setTimeout(r, 3000));
           const content = await app.vault.read(file);
           return JSON.stringify({ pass: content.includes('${testRecordIds[0]}') });
@@ -421,9 +467,9 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const file = app.vault.getAbstractFileByPath(getPlugin().settings.folderPath + '/E2E-Push-Test.md');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 555);
-        await getPlugin().syncQueue.enqueue('to-airtable', 'all');
+        await enqueueSync('to-airtable', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         setMode('manual');
@@ -437,9 +483,9 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const file = await openAndActivate(getPlugin().settings.folderPath + '/E2E-Bidir-Test.md');
+        const file = await openAndActivate(getConfig().folderPath + '/E2E-Bidir-Test.md');
         await modifyCount(file, 888);
-        await getPlugin().syncQueue.enqueue('to-airtable', 'current');
+        await enqueueSync('to-airtable', 'current');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[2]}');
         setMode('manual');
@@ -453,9 +499,9 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('airtable-wins');
-        const file = app.vault.getAbstractFileByPath(getPlugin().settings.folderPath + '/E2E-Pull-Test.md');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
         await modifyCount(file, 9999);
-        await getPlugin().syncQueue.enqueue('to-airtable', 'all');
+        await enqueueSync('to-airtable', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[0]}');
         setMode('manual');
@@ -469,9 +515,9 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('airtable-wins');
-        const file = await openAndActivate(getPlugin().settings.folderPath + '/E2E-Push-Test.md');
+        const file = await openAndActivate(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 7777);
-        await getPlugin().syncQueue.enqueue('to-airtable', 'current');
+        await enqueueSync('to-airtable', 'current');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         setMode('manual');
@@ -485,9 +531,9 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('manual');
-        const file = app.vault.getAbstractFileByPath(getPlugin().settings.folderPath + '/E2E-Push-Test.md');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 7777);
-        await getPlugin().syncQueue.enqueue('to-airtable', 'all');
+        await enqueueSync('to-airtable', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         return JSON.stringify({ pass: fields.Count === 200, count: fields.Count });
@@ -502,9 +548,9 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', true);
-        const file = app.vault.getAbstractFileByPath(getPlugin().settings.folderPath + '/E2E-Bidir-Test.md');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Bidir-Test.md');
         await modifyCount(file, 450);
-        await getPlugin().syncQueue.enqueue('bidirectional', 'all');
+        await enqueueSync('bidirectional', 'all');
         await new Promise(r => setTimeout(r, 10000));
         const updated = await app.vault.read(file);
         const calMatch = updated.match(/Cal: (\\d+)/);
@@ -521,11 +567,11 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', false);
-        const file = app.vault.getAbstractFileByPath(getPlugin().settings.folderPath + '/E2E-Bidir-Test.md');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Bidir-Test.md');
         const before = await app.vault.read(file);
         const oldCal = parseInt(before.match(/Cal: (\\d+)/)?.[1] || '0');
         await modifyCount(file, 333);
-        await getPlugin().syncQueue.enqueue('bidirectional', 'all');
+        await enqueueSync('bidirectional', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const updated = await app.vault.read(file);
         const localCal = parseInt(updated.match(/Cal: (\\d+)/)?.[1] || '0');
@@ -541,9 +587,9 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', true);
-        const file = await openAndActivate(getPlugin().settings.folderPath + '/E2E-Push-Test.md');
+        const file = await openAndActivate(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 123);
-        await getPlugin().syncQueue.enqueue('bidirectional', 'current');
+        await enqueueSync('bidirectional', 'current');
         await new Promise(r => setTimeout(r, 10000));
         const updated = await app.vault.read(file);
         const localCal = parseInt(updated.match(/Cal: (\\d+)/)?.[1] || '0');
@@ -558,11 +604,11 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', false);
-        const file = await openAndActivate(getPlugin().settings.folderPath + '/E2E-Push-Test.md');
+        const file = await openAndActivate(getConfig().folderPath + '/E2E-Push-Test.md');
         const before = await app.vault.read(file);
         const oldCal = parseInt(before.match(/Cal: (\\d+)/)?.[1] || '0');
         await modifyCount(file, 777);
-        await getPlugin().syncQueue.enqueue('bidirectional', 'current');
+        await enqueueSync('bidirectional', 'current');
         await new Promise(r => setTimeout(r, 5000));
         const updated = await app.vault.read(file);
         const localCal = parseInt(updated.match(/Cal: (\\d+)/)?.[1] || '0');
@@ -571,6 +617,178 @@ async function test(name, fn) {
         return JSON.stringify({ pass: fields.Count === 777 && localCal === oldCal, localCal, oldCal, airtableCount: fields.Count });
       })()`, 25000);
       return { pass: r.pass, detail: `push=${r.airtableCount}, cal=${r.localCal}(unchanged)` };
+    });
+
+    // -- Multi-Config tests --
+
+    await test('multi-config / migration preserves settings', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const cfg = getConfig();
+        const cred = getCredential();
+
+        const hasVersion = p.settings.version === 2;
+        const hasConfigs = p.settings.configs.length >= 1;
+        const hasCreds = p.settings.credentials.length >= 1;
+        const hasBaseId = cfg.baseId && cfg.baseId.length > 0;
+        const hasTableId = cfg.tableId && cfg.tableId.length > 0;
+        const hasFolderPath = cfg.folderPath && cfg.folderPath.length > 0;
+        const hasApiKey = cred.apiKey && cred.apiKey.length > 0;
+        const credLinked = cfg.credentialId === cred.id;
+
+        return JSON.stringify({
+          pass: hasVersion && hasConfigs && hasCreds && hasBaseId && hasTableId && hasFolderPath && hasApiKey && credLinked,
+          detail: 'version=' + p.settings.version
+            + ' configs=' + p.settings.configs.length
+            + ' creds=' + p.settings.credentials.length
+            + ' baseId=' + hasBaseId
+            + ' tableId=' + hasTableId
+            + ' folderPath=' + hasFolderPath
+            + ' apiKey=' + hasApiKey
+            + ' credLinked=' + credLinked
+        });
+      })()`, 10000);
+      return { pass: r.pass, detail: r.detail || 'ok' };
+    });
+
+    await test('multi-config / independent sync', async () => {
+      // Setup: add second config and create records in second table
+      const mcSetup = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const cfg = getConfig();
+        const cred = getCredential();
+
+        // Add second config
+        const secondConfig = {
+          id: '${MULTI_CONFIG_ID}',
+          name: 'E2E Multi',
+          enabled: true,
+          credentialId: cred.id,
+          baseId: cfg.baseId,
+          tableId: '${MULTI_CONFIG_TABLE_ID}',
+          viewId: '',
+          folderPath: '${MULTI_CONFIG_FOLDER}',
+          templatePath: '',
+          filenameFieldName: 'Name',
+          subfolderFieldName: '',
+          syncInterval: 0,
+          allowOverwrite: true,
+          bidirectionalSync: false,
+          conflictResolution: 'manual',
+          watchForChanges: false,
+          fileWatchDebounce: 2000,
+          autoSyncFormulas: false,
+          formulaSyncDelay: 3000,
+          generateBasesFile: false,
+          basesFileLocation: 'vault-root',
+          basesCustomPath: '',
+          basesRegenerateOnSync: false,
+        };
+
+        // Remove existing if present (idempotent)
+        const existIdx = p.settings.configs.findIndex(c => c.id === '${MULTI_CONFIG_ID}');
+        if (existIdx !== -1) {
+          p.configManager.removeConfig('${MULTI_CONFIG_ID}');
+          p.settings.configs.splice(existIdx, 1);
+        }
+
+        p.settings.configs.push(secondConfig);
+        await p.saveSettings();
+
+        // Create records in second table
+        const resp = await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/${MULTI_CONFIG_TABLE_ID}', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ records: [
+            { fields: { Name: 'MC-Test-1', Value: 42, Tag: 'alpha' } },
+            { fields: { Name: 'MC-Test-2', Value: 99, Tag: 'alpha' } }
+          ]})
+        });
+        const data = await resp.json();
+        return JSON.stringify(data.records.map(r => ({ id: r.id, name: r.fields.Name })));
+      })()`, 15000);
+
+      multiConfigRecordIds = mcSetup.map(rec => rec.id);
+      log(`Created ${mcSetup.length} multi-config records: ${multiConfigRecordIds.join(', ')}`);
+
+      // Record config 1 file state before config 2 sync
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const cfg1 = getConfig(0);
+        const cfg2 = p.settings.configs.find(c => c.id === '${MULTI_CONFIG_ID}');
+        if (!cfg2) return JSON.stringify({ pass: false, detail: 'Second config not found' });
+
+        // Record config 1 files before
+        const cfg1FilesBefore = app.vault.getFiles()
+          .filter(f => f.path.startsWith(cfg1.folderPath + '/') && f.extension === 'md')
+          .map(f => f.path);
+
+        // Sync config 2
+        await enqueueSync('from-airtable', 'all', cfg2);
+        await new Promise(r => setTimeout(r, 5000));
+
+        // Check config 2 files created in its folder
+        const cfg2Files = app.vault.getFiles()
+          .filter(f => f.path.startsWith('${MULTI_CONFIG_FOLDER}/') && f.extension === 'md');
+        const hasTestFile = cfg2Files.some(f => f.basename === 'MC-Test-1');
+
+        // Check config 1 files unchanged
+        const cfg1FilesAfter = app.vault.getFiles()
+          .filter(f => f.path.startsWith(cfg1.folderPath + '/') && f.extension === 'md')
+          .map(f => f.path);
+        const cfg1Unchanged = cfg1FilesBefore.length === cfg1FilesAfter.length
+          && cfg1FilesBefore.every(p => cfg1FilesAfter.includes(p));
+
+        return JSON.stringify({
+          pass: hasTestFile && cfg1Unchanged && cfg2Files.length >= 2,
+          detail: 'cfg2Files=' + cfg2Files.length
+            + ' hasTestFile=' + hasTestFile
+            + ' cfg1Unchanged=' + cfg1Unchanged
+            + ' cfg1Before=' + cfg1FilesBefore.length
+            + ' cfg1After=' + cfg1FilesAfter.length
+        });
+      })()`, 20000);
+      return { pass: r.pass, detail: r.detail || 'ok' };
+    });
+
+    await test('multi-config / folder isolation', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const cfg1 = getConfig(0);
+        const cfg2 = p.settings.configs.find(c => c.id === '${MULTI_CONFIG_ID}');
+        if (!cfg2) return JSON.stringify({ pass: false, detail: 'Second config not found' });
+
+        // Config 1 files
+        const cfg1Files = app.vault.getFiles()
+          .filter(f => f.path.startsWith(cfg1.folderPath + '/') && f.extension === 'md');
+
+        // Config 2 files
+        const cfg2Files = app.vault.getFiles()
+          .filter(f => f.path.startsWith('${MULTI_CONFIG_FOLDER}/') && f.extension === 'md');
+
+        // No config 2 content (MC-Test) in config 1 folder
+        const crossContamination1 = cfg1Files.some(f => f.basename.startsWith('MC-Test'));
+
+        // No config 1 content (E2E-Pull/Push/Bidir) in config 2 folder
+        const crossContamination2 = cfg2Files.some(f =>
+          f.basename.startsWith('E2E-Pull') ||
+          f.basename.startsWith('E2E-Push') ||
+          f.basename.startsWith('E2E-Bidir')
+        );
+
+        return JSON.stringify({
+          pass: !crossContamination1 && !crossContamination2 && cfg1Files.length > 0 && cfg2Files.length > 0,
+          detail: 'cfg1Count=' + cfg1Files.length
+            + ' cfg2Count=' + cfg2Files.length
+            + ' crossContam1=' + crossContamination1
+            + ' crossContam2=' + crossContamination2
+        });
+      })()`, 10000);
+      return { pass: r.pass, detail: r.detail || 'ok' };
     });
 
     // -- Summary --
@@ -590,6 +808,7 @@ async function test(name, fn) {
     // -- Cleanup --
     if (process.argv.includes('--cleanup')) {
       await cleanup();
+      await cleanupMultiConfig();
     } else {
       log('\nTest records left in Airtable. Run with --cleanup to remove them.');
     }

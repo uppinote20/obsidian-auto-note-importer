@@ -25,8 +25,8 @@ export default class AutoNoteImporterPlugin extends Plugin {
   settings!: AutoNoteImporterSettings;
   private settingTab!: AutoNoteImporterSettingTab;
 
-  private configManager!: ConfigManager;
-  private fieldCache!: FieldCache;
+  configManager!: ConfigManager;
+  fieldCache!: FieldCache;
 
   async onload() {
     await this.loadSettings();
