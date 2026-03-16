@@ -5,20 +5,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SyncOrchestrator } from '../../src/core/sync-orchestrator';
 import type { StatusBarHandle, StatusBarController } from '../../src/core/sync-orchestrator';
-import type { AutoNoteImporterSettings } from '../../src/types';
-import { DEFAULT_SETTINGS } from '../../src/types';
+import type { LegacySettings } from '../../src/types';
+import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
 // Import from 'obsidian' (aliased to mock) to ensure same module identity as source code
 import { createMockApp, createMockTFile, createMockTFolder } from 'obsidian';
-import { createMockAirtableClient } from '../__mocks__/airtable-client.mock';
+import { createMockDatabaseClient } from '../__mocks__/database-client.mock';
 import { FieldCache } from '../../src/services/field-cache';
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
 import { FileWatcher } from '../../src/file-operations/file-watcher';
 import { ConflictResolver } from '../../src/core/conflict-resolver';
 import type { App } from 'obsidian';
 
-function createSettings(overrides: Partial<AutoNoteImporterSettings> = {}): AutoNoteImporterSettings {
+function createSettings(overrides: Partial<LegacySettings> = {}): LegacySettings {
   return {
-    ...DEFAULT_SETTINGS,
+    ...DEFAULT_LEGACY_SETTINGS,
     apiKey: 'pat-test',
     baseId: 'appTest',
     tableId: 'tblTest',
@@ -41,21 +41,21 @@ function createMockStatusBar(): StatusBarController & { lastItem: StatusBarHandl
 
 describe('SyncOrchestrator', () => {
   let mockApp: ReturnType<typeof createMockApp>;
-  let mockClient: ReturnType<typeof createMockAirtableClient>;
+  let mockClient: ReturnType<typeof createMockDatabaseClient>;
   let fieldCache: FieldCache;
   let frontmatterParser: FrontmatterParser;
   let fileWatcher: FileWatcher;
   let conflictResolver: ConflictResolver;
   let statusBar: ReturnType<typeof createMockStatusBar>;
   let orchestrator: SyncOrchestrator;
-  let settings: AutoNoteImporterSettings;
+  let settings: LegacySettings;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
     settings = createSettings();
     mockApp = createMockApp();
-    mockClient = createMockAirtableClient();
+    mockClient = createMockDatabaseClient();
     fieldCache = new FieldCache();
     frontmatterParser = new FrontmatterParser(mockApp as unknown as App);
     fileWatcher = new FileWatcher(mockApp as unknown as App, settings, vi.fn());

@@ -9,9 +9,9 @@
  */
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
-import type { AutoNoteImporterSettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult } from '../types';
+import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseClient } from '../types';
 import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from '../constants';
-import { AirtableClient, FieldCache } from '../services';
+import { FieldCache } from '../services';
 import { ConflictResolver } from './conflict-resolver';
 import { FrontmatterParser, FileWatcher } from '../file-operations';
 import { parseTemplate, buildMarkdownContent, generateBasesContent, resolveBasesFilePath, collectFieldNames } from '../builders';
@@ -28,8 +28,8 @@ export interface StatusBarController {
 
 export class SyncOrchestrator {
   private app: App;
-  private settings: AutoNoteImporterSettings;
-  private airtableClient: AirtableClient;
+  private settings: LegacySettings;
+  private client: DatabaseClient;
   private fieldCache: FieldCache;
   private frontmatterParser: FrontmatterParser;
   private fileWatcher: FileWatcher;
@@ -38,8 +38,8 @@ export class SyncOrchestrator {
 
   constructor(
     app: App,
-    settings: AutoNoteImporterSettings,
-    airtableClient: AirtableClient,
+    settings: LegacySettings,
+    client: DatabaseClient,
     fieldCache: FieldCache,
     frontmatterParser: FrontmatterParser,
     fileWatcher: FileWatcher,
@@ -48,7 +48,7 @@ export class SyncOrchestrator {
   ) {
     this.app = app;
     this.settings = settings;
-    this.airtableClient = airtableClient;
+    this.client = client;
     this.fieldCache = fieldCache;
     this.frontmatterParser = frontmatterParser;
     this.fileWatcher = fileWatcher;
@@ -56,7 +56,7 @@ export class SyncOrchestrator {
     this.statusBar = statusBar;
   }
 
-  updateSettings(settings: AutoNoteImporterSettings): void {
+  updateSettings(settings: LegacySettings): void {
     this.settings = settings;
   }
 
@@ -189,7 +189,7 @@ export class SyncOrchestrator {
 
     this.fileWatcher.setSyncing(true);
     try {
-      const remoteNote = await this.airtableClient.fetchRecord(recordId);
+      const remoteNote = await this.client.fetchRecord(recordId);
       if (!remoteNote) {
         new Notice("Auto Note Importer: Record not found in Airtable");
         return;
@@ -215,7 +215,7 @@ export class SyncOrchestrator {
 
     this.fileWatcher.setSyncing(true);
     try {
-      const remoteNotes = await this.airtableClient.fetchNotes();
+      const remoteNotes = await this.client.fetchNotes();
 
       let existingPrimaryFields: Set<string> | null = null;
       if (!this.settings.allowOverwrite) {
@@ -417,7 +417,7 @@ export class SyncOrchestrator {
       const batch = batchUpdates.slice(i, i + AIRTABLE_BATCH_SIZE);
 
       try {
-        const results = await this.airtableClient.batchUpdate(batch);
+        const results = await this.client.batchUpdate(batch);
         const failures: string[] = [];
         for (const result of results) {
           if (result.success) {

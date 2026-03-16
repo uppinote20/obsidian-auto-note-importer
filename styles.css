@@ -1,8 +1,61 @@
 /*
+ * Auto Note Importer plugin styles.
+ */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+/* ─── Credentials Section ─────────────────────────────────────────── */
 
-If your plugin does not need CSS, delete this file.
+.ani-credentials-heading {
+  cursor: pointer;
+  user-select: none;
+}
 
-*/
+.ani-credentials-heading:hover {
+  background: var(--background-modifier-hover);
+  border-radius: 4px;
+}
+
+.ani-credential-edit {
+  padding-left: 12px;
+  border-left: 2px solid var(--interactive-accent);
+}
+
+/* ─── Config Tab Bar ──────────────────────────────────────────────── */
+
+.ani-config-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--interactive-accent);
+  margin-bottom: 16px;
+}
+
+.ani-config-tab {
+  padding: 6px 14px;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  font-size: 13px;
+}
+
+.ani-config-tab.active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+}
+
+.ani-config-tab:not(.active):hover {
+  background: var(--background-modifier-hover);
+}
+
+.ani-add-tab {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* ─── Delete Config ───────────────────────────────────────────────── */
+
+.ani-delete-config .setting-item-control .mod-warning {
+  opacity: 0.8;
+}
+
+.ani-delete-config .setting-item-control .mod-warning:hover {
+  opacity: 1;
+}

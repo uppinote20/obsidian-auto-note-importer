@@ -16,17 +16,6 @@ export class FieldCache {
   private cachedTables: Map<string, AirtableTable[]> = new Map();
   private cachedFields: Map<string, AirtableField[]> = new Map();
   private cachedViews: Map<string, AirtableView[]> = new Map();
-  private lastApiKey = "";
-
-  /**
-   * Clears cache if the API key has changed.
-   */
-  private clearCacheIfApiKeyChanged(apiKey: string): void {
-    if (this.lastApiKey !== apiKey) {
-      this.clearBases();
-      this.lastApiKey = apiKey;
-    }
-  }
 
   /**
    * Clears cached bases (and dependent tables/fields).
@@ -70,8 +59,6 @@ export class FieldCache {
    * Fetches available bases from Airtable.
    */
   async fetchBases(apiKey: string): Promise<AirtableBase[]> {
-    this.clearCacheIfApiKeyChanged(apiKey);
-
     if (this.cachedBases) {
       return this.cachedBases;
     }
@@ -99,8 +86,6 @@ export class FieldCache {
    * Fetches tables for a specific base.
    */
   async fetchTables(apiKey: string, baseId: string): Promise<AirtableTable[]> {
-    this.clearCacheIfApiKeyChanged(apiKey);
-
     const cachedTables = this.cachedTables.get(baseId);
     if (cachedTables) return cachedTables;
 
@@ -175,8 +160,6 @@ export class FieldCache {
    * Fetches fields for a specific table.
    */
   async fetchFields(apiKey: string, baseId: string, tableId: string): Promise<AirtableField[]> {
-    this.clearCacheIfApiKeyChanged(apiKey);
-
     const cacheKey = this.getCacheKey(baseId, tableId);
     const cached = this.cachedFields.get(cacheKey);
     if (cached) return cached;
@@ -189,8 +172,6 @@ export class FieldCache {
    * Fetches views for a specific table.
    */
   async fetchViews(apiKey: string, baseId: string, tableId: string): Promise<AirtableView[]> {
-    this.clearCacheIfApiKeyChanged(apiKey);
-
     const cacheKey = this.getCacheKey(baseId, tableId);
     const cached = this.cachedViews.get(cacheKey);
     if (cached) return cached;

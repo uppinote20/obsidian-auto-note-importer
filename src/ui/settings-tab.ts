@@ -1,6 +1,10 @@
 /**
  * Settings tab UI for the Auto Note Importer plugin.
  * UI-only - delegates API calls to FieldCache.
+ *
+ * Multi-config UI with credential management, tab-based config switching,
+ * and per-config settings rendering.
+ *
  * @handbook 5.1-ui-components
  */
 
@@ -8,8 +12,11 @@ import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type { ExtraButtonComponent, Plugin } from "obsidian";
 import { FieldCache } from '../services';
 import { isFieldTypeSupported } from '../constants';
-import type { AutoNoteImporterSettings, ConflictResolutionMode, BasesFileLocation } from '../types';
+import type { AutoNoteImporterSettings, ConfigEntry, Credential, ConflictResolutionMode, BasesFileLocation } from '../types';
+import { DEFAULT_CONFIG_ENTRY } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
+import { generateId } from '../utils/object-utils';
+import { validateFolderPath } from '../utils/validation';
 
 /**
  * Interface for the plugin that the settings tab needs.
@@ -17,7 +24,6 @@ import { FolderSuggest, FileSuggest } from './suggest';
 export interface SettingsPlugin extends Plugin {
   settings: AutoNoteImporterSettings;
   saveSettings(): Promise<void>;
-  startScheduler(): void;
 }
 
 /**
@@ -27,11 +33,31 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: SettingsPlugin;
   private fieldCache: FieldCache;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private credentialsExpanded = false;
+  private editingCredentialId: string | null = null;
+  private addingCredential = false;
 
   constructor(app: App, plugin: SettingsPlugin, fieldCache: FieldCache) {
     super(app, plugin);
     this.plugin = plugin;
     this.fieldCache = fieldCache;
+  }
+
+  /**
+   * Returns the active config entry, or undefined if none exists.
+   */
+  private get activeConfig(): ConfigEntry | undefined {
+    const { activeConfigId, configs } = this.plugin.settings;
+    return configs.find(c => c.id === activeConfigId) ?? configs[0];
+  }
+
+  /**
+   * Returns the credential for the active config, or undefined.
+   */
+  private get activeCredential(): Credential | undefined {
+    const config = this.activeConfig;
+    if (!config) return undefined;
+    return this.plugin.settings.credentials.find(c => c.id === config.credentialId);
   }
 
   private debounceDisplay(delay = 100): void {
@@ -65,36 +91,48 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    // API Key setting
-    new Setting(containerEl)
-      .setName("Airtable personal access token")
-      .setDesc("Enter your Airtable personal access token.")
-      .addText(text => {
-        text
-          .setPlaceholder("your-pat-token")
-          .setValue(this.plugin.settings.apiKey)
-          .onChange(async (value) => {
-            this.plugin.settings.apiKey = value;
-            await this.plugin.saveSettings();
-            this.debounceDisplay();
-          });
-        text.inputEl.type = 'password';
-      });
+    // Credentials section (collapsible)
+    this.renderCredentialsSection(containerEl);
 
-    if (this.plugin.settings.apiKey) {
-      this.renderBaseSelector(containerEl);
+    // Tab bar for config switching
+    this.renderTabBar(containerEl);
+
+    const config = this.activeConfig;
+    const credential = this.activeCredential;
+
+    if (!config || !credential) {
+      if (this.plugin.settings.configs.length === 0) {
+        new Setting(containerEl)
+          .setName('No configuration')
+          .setDesc('Add a configuration using the + tab above.');
+      }
+      this.renderDebugSettings(containerEl);
+      return;
     }
 
-    // Folder path setting
+    // Config header: name, enabled toggle, credential selector
+    this.renderConfigHeader(containerEl, config);
+
+    // Airtable connection settings (base, table, view, fields)
+    if (credential.apiKey) {
+      this.renderBaseSelector(containerEl, config, credential);
+    }
+
+    // Folder path setting (with overlap validation)
     new Setting(containerEl)
       .setName("New file location")
       .setDesc("Example: folder1/folder2")
       .addText(text => {
         const input = text
           .setPlaceholder("Crawling")
-          .setValue(this.plugin.settings.folderPath)
+          .setValue(config.folderPath)
           .onChange(async (value) => {
-            this.plugin.settings.folderPath = value;
+            const error = validateFolderPath(config.id, value, this.plugin.settings.configs);
+            if (error) {
+              new Notice(`Auto Note Importer: ${error}`);
+              return;
+            }
+            config.folderPath = value;
             await this.plugin.saveSettings();
           });
         new FolderSuggest(this.app, input.inputEl as HTMLInputElement);
@@ -107,56 +145,354 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addText(text => {
         const input = text
           .setPlaceholder("Templates/note-template.md")
-          .setValue(this.plugin.settings.templatePath)
+          .setValue(config.templatePath)
           .onChange(async (value) => {
-            this.plugin.settings.templatePath = value;
+            config.templatePath = value;
             await this.plugin.saveSettings();
           });
         new FileSuggest(this.app, input.inputEl as HTMLInputElement);
       });
 
     this.renderNumberSetting(containerEl, "Sync interval (minutes)", "How often to sync notes (in minutes).", "0",
-      this.plugin.settings.syncInterval, "Sync interval",
-      (num) => { this.plugin.settings.syncInterval = num; },
-      () => { this.plugin.startScheduler(); });
+      config.syncInterval, "Sync interval",
+      (num) => { config.syncInterval = num; });
 
     // Allow overwrite setting
     new Setting(containerEl)
       .setName("Allow overwrite existing notes")
       .setDesc("If enabled, existing notes will be overwritten when syncing.")
       .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.allowOverwrite)
+        .setValue(config.allowOverwrite)
         .onChange(async (value) => {
-          this.plugin.settings.allowOverwrite = value;
+          config.allowOverwrite = value;
           await this.plugin.saveSettings();
         }));
 
     // Bases database settings
-    this.renderBasesSettings(containerEl);
+    this.renderBasesSettings(containerEl, config);
 
     // Bidirectional sync settings
-    this.renderBidirectionalSyncSettings(containerEl);
+    this.renderBidirectionalSyncSettings(containerEl, config);
+
+    // Delete config button
+    this.renderDeleteConfigButton(containerEl, config);
 
     // Debug settings
     this.renderDebugSettings(containerEl);
   }
 
-  private renderBaseSelector(containerEl: HTMLElement): void {
+  // ─── Credentials Section ───────────────────────────────────────────
+
+  private renderCredentialsSection(containerEl: HTMLElement): void {
+    const indicator = this.credentialsExpanded ? '\u25BC' : '\u25B6';
+    const heading = new Setting(containerEl)
+      .setName(`${indicator} Credentials`)
+      .setHeading();
+    heading.settingEl.addClass('ani-credentials-heading');
+    heading.settingEl.addEventListener('click', () => {
+      this.credentialsExpanded = !this.credentialsExpanded;
+      this.display();
+    });
+
+    if (!this.credentialsExpanded) return;
+
+    const { credentials } = this.plugin.settings;
+
+    for (const cred of credentials) {
+      if (this.editingCredentialId === cred.id) {
+        this.renderCredentialEditRow(containerEl, cred);
+      } else {
+        this.renderCredentialRow(containerEl, cred);
+      }
+    }
+
+    if (this.addingCredential) {
+      this.renderCredentialAddRow(containerEl);
+    } else {
+      new Setting(containerEl)
+        .addButton(button => button
+          .setButtonText('+ Add credential')
+          .onClick(() => {
+            this.addingCredential = true;
+            this.display();
+          }));
+    }
+  }
+
+  private maskApiKey(apiKey: string): string {
+    if (apiKey.length <= 4) return apiKey ? '****' : '';
+    return '\u2022\u2022\u2022\u2022' + apiKey.slice(-4);
+  }
+
+  private renderCredentialRow(containerEl: HTMLElement, cred: Credential): void {
+    new Setting(containerEl)
+      .setName(cred.name)
+      .setDesc(this.maskApiKey(cred.apiKey))
+      .addExtraButton(button => button
+        .setIcon('pencil')
+        .setTooltip('Edit credential')
+        .onClick(() => {
+          this.editingCredentialId = cred.id;
+          this.display();
+        }))
+      .addExtraButton(button => button
+        .setIcon('trash')
+        .setTooltip('Delete credential')
+        .onClick(async () => {
+          const inUse = this.plugin.settings.configs.some(c => c.credentialId === cred.id);
+          if (inUse) {
+            new Notice('Auto Note Importer: Cannot delete a credential that is in use by a configuration.');
+            return;
+          }
+          this.plugin.settings.credentials = this.plugin.settings.credentials.filter(c => c.id !== cred.id);
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+  }
+
+  private renderCredentialEditRow(containerEl: HTMLElement, cred: Credential): void {
+    let nameValue = cred.name;
+    let keyValue = cred.apiKey;
+
+    const nameSetting = new Setting(containerEl)
+      .setName('Name')
+      .addText(text => text
+        .setValue(cred.name)
+        .setPlaceholder('Credential name')
+        .onChange(value => { nameValue = value; }));
+    nameSetting.settingEl.addClass('ani-credential-edit');
+
+    const keySetting = new Setting(containerEl)
+      .setName('API Key')
+      .addText(text => {
+        text
+          .setValue(cred.apiKey)
+          .setPlaceholder('pat-xxx...')
+          .onChange(value => { keyValue = value; });
+        text.inputEl.type = 'password';
+      });
+    keySetting.settingEl.addClass('ani-credential-edit');
+
+    new Setting(containerEl)
+      .addButton(button => button
+        .setButtonText('Save')
+        .setCta()
+        .onClick(async () => {
+          if (!nameValue.trim()) {
+            new Notice('Auto Note Importer: Credential name cannot be empty.');
+            return;
+          }
+          cred.name = nameValue.trim();
+          cred.apiKey = keyValue;
+          await this.plugin.saveSettings();
+          this.editingCredentialId = null;
+          this.display();
+        }))
+      .addButton(button => button
+        .setButtonText('Cancel')
+        .onClick(() => {
+          this.editingCredentialId = null;
+          this.display();
+        }));
+  }
+
+  private renderCredentialAddRow(containerEl: HTMLElement): void {
+    let nameValue = '';
+    let keyValue = '';
+
+    const nameSetting = new Setting(containerEl)
+      .setName('Name')
+      .addText(text => text
+        .setPlaceholder('e.g. Personal Airtable')
+        .onChange(value => { nameValue = value; }));
+    nameSetting.settingEl.addClass('ani-credential-edit');
+
+    const keySetting = new Setting(containerEl)
+      .setName('API Key')
+      .addText(text => {
+        text
+          .setPlaceholder('pat-xxx...')
+          .onChange(value => { keyValue = value; });
+        text.inputEl.type = 'password';
+      });
+    keySetting.settingEl.addClass('ani-credential-edit');
+
+    new Setting(containerEl)
+      .addButton(button => button
+        .setButtonText('Save')
+        .setCta()
+        .onClick(async () => {
+          if (!nameValue.trim()) {
+            new Notice('Auto Note Importer: Credential name cannot be empty.');
+            return;
+          }
+          if (!keyValue.trim()) {
+            new Notice('Auto Note Importer: API key cannot be empty.');
+            return;
+          }
+          const newCred: Credential = {
+            id: generateId(),
+            name: nameValue.trim(),
+            type: 'airtable',
+            apiKey: keyValue.trim(),
+          };
+          this.plugin.settings.credentials.push(newCred);
+          await this.plugin.saveSettings();
+          this.addingCredential = false;
+          this.display();
+        }))
+      .addButton(button => button
+        .setButtonText('Cancel')
+        .onClick(() => {
+          this.addingCredential = false;
+          this.display();
+        }));
+  }
+
+  // ─── Tab Bar ───────────────────────────────────────────────────────
+
+  private renderTabBar(containerEl: HTMLElement): void {
+    const tabBar = containerEl.createDiv({ cls: 'ani-config-tab-bar' });
+    const { configs } = this.plugin.settings;
+    const activeId = this.activeConfig?.id;
+
+    for (const config of configs) {
+      const tab = tabBar.createDiv({
+        cls: `ani-config-tab${config.id === activeId ? ' active' : ''}`,
+        text: config.name || 'Untitled',
+      });
+      tab.addEventListener('click', () => {
+        this.plugin.settings.activeConfigId = config.id;
+        this.display();
+      });
+    }
+
+    // Add tab
+    const addTab = tabBar.createDiv({
+      cls: 'ani-config-tab ani-add-tab',
+      text: '+',
+    });
+    addTab.addEventListener('click', async () => {
+      if (this.plugin.settings.credentials.length === 0) {
+        new Notice('Auto Note Importer: Add a credential first before creating a configuration.');
+        this.credentialsExpanded = true;
+        this.addingCredential = true;
+        this.display();
+        return;
+      }
+      const newConfig: ConfigEntry = {
+        ...DEFAULT_CONFIG_ENTRY,
+        id: generateId(),
+        name: `Config ${configs.length + 1}`,
+        credentialId: this.plugin.settings.credentials[0].id,
+      };
+      this.plugin.settings.configs.push(newConfig);
+      this.plugin.settings.activeConfigId = newConfig.id;
+      await this.plugin.saveSettings();
+      this.display();
+    });
+  }
+
+  // ─── Config Header ─────────────────────────────────────────────────
+
+  private renderConfigHeader(containerEl: HTMLElement, config: ConfigEntry): void {
+    new Setting(containerEl).setName('Configuration').setHeading();
+
+    // Config name
+    new Setting(containerEl)
+      .setName('Configuration name')
+      .setDesc('A display name for this sync configuration.')
+      .addText(text => text
+        .setPlaceholder('My Config')
+        .setValue(config.name)
+        .onChange(async (value) => {
+          config.name = value;
+          await this.plugin.saveSettings();
+          // Update tab text without full re-render
+          const tabs = this.containerEl.querySelectorAll('.ani-config-tab:not(.ani-add-tab)');
+          const activeIdx = this.plugin.settings.configs.findIndex(c => c.id === config.id);
+          if (tabs[activeIdx]) {
+            tabs[activeIdx].textContent = value || 'Untitled';
+          }
+        }));
+
+    // Enabled toggle
+    new Setting(containerEl)
+      .setName('Enabled')
+      .setDesc('When disabled, this configuration will not sync.')
+      .addToggle(toggle => toggle
+        .setValue(config.enabled)
+        .onChange(async (value) => {
+          config.enabled = value;
+          await this.plugin.saveSettings();
+        }));
+
+    // Credential selector
+    new Setting(containerEl)
+      .setName('Credential')
+      .setDesc('Select the Airtable credential to use for this configuration.')
+      .addDropdown(dropdown => {
+        const { credentials } = this.plugin.settings;
+        if (credentials.length === 0) {
+          dropdown.addOption('', '-- No credentials --');
+        } else {
+          for (const cred of credentials) {
+            dropdown.addOption(cred.id, cred.name);
+          }
+        }
+        dropdown.setValue(config.credentialId);
+        dropdown.onChange(async (value) => {
+          config.credentialId = value;
+          await this.plugin.saveSettings();
+          this.debounceDisplay();
+        });
+      });
+  }
+
+  // ─── Delete Config ─────────────────────────────────────────────────
+
+  private renderDeleteConfigButton(containerEl: HTMLElement, config: ConfigEntry): void {
+    new Setting(containerEl).setName('Danger zone').setHeading();
+
+    const setting = new Setting(containerEl)
+      .setName('Delete this configuration')
+      .setDesc('Permanently remove this sync configuration. This cannot be undone.')
+      .addButton(button => button
+        .setButtonText('Delete')
+        .setWarning()
+        .onClick(async () => {
+          const { configs } = this.plugin.settings;
+          if (configs.length <= 1) {
+            new Notice('Auto Note Importer: Cannot delete the last configuration.');
+            return;
+          }
+          this.plugin.settings.configs = configs.filter(c => c.id !== config.id);
+          // Switch to first remaining config
+          this.plugin.settings.activeConfigId = this.plugin.settings.configs[0]?.id ?? '';
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+    setting.settingEl.addClass('ani-delete-config');
+  }
+
+  // ─── Existing Render Methods ───────────────────────────────────────
+
+  private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
     new Setting(containerEl)
       .setName("Select base")
       .setDesc("Choose the Airtable base you want to import notes from.")
       .addDropdown(async dropdown => {
         try {
           dropdown.addOption("", "-- Select base. --");
-          const bases = await this.fieldCache.fetchBases(this.plugin.settings.apiKey);
+          const bases = await this.fieldCache.fetchBases(credential.apiKey);
           for (const base of bases) {
             dropdown.addOption(base.id, base.name);
           }
-          dropdown.setValue(this.plugin.settings.baseId);
+          dropdown.setValue(config.baseId);
           dropdown.onChange(async (value) => {
-            this.plugin.settings.baseId = value;
-            this.plugin.settings.tableId = "";
-            this.plugin.settings.viewId = "";
+            config.baseId = value;
+            config.tableId = "";
+            config.viewId = "";
             await this.plugin.saveSettings();
             this.debounceDisplay();
           });
@@ -169,12 +505,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         this.fieldCache.clearBases();
       }));
 
-    if (this.plugin.settings.baseId) {
-      this.renderTableSelector(containerEl);
+    if (config.baseId) {
+      this.renderTableSelector(containerEl, config, credential);
     }
   }
 
-  private renderTableSelector(containerEl: HTMLElement): void {
+  private renderTableSelector(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
     new Setting(containerEl)
       .setName("Select table")
       .setDesc("Choose the specific table within the selected base.")
@@ -182,16 +518,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         try {
           dropdown.addOption("", "-- Select table --");
           const tables = await this.fieldCache.fetchTables(
-            this.plugin.settings.apiKey,
-            this.plugin.settings.baseId
+            credential.apiKey,
+            config.baseId
           );
           for (const table of tables) {
             dropdown.addOption(table.id, table.name);
           }
-          dropdown.setValue(this.plugin.settings.tableId);
+          dropdown.setValue(config.tableId);
           dropdown.onChange(async (value) => {
-            this.plugin.settings.tableId = value;
-            this.plugin.settings.viewId = "";
+            config.tableId = value;
+            config.viewId = "";
             await this.plugin.saveSettings();
             this.debounceDisplay();
           });
@@ -201,16 +537,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }
       })
       .addExtraButton(button => this.configureRefreshButton(button, "Refresh table list", () => {
-        this.fieldCache.clearTables(this.plugin.settings.baseId);
+        this.fieldCache.clearTables(config.baseId);
       }));
 
-    if (this.plugin.settings.tableId) {
-      this.renderViewSelector(containerEl);
-      this.renderFieldSelectors(containerEl);
+    if (config.tableId) {
+      this.renderViewSelector(containerEl, config, credential);
+      this.renderFieldSelectors(containerEl, config, credential);
     }
   }
 
-  private renderViewSelector(containerEl: HTMLElement): void {
+  private renderViewSelector(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
     new Setting(containerEl)
       .setName("Select view (optional)")
       .setDesc("Filter synced records by an Airtable view. Leave empty to sync all records.")
@@ -218,16 +554,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         try {
           dropdown.addOption("", "-- All records (no view filter) --");
           const views = await this.fieldCache.fetchViews(
-            this.plugin.settings.apiKey,
-            this.plugin.settings.baseId,
-            this.plugin.settings.tableId
+            credential.apiKey,
+            config.baseId,
+            config.tableId
           );
           for (const view of views) {
             dropdown.addOption(view.id, `${view.name} (${view.type})`);
           }
-          dropdown.setValue(this.plugin.settings.viewId);
+          dropdown.setValue(config.viewId);
           dropdown.onChange(async (value) => {
-            this.plugin.settings.viewId = value;
+            config.viewId = value;
             await this.plugin.saveSettings();
           });
         } catch (error) {
@@ -236,16 +572,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }
       })
       .addExtraButton(button => this.configureRefreshButton(button, "Refresh view list", () => {
-        this.fieldCache.clearViews(this.plugin.settings.baseId, this.plugin.settings.tableId);
+        this.fieldCache.clearViews(config.baseId, config.tableId);
       }));
   }
 
-  private renderFieldSelectors(containerEl: HTMLElement): void {
+  private renderFieldSelectors(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
     this.renderFieldDropdown(containerEl, "Filename field", "Select the field to use for the note's filename.", "-- Select field --",
-      this.plugin.settings.filenameFieldName, (value) => { this.plugin.settings.filenameFieldName = value; });
+      config.filenameFieldName, (value) => { config.filenameFieldName = value; }, config, credential);
 
     this.renderFieldDropdown(containerEl, "Subfolder field", "Select the field to use for subfolder organization.", "-- No subfolder --",
-      this.plugin.settings.subfolderFieldName, (value) => { this.plugin.settings.subfolderFieldName = value; });
+      config.subfolderFieldName, (value) => { config.subfolderFieldName = value; }, config, credential);
   }
 
   private renderFieldDropdown(
@@ -254,7 +590,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     desc: string,
     placeholder: string,
     currentValue: string,
-    onSelect: (value: string) => void
+    onSelect: (value: string) => void,
+    config: ConfigEntry,
+    credential: Credential
   ): void {
     new Setting(containerEl)
       .setName(name)
@@ -263,9 +601,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         try {
           dropdown.addOption("", placeholder);
           const fields = await this.fieldCache.fetchFields(
-            this.plugin.settings.apiKey,
-            this.plugin.settings.baseId,
-            this.plugin.settings.tableId
+            credential.apiKey,
+            config.baseId,
+            config.tableId
           );
 
           const supportedFields = fields.filter(field => isFieldTypeSupported(field.type));
@@ -290,25 +628,25 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }
       })
       .addExtraButton(button => this.configureRefreshButton(button, "Refresh field list", () => {
-        this.fieldCache.clearFields(this.plugin.settings.baseId, this.plugin.settings.tableId);
+        this.fieldCache.clearFields(config.baseId, config.tableId);
       }));
   }
 
-  private renderBasesSettings(containerEl: HTMLElement): void {
+  private renderBasesSettings(containerEl: HTMLElement, config: ConfigEntry): void {
     new Setting(containerEl).setName('Bases database').setHeading();
 
     new Setting(containerEl)
       .setName('Auto-generate Bases database file')
       .setDesc('Create a .base file after sync for table/card view in Obsidian Bases.')
       .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.generateBasesFile)
+        .setValue(config.generateBasesFile)
         .onChange(async (value) => {
-          this.plugin.settings.generateBasesFile = value;
+          config.generateBasesFile = value;
           await this.plugin.saveSettings();
           this.debounceDisplay();
         }));
 
-    if (this.plugin.settings.generateBasesFile) {
+    if (config.generateBasesFile) {
       new Setting(containerEl)
         .setName('Database file location')
         .setDesc('Where to create the .base file.')
@@ -316,23 +654,23 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .addOption('vault-root', 'Vault root')
           .addOption('synced-folder', 'Inside synced folder')
           .addOption('custom', 'Custom path')
-          .setValue(this.plugin.settings.basesFileLocation)
+          .setValue(config.basesFileLocation)
           .onChange(async (value) => {
-            this.plugin.settings.basesFileLocation = value as BasesFileLocation;
+            config.basesFileLocation = value as BasesFileLocation;
             await this.plugin.saveSettings();
             this.debounceDisplay();
           }));
 
-      if (this.plugin.settings.basesFileLocation === 'custom') {
+      if (config.basesFileLocation === 'custom') {
         new Setting(containerEl)
           .setName('Custom path')
           .setDesc('Folder path for the .base file. Leave empty to use vault root.')
           .addText(text => {
             const input = text
               .setPlaceholder('Bases')
-              .setValue(this.plugin.settings.basesCustomPath)
+              .setValue(config.basesCustomPath)
               .onChange(async (value) => {
-                this.plugin.settings.basesCustomPath = value;
+                config.basesCustomPath = value;
                 await this.plugin.saveSettings();
               });
             new FolderSuggest(this.app, input.inputEl as HTMLInputElement);
@@ -343,29 +681,29 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .setName('Regenerate on each sync')
         .setDesc('Recreate .base file on every sync. Disable to preserve manual edits.')
         .addToggle(toggle => toggle
-          .setValue(this.plugin.settings.basesRegenerateOnSync)
+          .setValue(config.basesRegenerateOnSync)
           .onChange(async (value) => {
-            this.plugin.settings.basesRegenerateOnSync = value;
+            config.basesRegenerateOnSync = value;
             await this.plugin.saveSettings();
           }));
     }
   }
 
-  private renderBidirectionalSyncSettings(containerEl: HTMLElement): void {
+  private renderBidirectionalSyncSettings(containerEl: HTMLElement, config: ConfigEntry): void {
     new Setting(containerEl).setName('Bidirectional sync').setHeading();
 
     new Setting(containerEl)
       .setName("Enable bidirectional sync")
       .setDesc("When enabled, changes made in Obsidian will be synced back to Airtable.")
       .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.bidirectionalSync)
+        .setValue(config.bidirectionalSync)
         .onChange(async (value) => {
-          this.plugin.settings.bidirectionalSync = value;
+          config.bidirectionalSync = value;
           await this.plugin.saveSettings();
           this.debounceDisplay();
         }));
 
-    if (this.plugin.settings.bidirectionalSync) {
+    if (config.bidirectionalSync) {
       new Setting(containerEl)
         .setName("Conflict resolution")
         .setDesc("How to handle conflicts when the same field is modified in both places.")
@@ -373,9 +711,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .addOption('manual', 'Manual resolution (show conflicts)')
           .addOption('obsidian-wins', 'Obsidian wins (overwrite Airtable)')
           .addOption('airtable-wins', 'Airtable wins (overwrite Obsidian)')
-          .setValue(this.plugin.settings.conflictResolution)
+          .setValue(config.conflictResolution)
           .onChange(async (value) => {
-            this.plugin.settings.conflictResolution = value as ConflictResolutionMode;
+            config.conflictResolution = value as ConflictResolutionMode;
             await this.plugin.saveSettings();
           }));
 
@@ -383,36 +721,36 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .setName("Watch for file changes")
         .setDesc("Automatically detect and sync changes made to notes in Obsidian.")
         .addToggle(toggle => toggle
-          .setValue(this.plugin.settings.watchForChanges)
+          .setValue(config.watchForChanges)
           .onChange(async (value) => {
-            this.plugin.settings.watchForChanges = value;
+            config.watchForChanges = value;
             await this.plugin.saveSettings();
             this.debounceDisplay();
           }));
 
-      if (this.plugin.settings.watchForChanges) {
+      if (config.watchForChanges) {
         this.renderNumberSetting(containerEl, "File watch debounce (milliseconds)",
           "How long to wait after a file change before triggering sync.", "2000",
-          this.plugin.settings.fileWatchDebounce, "Debounce time",
-          (num) => { this.plugin.settings.fileWatchDebounce = num; }, undefined, "500");
+          config.fileWatchDebounce, "Debounce time",
+          (num) => { config.fileWatchDebounce = num; }, undefined, "500");
       }
 
       new Setting(containerEl)
         .setName("Auto-sync formulas and relations")
         .setDesc("Automatically fetch computed formula and relation results after syncing.")
         .addToggle(toggle => toggle
-          .setValue(this.plugin.settings.autoSyncFormulas)
+          .setValue(config.autoSyncFormulas)
           .onChange(async (value) => {
-            this.plugin.settings.autoSyncFormulas = value;
+            config.autoSyncFormulas = value;
             await this.plugin.saveSettings();
             this.debounceDisplay();
           }));
 
-      if (this.plugin.settings.autoSyncFormulas) {
+      if (config.autoSyncFormulas) {
         this.renderNumberSetting(containerEl, "Formula sync delay (milliseconds)",
           "How long to wait for Airtable to compute formulas before fetching.", "1500",
-          this.plugin.settings.formulaSyncDelay, "Formula sync delay",
-          (num) => { this.plugin.settings.formulaSyncDelay = num; }, undefined, "100");
+          config.formulaSyncDelay, "Formula sync delay",
+          (num) => { config.formulaSyncDelay = num; }, undefined, "100");
       }
     }
   }
