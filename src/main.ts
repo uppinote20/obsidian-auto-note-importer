@@ -9,7 +9,7 @@
  * @handbook 9.4-conditional-command-visibility
  */
 
-import { Plugin } from "obsidian";
+import { Plugin, normalizePath } from "obsidian";
 import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
 import { DEFAULT_SETTINGS } from './types';
 import { FieldCache } from './services';
@@ -65,6 +65,68 @@ export default class AutoNoteImporterPlugin extends Plugin {
   }
 
   /**
+   * Unregisters all commands for a given config, then re-registers
+   * commands for all current configs. Called when configs change
+   * (add/delete/rename/enable/disable).
+   */
+  private reregisterAllCommands(): void {
+    // Collect all config IDs that currently have commands registered
+    const commandPrefix = this.manifest.id;
+    const commands = (this.app as any).commands?.commands;
+    if (commands) {
+      const registeredIds = Object.keys(commands).filter(
+        id => id.startsWith(`${commandPrefix}:`) && id !== commandPrefix,
+      );
+      for (const fullId of registeredIds) {
+        delete commands[fullId];
+      }
+    }
+
+    // Re-register for all current configs
+    for (const config of this.settings.configs) {
+      this.registerCommandsForConfig(config);
+    }
+  }
+
+  /**
+   * Unregisters all commands for a specific config ID.
+   */
+  private unregisterCommandsForConfig(configId: string): void {
+    const commandPrefix = this.manifest.id;
+    const commandIds = [
+      `sync-from-airtable-${configId}`,
+      `sync-all-from-airtable-${configId}`,
+      `sync-current-to-airtable-${configId}`,
+      `sync-modified-to-airtable-${configId}`,
+      `sync-all-to-airtable-${configId}`,
+      `bidirectional-sync-current-${configId}`,
+      `bidirectional-sync-modified-${configId}`,
+      `bidirectional-sync-all-${configId}`,
+    ];
+    const commands = (this.app as any).commands?.commands;
+    if (!commands) return;
+    for (const id of commandIds) {
+      const fullId = `${commandPrefix}:${id}`;
+      if (fullId in commands) {
+        delete commands[fullId];
+      }
+    }
+  }
+
+  /**
+   * Validates whether the active file belongs to the given config's folder.
+   * Returns false (hiding the command) if no file is active or the file
+   * is outside the config's folder.
+   */
+  private isActiveFileInConfigFolder(cfg: ConfigEntry): boolean {
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile) return false;
+    const folderPath = normalizePath(cfg.folderPath);
+    if (folderPath && !activeFile.path.startsWith(folderPath + '/')) return false;
+    return true;
+  }
+
+  /**
    * Registers sync commands for a single config entry.
    * Uses checkCallback with dynamic lookup to avoid capturing stale references.
    */
@@ -79,6 +141,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled) return false;
+        if (!this.isActiveFileInConfigFolder(cfg)) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('from-airtable', 'current');
         return true;
       },
@@ -102,6 +165,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
+        if (!this.isActiveFileInConfigFolder(cfg)) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('to-airtable', 'current');
         return true;
       },
@@ -136,6 +200,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
+        if (!this.isActiveFileInConfigFolder(cfg)) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current');
         return true;
       },
@@ -185,6 +250,8 @@ export default class AutoNoteImporterPlugin extends Plugin {
         this.configManager.updateConfig(config.id, config, credential);
       }
     }
+
+    this.reregisterAllCommands();
   }
 
   onunload(): void {
