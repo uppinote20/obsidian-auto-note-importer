@@ -1,8 +1,20 @@
 /*
+ * Auto Note Importer plugin styles.
+ */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+/* ─── Credentials Section ─────────────────────────────────────────── */
 
-If your plugin does not need CSS, delete this file.
+.ani-credentials-heading {
+  cursor: pointer;
+  user-select: none;
+}
 
-*/
+.ani-credentials-heading:hover {
+  background: var(--background-modifier-hover);
+  border-radius: 4px;
+}
+
+.ani-credential-edit {
+  padding-left: 12px;
+  border-left: 2px solid var(--interactive-accent);
+}

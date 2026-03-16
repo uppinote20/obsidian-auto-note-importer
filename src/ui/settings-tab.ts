@@ -2,8 +2,7 @@
  * Settings tab UI for the Auto Note Importer plugin.
  * UI-only - delegates API calls to FieldCache.
  *
- * Temporary bridge: reads/writes through activeConfig and activeCredential
- * helpers until Tasks 10-11 implement the full multi-config UI.
+ * Multi-config UI with credential management and per-config settings rendering.
  *
  * @handbook 5.1-ui-components
  */
@@ -14,6 +13,7 @@ import { FieldCache } from '../services';
 import { isFieldTypeSupported } from '../constants';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
+import { generateId } from '../utils/object-utils';
 
 /**
  * Interface for the plugin that the settings tab needs.
@@ -30,6 +30,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: SettingsPlugin;
   private fieldCache: FieldCache;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private credentialsExpanded = false;
+  private editingCredentialId: string | null = null;
+  private addingCredential = false;
 
   constructor(app: App, plugin: SettingsPlugin, fieldCache: FieldCache) {
     super(app, plugin);
@@ -85,6 +88,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    // Credentials section (collapsible)
+    this.renderCredentialsSection(containerEl);
+
     const config = this.activeConfig;
     const credential = this.activeCredential;
 
@@ -96,22 +102,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       return;
     }
 
-    // API Key setting
-    new Setting(containerEl)
-      .setName("Airtable personal access token")
-      .setDesc("Enter your Airtable personal access token.")
-      .addText(text => {
-        text
-          .setPlaceholder("your-pat-token")
-          .setValue(credential.apiKey)
-          .onChange(async (value) => {
-            credential.apiKey = value;
-            await this.plugin.saveSettings();
-            this.debounceDisplay();
-          });
-        text.inputEl.type = 'password';
-      });
-
+    // Airtable connection settings (base, table, view, fields)
     if (credential.apiKey) {
       this.renderBaseSelector(containerEl, config, credential);
     }
@@ -170,6 +161,176 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Debug settings
     this.renderDebugSettings(containerEl);
   }
+
+  // ─── Credentials Section ───────────────────────────────────────────
+
+  private renderCredentialsSection(containerEl: HTMLElement): void {
+    const indicator = this.credentialsExpanded ? '\u25BC' : '\u25B6';
+    const heading = new Setting(containerEl)
+      .setName(`${indicator} Credentials`)
+      .setHeading();
+    heading.settingEl.addClass('ani-credentials-heading');
+    heading.settingEl.addEventListener('click', () => {
+      this.credentialsExpanded = !this.credentialsExpanded;
+      this.display();
+    });
+
+    if (!this.credentialsExpanded) return;
+
+    const { credentials } = this.plugin.settings;
+
+    for (const cred of credentials) {
+      if (this.editingCredentialId === cred.id) {
+        this.renderCredentialEditRow(containerEl, cred);
+      } else {
+        this.renderCredentialRow(containerEl, cred);
+      }
+    }
+
+    if (this.addingCredential) {
+      this.renderCredentialAddRow(containerEl);
+    } else {
+      new Setting(containerEl)
+        .addButton(button => button
+          .setButtonText('+ Add credential')
+          .onClick(() => {
+            this.addingCredential = true;
+            this.display();
+          }));
+    }
+  }
+
+  private maskApiKey(apiKey: string): string {
+    if (apiKey.length <= 4) return apiKey ? '****' : '';
+    return '\u2022\u2022\u2022\u2022' + apiKey.slice(-4);
+  }
+
+  private renderCredentialRow(containerEl: HTMLElement, cred: Credential): void {
+    new Setting(containerEl)
+      .setName(cred.name)
+      .setDesc(this.maskApiKey(cred.apiKey))
+      .addExtraButton(button => button
+        .setIcon('pencil')
+        .setTooltip('Edit credential')
+        .onClick(() => {
+          this.editingCredentialId = cred.id;
+          this.display();
+        }))
+      .addExtraButton(button => button
+        .setIcon('trash')
+        .setTooltip('Delete credential')
+        .onClick(async () => {
+          const inUse = this.plugin.settings.configs.some(c => c.credentialId === cred.id);
+          if (inUse) {
+            new Notice('Auto Note Importer: Cannot delete a credential that is in use by a configuration.');
+            return;
+          }
+          this.plugin.settings.credentials = this.plugin.settings.credentials.filter(c => c.id !== cred.id);
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+  }
+
+  private renderCredentialEditRow(containerEl: HTMLElement, cred: Credential): void {
+    let nameValue = cred.name;
+    let keyValue = cred.apiKey;
+
+    const nameSetting = new Setting(containerEl)
+      .setName('Name')
+      .addText(text => text
+        .setValue(cred.name)
+        .setPlaceholder('Credential name')
+        .onChange(value => { nameValue = value; }));
+    nameSetting.settingEl.addClass('ani-credential-edit');
+
+    const keySetting = new Setting(containerEl)
+      .setName('API Key')
+      .addText(text => {
+        text
+          .setValue(cred.apiKey)
+          .setPlaceholder('pat-xxx...')
+          .onChange(value => { keyValue = value; });
+        text.inputEl.type = 'password';
+      });
+    keySetting.settingEl.addClass('ani-credential-edit');
+
+    new Setting(containerEl)
+      .addButton(button => button
+        .setButtonText('Save')
+        .setCta()
+        .onClick(async () => {
+          if (!nameValue.trim()) {
+            new Notice('Auto Note Importer: Credential name cannot be empty.');
+            return;
+          }
+          cred.name = nameValue.trim();
+          cred.apiKey = keyValue;
+          await this.plugin.saveSettings();
+          this.editingCredentialId = null;
+          this.display();
+        }))
+      .addButton(button => button
+        .setButtonText('Cancel')
+        .onClick(() => {
+          this.editingCredentialId = null;
+          this.display();
+        }));
+  }
+
+  private renderCredentialAddRow(containerEl: HTMLElement): void {
+    let nameValue = '';
+    let keyValue = '';
+
+    const nameSetting = new Setting(containerEl)
+      .setName('Name')
+      .addText(text => text
+        .setPlaceholder('e.g. Personal Airtable')
+        .onChange(value => { nameValue = value; }));
+    nameSetting.settingEl.addClass('ani-credential-edit');
+
+    const keySetting = new Setting(containerEl)
+      .setName('API Key')
+      .addText(text => {
+        text
+          .setPlaceholder('pat-xxx...')
+          .onChange(value => { keyValue = value; });
+        text.inputEl.type = 'password';
+      });
+    keySetting.settingEl.addClass('ani-credential-edit');
+
+    new Setting(containerEl)
+      .addButton(button => button
+        .setButtonText('Save')
+        .setCta()
+        .onClick(async () => {
+          if (!nameValue.trim()) {
+            new Notice('Auto Note Importer: Credential name cannot be empty.');
+            return;
+          }
+          if (!keyValue.trim()) {
+            new Notice('Auto Note Importer: API key cannot be empty.');
+            return;
+          }
+          const newCred: Credential = {
+            id: generateId(),
+            name: nameValue.trim(),
+            type: 'airtable',
+            apiKey: keyValue.trim(),
+          };
+          this.plugin.settings.credentials.push(newCred);
+          await this.plugin.saveSettings();
+          this.addingCredential = false;
+          this.display();
+        }))
+      .addButton(button => button
+        .setButtonText('Cancel')
+        .onClick(() => {
+          this.addingCredential = false;
+          this.display();
+        }));
+  }
+
+  // ─── Existing Render Methods ───────────────────────────────────────
 
   private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
     new Setting(containerEl)
