@@ -24,3 +24,14 @@ export type {
 } from './sync.types';
 
 export type { DatabaseClient } from './database.types';
+
+export type {
+  SharedServices,
+  ConfigEntry,
+} from './config.types';
+export { DEFAULT_CONFIG_ENTRY } from './config.types';
+
+export type {
+  CredentialType,
+  Credential,
+} from './credential.types';

@@ -5,3 +5,6 @@ export { ConflictResolver } from './conflict-resolver';
 
 export { SyncOrchestrator } from './sync-orchestrator';
 export type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
+
+export { ConfigInstance } from './config-instance';
+export { ConfigManager } from './config-manager';
