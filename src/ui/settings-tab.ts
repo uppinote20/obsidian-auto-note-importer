@@ -2,7 +2,8 @@
  * Settings tab UI for the Auto Note Importer plugin.
  * UI-only - delegates API calls to FieldCache.
  *
- * Multi-config UI with credential management and per-config settings rendering.
+ * Multi-config UI with credential management, tab-based config switching,
+ * and per-config settings rendering.
  *
  * @handbook 5.1-ui-components
  */
@@ -12,8 +13,10 @@ import type { ExtraButtonComponent, Plugin } from "obsidian";
 import { FieldCache } from '../services';
 import { isFieldTypeSupported } from '../constants';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, ConflictResolutionMode, BasesFileLocation } from '../types';
+import { DEFAULT_CONFIG_ENTRY } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
+import { validateFolderPath } from '../utils/validation';
 
 /**
  * Interface for the plugin that the settings tab needs.
@@ -91,23 +94,31 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Credentials section (collapsible)
     this.renderCredentialsSection(containerEl);
 
+    // Tab bar for config switching
+    this.renderTabBar(containerEl);
+
     const config = this.activeConfig;
     const credential = this.activeCredential;
 
     if (!config || !credential) {
-      new Setting(containerEl)
-        .setName('No configuration')
-        .setDesc('Add a configuration to get started.');
+      if (this.plugin.settings.configs.length === 0) {
+        new Setting(containerEl)
+          .setName('No configuration')
+          .setDesc('Add a configuration using the + tab above.');
+      }
       this.renderDebugSettings(containerEl);
       return;
     }
+
+    // Config header: name, enabled toggle, credential selector
+    this.renderConfigHeader(containerEl, config);
 
     // Airtable connection settings (base, table, view, fields)
     if (credential.apiKey) {
       this.renderBaseSelector(containerEl, config, credential);
     }
 
-    // Folder path setting
+    // Folder path setting (with overlap validation)
     new Setting(containerEl)
       .setName("New file location")
       .setDesc("Example: folder1/folder2")
@@ -116,6 +127,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .setPlaceholder("Crawling")
           .setValue(config.folderPath)
           .onChange(async (value) => {
+            const error = validateFolderPath(config.id, value, this.plugin.settings.configs);
+            if (error) {
+              new Notice(`Auto Note Importer: ${error}`);
+              return;
+            }
             config.folderPath = value;
             await this.plugin.saveSettings();
           });
@@ -157,6 +173,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     // Bidirectional sync settings
     this.renderBidirectionalSyncSettings(containerEl, config);
+
+    // Delete config button
+    this.renderDeleteConfigButton(containerEl, config);
 
     // Debug settings
     this.renderDebugSettings(containerEl);
@@ -328,6 +347,132 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           this.addingCredential = false;
           this.display();
         }));
+  }
+
+  // ─── Tab Bar ───────────────────────────────────────────────────────
+
+  private renderTabBar(containerEl: HTMLElement): void {
+    const tabBar = containerEl.createDiv({ cls: 'ani-config-tab-bar' });
+    const { configs } = this.plugin.settings;
+    const activeId = this.activeConfig?.id;
+
+    for (const config of configs) {
+      const tab = tabBar.createDiv({
+        cls: `ani-config-tab${config.id === activeId ? ' active' : ''}`,
+        text: config.name || 'Untitled',
+      });
+      tab.addEventListener('click', () => {
+        this.plugin.settings.activeConfigId = config.id;
+        this.display();
+      });
+    }
+
+    // Add tab
+    const addTab = tabBar.createDiv({
+      cls: 'ani-config-tab ani-add-tab',
+      text: '+',
+    });
+    addTab.addEventListener('click', async () => {
+      if (this.plugin.settings.credentials.length === 0) {
+        new Notice('Auto Note Importer: Add a credential first before creating a configuration.');
+        this.credentialsExpanded = true;
+        this.addingCredential = true;
+        this.display();
+        return;
+      }
+      const newConfig: ConfigEntry = {
+        ...DEFAULT_CONFIG_ENTRY,
+        id: generateId(),
+        name: `Config ${configs.length + 1}`,
+        credentialId: this.plugin.settings.credentials[0].id,
+      };
+      this.plugin.settings.configs.push(newConfig);
+      this.plugin.settings.activeConfigId = newConfig.id;
+      await this.plugin.saveSettings();
+      this.display();
+    });
+  }
+
+  // ─── Config Header ─────────────────────────────────────────────────
+
+  private renderConfigHeader(containerEl: HTMLElement, config: ConfigEntry): void {
+    new Setting(containerEl).setName('Configuration').setHeading();
+
+    // Config name
+    new Setting(containerEl)
+      .setName('Configuration name')
+      .setDesc('A display name for this sync configuration.')
+      .addText(text => text
+        .setPlaceholder('My Config')
+        .setValue(config.name)
+        .onChange(async (value) => {
+          config.name = value;
+          await this.plugin.saveSettings();
+          // Update tab text without full re-render
+          const tabs = this.containerEl.querySelectorAll('.ani-config-tab:not(.ani-add-tab)');
+          const activeIdx = this.plugin.settings.configs.findIndex(c => c.id === config.id);
+          if (tabs[activeIdx]) {
+            tabs[activeIdx].textContent = value || 'Untitled';
+          }
+        }));
+
+    // Enabled toggle
+    new Setting(containerEl)
+      .setName('Enabled')
+      .setDesc('When disabled, this configuration will not sync.')
+      .addToggle(toggle => toggle
+        .setValue(config.enabled)
+        .onChange(async (value) => {
+          config.enabled = value;
+          await this.plugin.saveSettings();
+        }));
+
+    // Credential selector
+    new Setting(containerEl)
+      .setName('Credential')
+      .setDesc('Select the Airtable credential to use for this configuration.')
+      .addDropdown(dropdown => {
+        const { credentials } = this.plugin.settings;
+        if (credentials.length === 0) {
+          dropdown.addOption('', '-- No credentials --');
+        } else {
+          for (const cred of credentials) {
+            dropdown.addOption(cred.id, cred.name);
+          }
+        }
+        dropdown.setValue(config.credentialId);
+        dropdown.onChange(async (value) => {
+          config.credentialId = value;
+          await this.plugin.saveSettings();
+          this.debounceDisplay();
+        });
+      });
+  }
+
+  // ─── Delete Config ─────────────────────────────────────────────────
+
+  private renderDeleteConfigButton(containerEl: HTMLElement, config: ConfigEntry): void {
+    new Setting(containerEl).setName('Danger zone').setHeading();
+
+    const setting = new Setting(containerEl)
+      .setName('Delete this configuration')
+      .setDesc('Permanently remove this sync configuration. This cannot be undone.')
+      .addButton(button => button
+        .setButtonText('Delete')
+        .setWarning()
+        .onClick(async () => {
+          const { configs } = this.plugin.settings;
+          if (configs.length <= 1) {
+            new Notice('Auto Note Importer: Cannot delete the last configuration.');
+            return;
+          }
+          this.plugin.settings.configs = configs.filter(c => c.id !== config.id);
+          // Switch to first remaining config
+          this.plugin.settings.activeConfigId = this.plugin.settings.configs[0]?.id ?? '';
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+    setting.settingEl.addClass('ani-delete-config');
   }
 
   // ─── Existing Render Methods ───────────────────────────────────────
