@@ -4,18 +4,8 @@
 
 import type { Credential } from '../types/credential.types';
 import type { ConfigEntry } from '../types/config.types';
+import type { AutoNoteImporterSettings } from '../types/settings.types';
 import { generateId } from './object-utils';
-
-/**
- * The v2 multi-config settings structure returned after migration.
- */
-export interface MultiConfigSettings {
-  version: 2;
-  credentials: Credential[];
-  configs: ConfigEntry[];
-  activeConfigId: string;
-  debugMode: boolean;
-}
 
 /**
  * Migrates legacy single-config settings data to the v2 multi-config format.
@@ -27,7 +17,7 @@ export interface MultiConfigSettings {
  * @param data - Raw settings data loaded from plugin storage (unknown type)
  * @returns Migrated v2 settings, or null if migration is not applicable
  */
-export function migrateSettings(data: unknown): MultiConfigSettings | null {
+export function migrateSettings(data: unknown): AutoNoteImporterSettings | null {
   if (data == null) {
     return null;
   }

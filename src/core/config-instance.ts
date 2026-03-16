@@ -9,7 +9,7 @@
 
 import type { App } from "obsidian";
 import { Notice } from "obsidian";
-import type { AutoNoteImporterSettings, SyncMode, SyncScope, ConfigEntry, Credential, SharedServices } from '../types';
+import type { LegacySettings, SyncMode, SyncScope, ConfigEntry, Credential, SharedServices } from '../types';
 import { AirtableClient, RateLimiter } from '../services';
 import { SyncQueue, ConflictResolver, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
@@ -17,18 +17,18 @@ import { FileWatcher } from '../file-operations';
 
 /**
  * Merges a ConfigEntry with credential and debug info to produce
- * an object structurally compatible with AutoNoteImporterSettings.
+ * an object structurally compatible with LegacySettings.
  */
 function buildSettingsFromConfig(
   config: ConfigEntry,
   credential: Credential,
   debugMode: boolean,
-): AutoNoteImporterSettings {
+): LegacySettings {
   return {
     ...config,
     apiKey: credential.apiKey,
     debugMode,
-  } as AutoNoteImporterSettings;
+  } as LegacySettings;
 }
 
 /**
@@ -39,7 +39,7 @@ export class ConfigInstance {
 
   private app: App;
   private shared: SharedServices;
-  private settings: AutoNoteImporterSettings;
+  private settings: LegacySettings;
 
   private rateLimiter: RateLimiter;
   private airtableClient: AirtableClient;

@@ -5,8 +5,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SyncOrchestrator } from '../../src/core/sync-orchestrator';
 import type { StatusBarHandle, StatusBarController } from '../../src/core/sync-orchestrator';
-import type { AutoNoteImporterSettings } from '../../src/types';
-import { DEFAULT_SETTINGS } from '../../src/types';
+import type { LegacySettings } from '../../src/types';
+import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
 // Import from 'obsidian' (aliased to mock) to ensure same module identity as source code
 import { createMockApp, createMockTFile, createMockTFolder } from 'obsidian';
 import { createMockDatabaseClient } from '../__mocks__/database-client.mock';
@@ -16,9 +16,9 @@ import { FileWatcher } from '../../src/file-operations/file-watcher';
 import { ConflictResolver } from '../../src/core/conflict-resolver';
 import type { App } from 'obsidian';
 
-function createSettings(overrides: Partial<AutoNoteImporterSettings> = {}): AutoNoteImporterSettings {
+function createSettings(overrides: Partial<LegacySettings> = {}): LegacySettings {
   return {
-    ...DEFAULT_SETTINGS,
+    ...DEFAULT_LEGACY_SETTINGS,
     apiKey: 'pat-test',
     baseId: 'appTest',
     tableId: 'tblTest',
@@ -48,7 +48,7 @@ describe('SyncOrchestrator', () => {
   let conflictResolver: ConflictResolver;
   let statusBar: ReturnType<typeof createMockStatusBar>;
   let orchestrator: SyncOrchestrator;
-  let settings: AutoNoteImporterSettings;
+  let settings: LegacySettings;
 
   beforeEach(() => {
     vi.clearAllMocks();

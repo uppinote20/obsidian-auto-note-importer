@@ -11,29 +11,21 @@ vi.mock('obsidian', () => ({
 
 import { ConflictResolver } from '../../src/core/conflict-resolver';
 import { createMockDatabaseClient, MockDatabaseClient } from '../__mocks__/database-client.mock';
-import type { AutoNoteImporterSettings, ConflictInfo, DatabaseClient } from '../../src/types';
+import type { LegacySettings, ConflictInfo, DatabaseClient } from '../../src/types';
+import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
 
 describe('ConflictResolver', () => {
   let mockClient: MockDatabaseClient;
   let resolver: ConflictResolver;
 
-  const createSettings = (conflictResolution: 'obsidian-wins' | 'airtable-wins' | 'manual'): AutoNoteImporterSettings => ({
+  const createSettings = (conflictResolution: 'obsidian-wins' | 'airtable-wins' | 'manual'): LegacySettings => ({
+    ...DEFAULT_LEGACY_SETTINGS,
     apiKey: 'key',
     baseId: 'base123',
     tableId: 'tbl123',
     folderPath: 'notes',
-    templatePath: '',
-    syncInterval: 0,
-    allowOverwrite: false,
-    filenameFieldName: '',
-    subfolderFieldName: '',
     bidirectionalSync: true,
     conflictResolution,
-    watchForChanges: false,
-    fileWatchDebounce: 2000,
-    autoSyncFormulas: false,
-    formulaSyncDelay: 1500,
-    debugMode: false,
   });
 
   beforeEach(() => {

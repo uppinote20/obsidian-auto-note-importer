@@ -7,7 +7,7 @@
 import type { App, EventRef } from "obsidian";
 import { TFile, normalizePath, Notice } from "obsidian";
 import { DEBUG_DELAY_MULTIPLIER } from '../constants';
-import type { AutoNoteImporterSettings } from '../types';
+import type { LegacySettings } from '../types';
 
 /**
  * Callback type for when files are ready to sync.
@@ -19,7 +19,7 @@ export type FilesReadyCallback = (files: TFile[]) => Promise<void>;
  */
 export class FileWatcher {
   private app: App;
-  private settings: AutoNoteImporterSettings;
+  private settings: LegacySettings;
   private pendingFiles: Set<string> = new Set();
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private onFilesReady: FilesReadyCallback;
@@ -29,7 +29,7 @@ export class FileWatcher {
 
   constructor(
     app: App,
-    settings: AutoNoteImporterSettings,
+    settings: LegacySettings,
     onFilesReady: FilesReadyCallback
   ) {
     this.app = app;
@@ -40,7 +40,7 @@ export class FileWatcher {
   /**
    * Updates the settings reference.
    */
-  updateSettings(settings: AutoNoteImporterSettings): void {
+  updateSettings(settings: LegacySettings): void {
     this.settings = settings;
   }
 

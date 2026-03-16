@@ -9,7 +9,7 @@
  */
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
-import type { AutoNoteImporterSettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseClient } from '../types';
+import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseClient } from '../types';
 import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from '../constants';
 import { FieldCache } from '../services';
 import { ConflictResolver } from './conflict-resolver';
@@ -28,7 +28,7 @@ export interface StatusBarController {
 
 export class SyncOrchestrator {
   private app: App;
-  private settings: AutoNoteImporterSettings;
+  private settings: LegacySettings;
   private client: DatabaseClient;
   private fieldCache: FieldCache;
   private frontmatterParser: FrontmatterParser;
@@ -38,7 +38,7 @@ export class SyncOrchestrator {
 
   constructor(
     app: App,
-    settings: AutoNoteImporterSettings,
+    settings: LegacySettings,
     client: DatabaseClient,
     fieldCache: FieldCache,
     frontmatterParser: FrontmatterParser,
@@ -56,7 +56,7 @@ export class SyncOrchestrator {
     this.statusBar = statusBar;
   }
 
-  updateSettings(settings: AutoNoteImporterSettings): void {
+  updateSettings(settings: LegacySettings): void {
     this.settings = settings;
   }
 

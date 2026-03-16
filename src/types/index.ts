@@ -2,9 +2,10 @@ export type {
   ConflictResolutionMode,
   BasesFileLocation,
   SyncScope,
+  LegacySettings,
   AutoNoteImporterSettings,
 } from './settings.types';
-export { DEFAULT_SETTINGS } from './settings.types';
+export { DEFAULT_SETTINGS, DEFAULT_LEGACY_SETTINGS } from './settings.types';
 
 export type {
   AirtableField,

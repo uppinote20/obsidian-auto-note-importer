@@ -6,16 +6,16 @@
 
 import { Notice } from "obsidian";
 import { areValuesEqual } from '../utils';
-import type { AutoNoteImporterSettings, ConflictInfo, SyncResult, DatabaseClient } from '../types';
+import type { LegacySettings, ConflictInfo, SyncResult, DatabaseClient } from '../types';
 
 /**
  * Handles conflict detection and resolution between Obsidian and Airtable.
  */
 export class ConflictResolver {
-  private settings: AutoNoteImporterSettings;
+  private settings: LegacySettings;
   private client: DatabaseClient;
 
-  constructor(settings: AutoNoteImporterSettings, client: DatabaseClient) {
+  constructor(settings: LegacySettings, client: DatabaseClient) {
     this.settings = settings;
     this.client = client;
   }
@@ -23,7 +23,7 @@ export class ConflictResolver {
   /**
    * Updates the settings reference.
    */
-  updateSettings(settings: AutoNoteImporterSettings): void {
+  updateSettings(settings: LegacySettings): void {
     this.settings = settings;
   }
 

@@ -7,17 +7,17 @@
 
 import { requestUrl } from "obsidian";
 import { AIRTABLE_API_BASE_URL, AIRTABLE_BATCH_SIZE } from '../constants';
-import type { AutoNoteImporterSettings, RemoteNote, SyncResult, BatchUpdate, DatabaseClient } from '../types';
+import type { LegacySettings, RemoteNote, SyncResult, BatchUpdate, DatabaseClient } from '../types';
 import { RateLimiter } from './rate-limiter';
 
 /**
  * Client for interacting with the Airtable API.
  */
 export class AirtableClient implements DatabaseClient {
-  private settings: AutoNoteImporterSettings;
+  private settings: LegacySettings;
   private rateLimiter: RateLimiter;
 
-  constructor(settings: AutoNoteImporterSettings, rateLimiter?: RateLimiter) {
+  constructor(settings: LegacySettings, rateLimiter?: RateLimiter) {
     this.settings = settings;
     this.rateLimiter = rateLimiter || new RateLimiter();
   }
@@ -25,7 +25,7 @@ export class AirtableClient implements DatabaseClient {
   /**
    * Updates the settings reference.
    */
-  updateSettings(settings: AutoNoteImporterSettings): void {
+  updateSettings(settings: LegacySettings): void {
     this.settings = settings;
   }
 
