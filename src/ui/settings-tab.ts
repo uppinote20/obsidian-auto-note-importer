@@ -8,7 +8,7 @@
  * @handbook 5.1-ui-components
  */
 
-import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
 import type { ExtraButtonComponent, Plugin } from "obsidian";
 import { FieldCache } from '../services';
 import { isFieldTypeSupported } from '../constants';
@@ -33,7 +33,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: SettingsPlugin;
   private fieldCache: FieldCache;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private credentialsExpanded = false;
   private editingCredentialId: string | null = null;
   private addingCredential = false;
 
@@ -91,7 +90,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    // Credentials section (collapsible)
+    // Credentials section
     this.renderCredentialsSection(containerEl);
 
     // Tab bar for config switching
@@ -184,38 +183,43 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   // ─── Credentials Section ───────────────────────────────────────────
 
   private renderCredentialsSection(containerEl: HTMLElement): void {
-    const indicator = this.credentialsExpanded ? '\u25BC' : '\u25B6';
-    const heading = new Setting(containerEl)
-      .setName(`${indicator} Credentials`)
-      .setHeading();
-    heading.settingEl.addClass('ani-credentials-heading');
-    heading.settingEl.addEventListener('click', () => {
-      this.credentialsExpanded = !this.credentialsExpanded;
-      this.display();
-    });
-
-    if (!this.credentialsExpanded) return;
+    const section = containerEl.createDiv({ cls: 'ani-credentials-section' });
+    section.createEl('h3', { text: 'Credentials' });
+    section.createEl('p', { cls: 'ani-credentials-desc', text: 'Configure your Airtable credentials.' });
 
     const { credentials } = this.plugin.settings;
 
-    for (const cred of credentials) {
-      if (this.editingCredentialId === cred.id) {
-        this.renderCredentialEditRow(containerEl, cred);
-      } else {
-        this.renderCredentialRow(containerEl, cred);
+    if (credentials.length > 0) {
+      const table = section.createEl('table', { cls: 'ani-credentials-table' });
+      const thead = table.createEl('thead');
+      const headerRow = thead.createEl('tr');
+      headerRow.createEl('th', { text: 'Name' });
+      headerRow.createEl('th', { text: 'Type' });
+      headerRow.createEl('th', { text: 'API Key' });
+      headerRow.createEl('th', { text: 'Actions' });
+
+      const tbody = table.createEl('tbody');
+      for (const cred of credentials) {
+        this.renderCredentialTableRow(tbody, cred);
       }
     }
 
+    // Edit form (inline below table)
+    if (this.editingCredentialId) {
+      const cred = credentials.find(c => c.id === this.editingCredentialId);
+      if (cred) this.renderCredentialEditRow(section, cred);
+    }
+
+    // Add form or button
     if (this.addingCredential) {
-      this.renderCredentialAddRow(containerEl);
+      this.renderCredentialAddRow(section);
     } else {
-      new Setting(containerEl)
-        .addButton(button => button
-          .setButtonText('+ Add credential')
-          .onClick(() => {
-            this.addingCredential = true;
-            this.display();
-          }));
+      const addContainer = section.createDiv({ cls: 'ani-credentials-add' });
+      const addBtn = addContainer.createEl('button', { text: '+ Add credential' });
+      addBtn.addEventListener('click', () => {
+        this.addingCredential = true;
+        this.display();
+      });
     }
   }
 
@@ -224,30 +228,45 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     return '\u2022\u2022\u2022\u2022' + apiKey.slice(-4);
   }
 
-  private renderCredentialRow(containerEl: HTMLElement, cred: Credential): void {
-    new Setting(containerEl)
-      .setName(cred.name)
-      .setDesc(this.maskApiKey(cred.apiKey))
-      .addExtraButton(button => button
-        .setIcon('pencil')
-        .setTooltip('Edit credential')
-        .onClick(() => {
-          this.editingCredentialId = cred.id;
-          this.display();
-        }))
-      .addExtraButton(button => button
-        .setIcon('trash')
-        .setTooltip('Delete credential')
-        .onClick(async () => {
-          const inUse = this.plugin.settings.configs.some(c => c.credentialId === cred.id);
-          if (inUse) {
-            new Notice('Auto Note Importer: Cannot delete a credential that is in use by a configuration.');
-            return;
-          }
-          this.plugin.settings.credentials = this.plugin.settings.credentials.filter(c => c.id !== cred.id);
-          await this.plugin.saveSettings();
-          this.display();
-        }));
+  private renderCredentialTableRow(tbody: HTMLElement, cred: Credential): void {
+    const row = tbody.createEl('tr');
+    row.createEl('td', { cls: 'ani-cred-name', text: cred.name });
+    row.createEl('td', { cls: 'ani-cred-type', text: 'Airtable' });
+
+    const keyCell = row.createEl('td');
+    if (cred.apiKey) {
+      keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(cred.apiKey) });
+    } else {
+      const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set API key' });
+      setLink.addEventListener('click', () => {
+        this.editingCredentialId = cred.id;
+        this.display();
+      });
+    }
+
+    const actionsCell = row.createEl('td', { cls: 'ani-cred-actions' });
+
+    const editBtn = actionsCell.createEl('button', { cls: 'ani-cred-action-btn' });
+    setIcon(editBtn, 'settings');
+    editBtn.title = 'Edit credential';
+    editBtn.addEventListener('click', () => {
+      this.editingCredentialId = cred.id;
+      this.display();
+    });
+
+    const deleteBtn = actionsCell.createEl('button', { cls: 'ani-cred-action-btn' });
+    setIcon(deleteBtn, 'trash-2');
+    deleteBtn.title = 'Delete credential';
+    deleteBtn.addEventListener('click', async () => {
+      const inUse = this.plugin.settings.configs.some(c => c.credentialId === cred.id);
+      if (inUse) {
+        new Notice('Auto Note Importer: Cannot delete a credential that is in use by a configuration.');
+        return;
+      }
+      this.plugin.settings.credentials = this.plugin.settings.credentials.filter(c => c.id !== cred.id);
+      await this.plugin.saveSettings();
+      this.display();
+    });
   }
 
   private renderCredentialEditRow(containerEl: HTMLElement, cred: Credential): void {
@@ -375,7 +394,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     addTab.addEventListener('click', async () => {
       if (this.plugin.settings.credentials.length === 0) {
         new Notice('Auto Note Importer: Add a credential first before creating a configuration.');
-        this.credentialsExpanded = true;
         this.addingCredential = true;
         this.display();
         return;
