@@ -148,6 +148,22 @@
   color: var(--text-accent);
 }
 
+/* ─── Collapsible Sections ────────────────────────────────────────── */
+
+.ani-section-heading {
+  cursor: pointer;
+  user-select: none;
+}
+
+.ani-section-heading:hover {
+  background: var(--background-modifier-hover);
+  border-radius: 4px;
+}
+
+.ani-section-content {
+  padding-left: 4px;
+}
+
 /* ─── Delete Config ───────────────────────────────────────────────── */
 
 .ani-delete-config .setting-item-control .mod-warning {

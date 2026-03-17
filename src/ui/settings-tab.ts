@@ -35,6 +35,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private editingCredentialId: string | null = null;
   private addingCredential = false;
+  private expandedSections: Set<string> = new Set(['airtable-connection']);
 
   constructor(app: App, plugin: SettingsPlugin, fieldCache: FieldCache) {
     super(app, plugin);
@@ -112,66 +113,27 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Config header: name, enabled toggle, credential selector
     this.renderConfigHeader(containerEl, config);
 
-    // Airtable connection settings (base, table, view, fields)
+    // Section 1: Airtable Connection (expanded by default)
     if (credential.apiKey) {
-      this.renderBaseSelector(containerEl, config, credential);
+      this.renderCollapsibleSection(containerEl, 'airtable-connection', 'Airtable Connection', (container) => {
+        this.renderBaseSelector(container, config, credential);
+      });
     }
 
-    // Folder path setting (with overlap validation)
-    new Setting(containerEl)
-      .setName("New file location")
-      .setDesc("Example: folder1/folder2")
-      .addText(text => {
-        const input = text
-          .setPlaceholder("Crawling")
-          .setValue(config.folderPath)
-          .onChange(async (value) => {
-            const error = validateFolderPath(config.id, value, this.plugin.settings.configs);
-            if (error) {
-              new Notice(`Auto Note Importer: ${error}`);
-              return;
-            }
-            config.folderPath = value;
-            await this.plugin.saveSettings();
-          });
-        new FolderSuggest(this.app, input.inputEl as HTMLInputElement);
-      });
+    // Section 2: File Settings
+    this.renderCollapsibleSection(containerEl, 'file-settings', 'File Settings', (container) => {
+      this.renderFileSettings(container, config);
+    });
 
-    // Template path setting
-    new Setting(containerEl)
-      .setName("Template file")
-      .setDesc("Example: templates/template-file.md")
-      .addText(text => {
-        const input = text
-          .setPlaceholder("Templates/note-template.md")
-          .setValue(config.templatePath)
-          .onChange(async (value) => {
-            config.templatePath = value;
-            await this.plugin.saveSettings();
-          });
-        new FileSuggest(this.app, input.inputEl as HTMLInputElement);
-      });
+    // Section 3: Bases Database
+    this.renderCollapsibleSection(containerEl, 'bases-database', 'Bases Database', (container) => {
+      this.renderBasesSettings(container, config);
+    });
 
-    this.renderNumberSetting(containerEl, "Sync interval (minutes)", "How often to sync notes (in minutes).", "0",
-      config.syncInterval, "Sync interval",
-      (num) => { config.syncInterval = num; });
-
-    // Allow overwrite setting
-    new Setting(containerEl)
-      .setName("Allow overwrite existing notes")
-      .setDesc("If enabled, existing notes will be overwritten when syncing.")
-      .addToggle(toggle => toggle
-        .setValue(config.allowOverwrite)
-        .onChange(async (value) => {
-          config.allowOverwrite = value;
-          await this.plugin.saveSettings();
-        }));
-
-    // Bases database settings
-    this.renderBasesSettings(containerEl, config);
-
-    // Bidirectional sync settings
-    this.renderBidirectionalSyncSettings(containerEl, config);
+    // Section 4: Bidirectional Sync
+    this.renderCollapsibleSection(containerEl, 'bidirectional-sync', 'Bidirectional Sync', (container) => {
+      this.renderBidirectionalSyncSettings(container, config);
+    });
 
     // Delete config button
     this.renderDeleteConfigButton(containerEl, config);
@@ -493,6 +455,90 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     setting.settingEl.addClass('ani-delete-config');
   }
 
+  // ─── Collapsible Sections ─────────────────────────────────────────
+
+  private renderCollapsibleSection(
+    containerEl: HTMLElement,
+    sectionId: string,
+    title: string,
+    renderContent: (container: HTMLElement) => void,
+  ): void {
+    const isExpanded = this.expandedSections.has(sectionId);
+    const indicator = isExpanded ? '\u25BC' : '\u25B6';
+
+    const heading = new Setting(containerEl)
+      .setName(`${indicator} ${title}`)
+      .setHeading();
+    heading.settingEl.addClass('ani-section-heading');
+    heading.settingEl.addEventListener('click', () => {
+      if (this.expandedSections.has(sectionId)) {
+        this.expandedSections.delete(sectionId);
+      } else {
+        this.expandedSections.add(sectionId);
+      }
+      this.display();
+    });
+
+    if (isExpanded) {
+      const content = containerEl.createDiv({ cls: 'ani-section-content' });
+      renderContent(content);
+    }
+  }
+
+  // ─── File Settings ──────────────────────────────────────────────────
+
+  private renderFileSettings(containerEl: HTMLElement, config: ConfigEntry): void {
+    // Folder path setting (with overlap validation)
+    new Setting(containerEl)
+      .setName("New file location")
+      .setDesc("Example: folder1/folder2")
+      .addText(text => {
+        const input = text
+          .setPlaceholder("Crawling")
+          .setValue(config.folderPath)
+          .onChange(async (value) => {
+            const error = validateFolderPath(config.id, value, this.plugin.settings.configs);
+            if (error) {
+              new Notice(`Auto Note Importer: ${error}`);
+              return;
+            }
+            config.folderPath = value;
+            await this.plugin.saveSettings();
+          });
+        new FolderSuggest(this.app, input.inputEl as HTMLInputElement);
+      });
+
+    // Template path setting
+    new Setting(containerEl)
+      .setName("Template file")
+      .setDesc("Example: templates/template-file.md")
+      .addText(text => {
+        const input = text
+          .setPlaceholder("Templates/note-template.md")
+          .setValue(config.templatePath)
+          .onChange(async (value) => {
+            config.templatePath = value;
+            await this.plugin.saveSettings();
+          });
+        new FileSuggest(this.app, input.inputEl as HTMLInputElement);
+      });
+
+    this.renderNumberSetting(containerEl, "Sync interval (minutes)", "How often to sync notes (in minutes).", "0",
+      config.syncInterval, "Sync interval",
+      (num) => { config.syncInterval = num; });
+
+    // Allow overwrite setting
+    new Setting(containerEl)
+      .setName("Allow overwrite existing notes")
+      .setDesc("If enabled, existing notes will be overwritten when syncing.")
+      .addToggle(toggle => toggle
+        .setValue(config.allowOverwrite)
+        .onChange(async (value) => {
+          config.allowOverwrite = value;
+          await this.plugin.saveSettings();
+        }));
+  }
+
   // ─── Existing Render Methods ───────────────────────────────────────
 
   private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
@@ -651,8 +697,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderBasesSettings(containerEl: HTMLElement, config: ConfigEntry): void {
-    new Setting(containerEl).setName('Bases database').setHeading();
-
     new Setting(containerEl)
       .setName('Auto-generate Bases database file')
       .setDesc('Create a .base file after sync for table/card view in Obsidian Bases.')
@@ -708,8 +752,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderBidirectionalSyncSettings(containerEl: HTMLElement, config: ConfigEntry): void {
-    new Setting(containerEl).setName('Bidirectional sync').setHeading();
-
     new Setting(containerEl)
       .setName("Enable bidirectional sync")
       .setDesc("When enabled, changes made in Obsidian will be synced back to Airtable.")
