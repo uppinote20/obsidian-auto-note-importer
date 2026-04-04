@@ -1,8 +1,274 @@
 /*
+ * Auto Note Importer plugin styles.
+ */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+/* ─── Credentials Table ──────────────────────────────────────────── */
 
-If your plugin does not need CSS, delete this file.
+.ani-credentials-section {
+  margin-bottom: 24px;
+}
 
-*/
+.ani-credentials-section h3 {
+  margin: 0 0 4px;
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--h3-color);
+}
+
+.ani-credentials-section .ani-credentials-desc {
+  font-size: var(--font-smallest);
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.ani-credentials-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-ui-small);
+  margin-bottom: 8px;
+}
+
+.ani-credentials-table th {
+  text-align: left;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: var(--font-smallest);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ani-credentials-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  vertical-align: middle;
+}
+
+.ani-credentials-table tr:last-child td {
+  border-bottom: none;
+}
+
+.ani-credentials-table .ani-cred-name {
+  color: var(--text-accent);
+  font-weight: 500;
+}
+
+.ani-credentials-table .ani-cred-type {
+  color: var(--text-normal);
+}
+
+.ani-credentials-table .ani-cred-key {
+  color: var(--text-muted);
+}
+
+.ani-credentials-table .ani-cred-key-set {
+  color: var(--text-accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 150ms;
+}
+
+.ani-credentials-table .ani-cred-key-set:hover {
+  text-decoration-color: var(--text-accent);
+}
+
+.ani-credentials-table .ani-cred-actions {
+  text-align: right;
+}
+
+.ani-credentials-table .ani-cred-action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 150ms, background 150ms;
+}
+
+.ani-credentials-table .ani-cred-action-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ani-credentials-table .ani-cred-action-confirm {
+  color: var(--text-error);
+}
+
+.ani-credentials-add {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.ani-credentials-add button {
+  font-size: var(--font-ui-small);
+}
+
+/* Credential edit form (inline) */
+.ani-credential-edit {
+  padding-left: 12px;
+  border-left: 2px solid var(--interactive-accent);
+}
+
+/* ─── Config Tab Bar ──────────────────────────────────────────────── */
+
+.ani-config-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 20px;
+  padding: 0;
+}
+
+.ani-config-tab {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color 150ms, border-color 150ms;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.ani-config-tab:hover {
+  color: var(--text-normal);
+}
+
+.ani-config-tab.active {
+  color: var(--text-accent);
+  border-bottom-color: var(--text-accent);
+  font-weight: 600;
+}
+
+.ani-add-tab {
+  color: var(--text-faint);
+  font-size: var(--font-ui-medium);
+  padding: 6px 14px;
+}
+
+.ani-add-tab:hover {
+  color: var(--text-accent);
+}
+
+/* ─── Debug Section Spacing ────────────────────────────────────────── */
+
+.ani-debug-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* ─── Summary Cards ───────────────────────────────────────────────── */
+
+.ani-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ani-summary-card {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 150ms;
+}
+
+.ani-summary-card:hover {
+  border-color: var(--background-modifier-border-hover);
+}
+
+.ani-summary-card.is-expanded {
+  border-color: var(--interactive-accent);
+}
+
+.ani-card-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ani-card-header:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ani-card-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.ani-card-title {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-normal);
+  flex: 1;
+}
+
+.ani-card-summary {
+  font-size: var(--font-smallest);
+  color: var(--text-faint);
+  margin-right: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.ani-card-badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-weight: 500;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.ani-card-badge-ok {
+  background: rgba(0, 200, 83, 0.1);
+  color: #4ade80;
+}
+
+.ani-card-badge-off {
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--text-faint);
+}
+
+.ani-card-chevron {
+  font-size: 9px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  transition: transform 200ms;
+}
+
+.ani-summary-card.is-expanded .ani-card-chevron {
+  transform: rotate(90deg);
+}
+
+.ani-card-body {
+  padding: 4px 12px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ─── Inline Field Errors ─────────────────────────────────────────── */
+
+.ani-field-error {
+  color: var(--text-error) !important;
+}
+
+/* ─── Delete Config ───────────────────────────────────────────────── */
+
+.ani-delete-config .setting-item-control .mod-warning {
+  opacity: 0.8;
+}
+
+.ani-delete-config .setting-item-control .mod-warning:hover {
+  opacity: 1;
+}

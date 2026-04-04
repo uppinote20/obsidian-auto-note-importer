@@ -3,6 +3,9 @@
  * @handbook 9.3-settings-update-pattern
  */
 
+import type { Credential } from './credential.types';
+import type { ConfigEntry } from './config.types';
+
 /**
  * Conflict resolution modes for bidirectional sync.
  */
@@ -19,9 +22,11 @@ export type BasesFileLocation = 'vault-root' | 'synced-folder' | 'custom';
 export type SyncScope = 'current' | 'modified' | 'all';
 
 /**
- * Plugin settings interface.
+ * Legacy single-config settings interface.
+ * Used by services internally via ConfigInstance.buildSettingsFromConfig().
+ * @deprecated Use AutoNoteImporterSettings (v2 multi-config) for plugin-level settings.
  */
-export interface AutoNoteImporterSettings {
+export interface LegacySettings {
   apiKey: string;
   baseId: string;
   tableId: string;
@@ -46,19 +51,31 @@ export interface AutoNoteImporterSettings {
 }
 
 /**
- * Default values for the plugin settings.
+ * Plugin settings interface (v2 multi-config).
  */
-export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
-  apiKey: "",
-  baseId: "",
-  tableId: "",
-  viewId: "",
-  folderPath: "Crawling",
-  templatePath: "",
+export interface AutoNoteImporterSettings {
+  version: 2;
+  credentials: Credential[];
+  configs: ConfigEntry[];
+  activeConfigId: string;
+  debugMode: boolean;
+}
+
+/**
+ * Default values for the legacy per-config settings.
+ * Used by services and tests that construct LegacySettings objects.
+ */
+export const DEFAULT_LEGACY_SETTINGS: LegacySettings = {
+  apiKey: '',
+  baseId: '',
+  tableId: '',
+  viewId: '',
+  folderPath: 'Crawling',
+  templatePath: '',
   syncInterval: 0,
   allowOverwrite: false,
-  filenameFieldName: "title",
-  subfolderFieldName: "",
+  filenameFieldName: 'title',
+  subfolderFieldName: '',
   bidirectionalSync: false,
   conflictResolution: 'manual',
   watchForChanges: true,
@@ -69,5 +86,16 @@ export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
   basesFileLocation: 'vault-root',
   basesCustomPath: '',
   basesRegenerateOnSync: false,
+  debugMode: false,
+};
+
+/**
+ * Default values for the plugin settings.
+ */
+export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
+  version: 2,
+  credentials: [],
+  configs: [],
+  activeConfigId: '',
   debugMode: false,
 };

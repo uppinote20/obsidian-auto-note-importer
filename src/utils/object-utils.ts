@@ -68,5 +68,5 @@ export function areValuesEqual(value1: unknown, value2: unknown): boolean {
  * @returns A unique string identifier
  */
 export function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  return crypto.randomUUID();
 }

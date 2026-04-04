@@ -6,25 +6,24 @@
 
 import { Notice } from "obsidian";
 import { areValuesEqual } from '../utils';
-import { AirtableClient } from '../services';
-import type { AutoNoteImporterSettings, ConflictInfo, SyncResult } from '../types';
+import type { LegacySettings, ConflictInfo, SyncResult, DatabaseClient } from '../types';
 
 /**
  * Handles conflict detection and resolution between Obsidian and Airtable.
  */
 export class ConflictResolver {
-  private settings: AutoNoteImporterSettings;
-  private airtableClient: AirtableClient;
+  private settings: LegacySettings;
+  private client: DatabaseClient;
 
-  constructor(settings: AutoNoteImporterSettings, airtableClient: AirtableClient) {
+  constructor(settings: LegacySettings, client: DatabaseClient) {
     this.settings = settings;
-    this.airtableClient = airtableClient;
+    this.client = client;
   }
 
   /**
    * Updates the settings reference.
    */
-  updateSettings(settings: AutoNoteImporterSettings): void {
+  updateSettings(settings: LegacySettings): void {
     this.settings = settings;
   }
 
@@ -36,7 +35,7 @@ export class ConflictResolver {
     obsidianFields: Record<string, unknown>,
     filePath: string
   ): Promise<ConflictInfo[]> {
-    const record = await this.airtableClient.fetchRecord(recordId);
+    const record = await this.client.fetchRecord(recordId);
 
     if (!record) {
       return [];
@@ -71,7 +70,7 @@ export class ConflictResolver {
   ): Promise<SyncResult> {
     switch (this.settings.conflictResolution) {
       case 'obsidian-wins':
-        return this.airtableClient.updateRecord(recordId, fieldsToSync);
+        return this.client.updateRecord(recordId, fieldsToSync);
 
       case 'airtable-wins':
         return this.resolveAirtableWins(conflicts, fieldsToSync, recordId);
@@ -109,7 +108,7 @@ export class ConflictResolver {
     }
 
     if (Object.keys(nonConflictedFields).length > 0) {
-      return this.airtableClient.updateRecord(recordId, nonConflictedFields);
+      return this.client.updateRecord(recordId, nonConflictedFields);
     }
 
     return {

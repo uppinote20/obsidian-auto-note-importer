@@ -12,6 +12,7 @@
 		"test": "vitest",
 		"test:run": "vitest run",
 		"test:e2e": "node tests/e2e/run-e2e.mjs --cleanup",
+		"test:e2e:settings": "node tests/e2e/run-settings-e2e.mjs",
 		"test:e2e:full": "bash tests/e2e/start-e2e.sh --cleanup"
 	},
 	"keywords": [

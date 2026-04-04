@@ -4,8 +4,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AirtableClient } from '../../src/services/airtable-client';
-import type { AutoNoteImporterSettings } from '../../src/types';
-import { DEFAULT_SETTINGS } from '../../src/types';
+import type { LegacySettings } from '../../src/types';
+import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
 import { RateLimiter } from '../../src/services/rate-limiter';
 
 vi.mock('obsidian', () => ({
@@ -16,9 +16,9 @@ import { requestUrl } from 'obsidian';
 
 const mockRequestUrl = vi.mocked(requestUrl);
 
-function createSettings(overrides: Partial<AutoNoteImporterSettings> = {}): AutoNoteImporterSettings {
+function createSettings(overrides: Partial<LegacySettings> = {}): LegacySettings {
   return {
-    ...DEFAULT_SETTINGS,
+    ...DEFAULT_LEGACY_SETTINGS,
     apiKey: 'pat-test-key',
     baseId: 'appTestBase',
     tableId: 'tblTestTable',

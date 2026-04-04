@@ -53,16 +53,15 @@ describe('FieldCache', () => {
       expect(mockRequestUrl).toHaveBeenCalledTimes(1);
     });
 
-    it('should clear cache when API key changes', async () => {
+    it('should return cached bases regardless of API key (caller manages invalidation)', async () => {
       mockRequestUrl
-        .mockResolvedValueOnce(mockBasesResponse([{ id: 'app1', name: 'Base 1' }]))
-        .mockResolvedValueOnce(mockBasesResponse([{ id: 'app2', name: 'Base 2' }]));
+        .mockResolvedValueOnce(mockBasesResponse([{ id: 'app1', name: 'Base 1' }]));
 
       await cache.fetchBases('key-1');
       const bases = await cache.fetchBases('key-2');
 
-      expect(mockRequestUrl).toHaveBeenCalledTimes(2);
-      expect(bases[0].id).toBe('app2');
+      expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+      expect(bases[0].id).toBe('app1');
     });
 
     it('should throw on non-200 response', async () => {

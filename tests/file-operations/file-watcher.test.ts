@@ -4,16 +4,16 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FileWatcher } from '../../src/file-operations/file-watcher';
-import type { AutoNoteImporterSettings } from '../../src/types';
-import { DEFAULT_SETTINGS } from '../../src/types';
+import type { LegacySettings } from '../../src/types';
+import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
 import { DEBUG_DELAY_MULTIPLIER } from '../../src/constants';
 // Import from 'obsidian' (aliased to mock) to ensure same module identity as source code
 import { createMockApp, createMockTFile } from 'obsidian';
 import type { App } from 'obsidian';
 
-function createSettings(overrides: Partial<AutoNoteImporterSettings> = {}): AutoNoteImporterSettings {
+function createSettings(overrides: Partial<LegacySettings> = {}): LegacySettings {
   return {
-    ...DEFAULT_SETTINGS,
+    ...DEFAULT_LEGACY_SETTINGS,
     folderPath: 'Sync',
     bidirectionalSync: true,
     watchForChanges: true,
