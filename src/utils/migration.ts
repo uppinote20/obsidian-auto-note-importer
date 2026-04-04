@@ -63,7 +63,7 @@ export function migrateSettings(data: unknown): AutoNoteImporterSettings | null 
     watchForChanges: typeof record['watchForChanges'] === 'boolean' ? record['watchForChanges'] : false,
     fileWatchDebounce: typeof record['fileWatchDebounce'] === 'number' ? record['fileWatchDebounce'] : 2000,
     autoSyncFormulas: typeof record['autoSyncFormulas'] === 'boolean' ? record['autoSyncFormulas'] : false,
-    formulaSyncDelay: typeof record['formulaSyncDelay'] === 'number' ? record['formulaSyncDelay'] : 3000,
+    formulaSyncDelay: typeof record['formulaSyncDelay'] === 'number' ? record['formulaSyncDelay'] : 1500,
     generateBasesFile: typeof record['generateBasesFile'] === 'boolean' ? record['generateBasesFile'] : false,
     basesFileLocation: (record['basesFileLocation'] === 'synced-folder' || record['basesFileLocation'] === 'custom')
       ? record['basesFileLocation']

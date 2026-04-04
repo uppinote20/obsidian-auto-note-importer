@@ -27,6 +27,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   configManager!: ConfigManager;
   fieldCache!: FieldCache;
+  private commandFingerprint = '';
 
   async onload() {
     await this.loadSettings();
@@ -62,6 +63,13 @@ export default class AutoNoteImporterPlugin extends Plugin {
     for (const config of this.settings.configs) {
       this.registerCommandsForConfig(config);
     }
+    this.commandFingerprint = this.getCommandFingerprint();
+  }
+
+  private getCommandFingerprint(): string {
+    return this.settings.configs
+      .map(c => `${c.id}:${c.name}:${c.enabled}:${c.bidirectionalSync}`)
+      .join('|');
   }
 
   /**
@@ -85,31 +93,6 @@ export default class AutoNoteImporterPlugin extends Plugin {
     // Re-register for all current configs
     for (const config of this.settings.configs) {
       this.registerCommandsForConfig(config);
-    }
-  }
-
-  /**
-   * Unregisters all commands for a specific config ID.
-   */
-  private unregisterCommandsForConfig(configId: string): void {
-    const commandPrefix = this.manifest.id;
-    const commandIds = [
-      `sync-from-airtable-${configId}`,
-      `sync-all-from-airtable-${configId}`,
-      `sync-current-to-airtable-${configId}`,
-      `sync-modified-to-airtable-${configId}`,
-      `sync-all-to-airtable-${configId}`,
-      `bidirectional-sync-current-${configId}`,
-      `bidirectional-sync-modified-${configId}`,
-      `bidirectional-sync-all-${configId}`,
-    ];
-    const commands = (this.app as any).commands?.commands;
-    if (!commands) return;
-    for (const id of commandIds) {
-      const fullId = `${commandPrefix}:${id}`;
-      if (fullId in commands) {
-        delete commands[fullId];
-      }
     }
   }
 
@@ -244,14 +227,28 @@ export default class AutoNoteImporterPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
 
+    // Remove instances for deleted configs or configs with missing credentials
+    const currentIds = new Set(this.settings.configs.map(c => c.id));
+    for (const instance of this.configManager.getAllEnabled()) {
+      if (!currentIds.has(instance.configId)) {
+        this.configManager.removeConfig(instance.configId);
+      }
+    }
+
     for (const config of this.settings.configs) {
       const credential = this.settings.credentials.find(c => c.id === config.credentialId);
       if (credential) {
         this.configManager.updateConfig(config.id, config, credential);
+      } else {
+        this.configManager.removeConfig(config.id);
       }
     }
 
-    this.reregisterAllCommands();
+    const newFingerprint = this.getCommandFingerprint();
+    if (this.commandFingerprint !== newFingerprint) {
+      this.commandFingerprint = newFingerprint;
+      this.reregisterAllCommands();
+    }
   }
 
   onunload(): void {

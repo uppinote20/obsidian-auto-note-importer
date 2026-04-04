@@ -118,31 +118,36 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Summary card stack
     const cardStack = containerEl.createDiv({ cls: 'ani-card-stack' });
 
+    const connected = !!(config.baseId && config.tableId);
     if (credential.apiKey) {
-      this.renderSummaryCard(cardStack, 'airtable-connection', '\u{1F4E1}', 'Airtable Connection',
-        this.getConnectionSummary(config),
-        config.baseId && config.tableId ? 'ok' : 'off',
-        config.baseId && config.tableId ? 'Connected' : 'Setup required',
-        (container) => { this.renderBaseSelector(container, config, credential); });
+      this.renderSummaryCard(cardStack, {
+        sectionId: 'airtable-connection', icon: '\u{1F4E1}', title: 'Airtable Connection',
+        summary: this.getConnectionSummary(config),
+        badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
+        renderContent: (c) => this.renderBaseSelector(c, config, credential),
+      });
     }
 
-    this.renderSummaryCard(cardStack, 'file-settings', '\u{1F4C1}', 'File Settings',
-      this.getFileSummary(config),
-      config.folderPath ? 'ok' : 'off',
-      config.folderPath ? 'Configured' : 'Setup required',
-      (container) => { this.renderFileSettings(container, config); });
+    this.renderSummaryCard(cardStack, {
+      sectionId: 'file-settings', icon: '\u{1F4C1}', title: 'File Settings',
+      summary: this.getFileSummary(config),
+      badge: config.folderPath ? { status: 'ok', text: 'Configured' } : { status: 'off', text: 'Setup required' },
+      renderContent: (c) => this.renderFileSettings(c, config),
+    });
 
-    this.renderSummaryCard(cardStack, 'bases-database', '\u{1F4BE}', 'Bases Database',
-      config.generateBasesFile ? 'Auto-generate enabled' : '',
-      config.generateBasesFile ? 'ok' : 'off',
-      config.generateBasesFile ? 'On' : 'Off',
-      (container) => { this.renderBasesSettings(container, config); });
+    this.renderSummaryCard(cardStack, {
+      sectionId: 'bases-database', icon: '\u{1F4BE}', title: 'Bases Database',
+      summary: config.generateBasesFile ? 'Auto-generate enabled' : '',
+      badge: config.generateBasesFile ? { status: 'ok', text: 'On' } : { status: 'off', text: 'Off' },
+      renderContent: (c) => this.renderBasesSettings(c, config),
+    });
 
-    this.renderSummaryCard(cardStack, 'bidirectional-sync', '\u{1F504}', 'Bidirectional Sync',
-      this.getSyncSummary(config),
-      config.bidirectionalSync ? 'ok' : 'off',
-      config.bidirectionalSync ? 'On' : 'Off',
-      (container) => { this.renderBidirectionalSyncSettings(container, config); });
+    this.renderSummaryCard(cardStack, {
+      sectionId: 'bidirectional-sync', icon: '\u{1F504}', title: 'Bidirectional Sync',
+      summary: this.getSyncSummary(config),
+      badge: config.bidirectionalSync ? { status: 'ok', text: 'On' } : { status: 'off', text: 'Off' },
+      renderContent: (c) => this.renderBidirectionalSyncSettings(c, config),
+    });
 
     // Delete config button
     this.renderDeleteConfigButton(containerEl, config);
@@ -347,9 +352,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       const tab = tabBar.createDiv({
         cls: `ani-config-tab${config.id === activeId ? ' active' : ''}`,
         text: config.name || 'Untitled',
+        attr: { 'data-config-id': config.id },
       });
-      tab.addEventListener('click', () => {
+      tab.addEventListener('click', async () => {
         this.plugin.settings.activeConfigId = config.id;
+        await this.plugin.saveSettings();
         this.display();
       });
     }
@@ -400,20 +407,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             c => c.id !== config.id && c.name.trim() === value.trim(),
           );
           if (duplicate) {
-            nameSetting.descEl.textContent = 'This name is already used by another configuration.';
-            nameSetting.descEl.addClass('ani-field-error');
+            this.showFieldError(nameSetting, 'This name is already used by another configuration.');
             return;
           }
-          nameSetting.descEl.textContent = 'A display name for this sync configuration.';
-          nameSetting.descEl.removeClass('ani-field-error');
+          this.showFieldError(nameSetting, null, 'A display name for this sync configuration.');
           config.name = value;
           await this.plugin.saveSettings();
           // Update tab text without full re-render
-          const tabs = this.containerEl.querySelectorAll('.ani-config-tab:not(.ani-add-tab)');
-          const activeIdx = this.plugin.settings.configs.findIndex(c => c.id === config.id);
-          if (tabs[activeIdx]) {
-            tabs[activeIdx].textContent = value || 'Untitled';
-          }
+          const tab = this.containerEl.querySelector(`.ani-config-tab[data-config-id="${config.id}"]`);
+          if (tab) tab.textContent = value || 'Untitled';
         }));
 
     // Enabled toggle
@@ -481,14 +483,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
   private renderSummaryCard(
     containerEl: HTMLElement,
-    sectionId: string,
-    icon: string,
-    title: string,
-    summary: string,
-    badgeStatus: 'ok' | 'off',
-    badgeText: string,
-    renderContent: (container: HTMLElement) => void,
+    opts: {
+      sectionId: string;
+      icon: string;
+      title: string;
+      summary: string;
+      badge: { status: 'ok' | 'off'; text: string };
+      renderContent: (container: HTMLElement) => void;
+    },
   ): void {
+    const { sectionId, icon, title, summary, badge, renderContent } = opts;
     const isExpanded = this.expandedSections.has(sectionId);
     const card = containerEl.createDiv({ cls: `ani-summary-card${isExpanded ? ' is-expanded' : ''}` });
 
@@ -498,7 +502,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     if (summary) {
       header.createSpan({ cls: 'ani-card-summary', text: summary });
     }
-    header.createSpan({ cls: `ani-card-badge ani-card-badge-${badgeStatus}`, text: badgeText });
+    header.createSpan({ cls: `ani-card-badge ani-card-badge-${badge.status}`, text: badge.text });
     header.createSpan({ cls: 'ani-card-chevron', text: '\u25B6' });
 
     header.addEventListener('click', () => {
@@ -513,6 +517,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     if (isExpanded) {
       const body = card.createDiv({ cls: 'ani-card-body' });
       renderContent(body);
+    }
+  }
+
+  private showFieldError(setting: Setting, error: string | null, defaultDesc?: string): void {
+    if (error) {
+      setting.descEl.textContent = error;
+      setting.descEl.addClass('ani-field-error');
+    } else {
+      setting.descEl.textContent = defaultDesc ?? '';
+      setting.descEl.removeClass('ani-field-error');
     }
   }
 
@@ -557,12 +571,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             const error = validateFolderPath(config.id, value, this.plugin.settings.configs);
             if (error) {
-              folderSetting.descEl.textContent = error;
-              folderSetting.descEl.addClass('ani-field-error');
+              this.showFieldError(folderSetting, error);
               return;
             }
-            folderSetting.descEl.textContent = folderDesc;
-            folderSetting.descEl.removeClass('ani-field-error');
+            this.showFieldError(folderSetting, null, folderDesc);
             config.folderPath = value;
             await this.plugin.saveSettings();
           });
