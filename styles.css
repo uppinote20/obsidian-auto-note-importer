@@ -91,6 +91,10 @@
   background: var(--background-modifier-hover);
 }
 
+.ani-credentials-table .ani-cred-action-confirm {
+  color: var(--text-error);
+}
+
 .ani-credentials-add {
   display: flex;
   justify-content: flex-end;

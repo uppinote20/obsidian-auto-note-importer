@@ -36,6 +36,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private editingCredentialId: string | null = null;
   private addingCredential = false;
   private expandedSections: Set<string> = new Set(['airtable-connection']);
+  private pendingDeleteConfigId: string | null = null;
+  private pendingDeleteCredentialId: string | null = null;
 
   constructor(app: App, plugin: SettingsPlugin, fieldCache: FieldCache) {
     super(app, plugin);
@@ -227,15 +229,24 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       this.display();
     });
 
-    const deleteBtn = actionsCell.createEl('button', { cls: 'ani-cred-action-btn' });
-    setIcon(deleteBtn, 'trash-2');
-    deleteBtn.title = 'Delete credential';
+    const isPendingDelete = this.pendingDeleteCredentialId === cred.id;
+    const deleteBtn = actionsCell.createEl('button', {
+      cls: `ani-cred-action-btn${isPendingDelete ? ' ani-cred-action-confirm' : ''}`,
+    });
+    setIcon(deleteBtn, isPendingDelete ? 'check' : 'trash-2');
+    deleteBtn.title = isPendingDelete ? 'Confirm delete' : 'Delete credential';
     deleteBtn.addEventListener('click', async () => {
-      const inUse = this.plugin.settings.configs.some(c => c.credentialId === cred.id);
-      if (inUse) {
-        new Notice('Auto Note Importer: Cannot delete a credential that is in use by a configuration.');
+      if (!isPendingDelete) {
+        const inUse = this.plugin.settings.configs.some(c => c.credentialId === cred.id);
+        if (inUse) {
+          new Notice('Auto Note Importer: Cannot delete a credential that is in use by a configuration.');
+          return;
+        }
+        this.pendingDeleteCredentialId = cred.id;
+        this.display();
         return;
       }
+      this.pendingDeleteCredentialId = null;
       this.plugin.settings.credentials = this.plugin.settings.credentials.filter(c => c.id !== cred.id);
       await this.plugin.saveSettings();
       this.display();
@@ -456,26 +467,45 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private renderDeleteConfigButton(containerEl: HTMLElement, config: ConfigEntry): void {
     new Setting(containerEl).setName('Danger zone').setHeading();
 
+    const isPending = this.pendingDeleteConfigId === config.id;
     const setting = new Setting(containerEl)
       .setName('Delete this configuration')
-      .setDesc('Permanently remove this sync configuration. This cannot be undone.')
-      .addButton(button => button
-        .setButtonText('Delete')
-        .setWarning()
-        .onClick(async () => {
-          const { configs } = this.plugin.settings;
-          if (configs.length <= 1) {
-            new Notice('Auto Note Importer: Cannot delete the last configuration.');
-            return;
-          }
-          const confirmed = confirm(`Delete configuration "${config.name}"? This cannot be undone.`);
-          if (!confirmed) return;
-          this.plugin.settings.configs = configs.filter(c => c.id !== config.id);
-          // Switch to first remaining config
-          this.plugin.settings.activeConfigId = this.plugin.settings.configs[0]?.id ?? '';
-          await this.plugin.saveSettings();
+      .setDesc(isPending
+        ? 'Click again to confirm deletion.'
+        : 'Permanently remove this sync configuration. This cannot be undone.')
+      .addButton(button => {
+        button
+          .setButtonText(isPending ? 'Confirm delete' : 'Delete')
+          .setWarning()
+          .onClick(async () => {
+            if (!isPending) {
+              this.pendingDeleteConfigId = config.id;
+              this.display();
+              return;
+            }
+            const { configs } = this.plugin.settings;
+            if (configs.length <= 1) {
+              new Notice('Auto Note Importer: Cannot delete the last configuration.');
+              return;
+            }
+            this.pendingDeleteConfigId = null;
+            this.plugin.settings.configs = configs.filter(c => c.id !== config.id);
+            this.plugin.settings.activeConfigId = this.plugin.settings.configs[0]?.id ?? '';
+            await this.plugin.saveSettings();
+            this.display();
+          });
+        if (isPending) {
+          button.buttonEl.addClass('mod-destructive');
+        }
+      });
+    if (isPending) {
+      setting.addButton(button => button
+        .setButtonText('Cancel')
+        .onClick(() => {
+          this.pendingDeleteConfigId = null;
           this.display();
         }));
+    }
     setting.settingEl.addClass('ani-delete-config');
   }
 
