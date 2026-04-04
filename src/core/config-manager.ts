@@ -56,6 +56,18 @@ export class ConfigManager {
     if (instance) {
       instance.destroy();
       this.instances.delete(configId);
+      this.pruneOrphanedRateLimiters();
+    }
+  }
+
+  private pruneOrphanedRateLimiters(): void {
+    const usedCredentialIds = new Set(
+      Array.from(this.instances.values()).map(i => i.credentialId),
+    );
+    for (const credId of this.shared.rateLimiters.keys()) {
+      if (!usedCredentialIds.has(credId)) {
+        this.shared.rateLimiters.delete(credId);
+      }
     }
   }
 

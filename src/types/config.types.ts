@@ -61,7 +61,7 @@ export const DEFAULT_CONFIG_ENTRY: Omit<ConfigEntry, 'id' | 'name' | 'credential
   watchForChanges: false,
   fileWatchDebounce: 2000,
   autoSyncFormulas: false,
-  formulaSyncDelay: 3000,
+  formulaSyncDelay: 1500,
   generateBasesFile: false,
   basesFileLocation: 'vault-root',
   basesCustomPath: '',

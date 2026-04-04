@@ -36,6 +36,7 @@ function buildSettingsFromConfig(
  */
 export class ConfigInstance {
   readonly configId: string;
+  credentialId: string;
 
   private app: App;
   private shared: SharedServices;
@@ -52,6 +53,7 @@ export class ConfigInstance {
 
   constructor(app: App, config: ConfigEntry, credential: Credential, shared: SharedServices) {
     this.configId = config.id;
+    this.credentialId = credential.id;
     this.app = app;
     this.shared = shared;
     this.settings = buildSettingsFromConfig(config, credential, shared.getDebugMode());
@@ -132,6 +134,7 @@ export class ConfigInstance {
    * Updates all services with new config and credential.
    */
   updateSettings(config: ConfigEntry, credential: Credential): void {
+    this.credentialId = credential.id;
     this.settings = buildSettingsFromConfig(config, credential, this.shared.getDebugMode());
 
     // Update RateLimiter if credential changed
