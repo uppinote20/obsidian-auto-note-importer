@@ -148,20 +148,115 @@
   color: var(--text-accent);
 }
 
-/* ─── Collapsible Sections ────────────────────────────────────────── */
+/* ─── Debug Section Spacing ────────────────────────────────────────── */
 
-.ani-section-heading {
+.ani-debug-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* ─── Summary Cards ───────────────────────────────────────────────── */
+
+.ani-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ani-summary-card {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 150ms;
+}
+
+.ani-summary-card:hover {
+  border-color: var(--background-modifier-border-hover);
+}
+
+.ani-summary-card.is-expanded {
+  border-color: var(--interactive-accent);
+}
+
+.ani-card-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 8px;
   cursor: pointer;
   user-select: none;
 }
 
-.ani-section-heading:hover {
+.ani-card-header:hover {
   background: var(--background-modifier-hover);
-  border-radius: 4px;
 }
 
-.ani-section-content {
-  padding-left: 4px;
+.ani-card-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.ani-card-title {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-normal);
+  flex: 1;
+}
+
+.ani-card-summary {
+  font-size: var(--font-smallest);
+  color: var(--text-faint);
+  margin-right: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.ani-card-badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-weight: 500;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.ani-card-badge-ok {
+  background: rgba(0, 200, 83, 0.1);
+  color: #4ade80;
+}
+
+.ani-card-badge-off {
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--text-faint);
+}
+
+.ani-card-chevron {
+  font-size: 9px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  transition: transform 200ms;
+}
+
+.ani-summary-card.is-expanded .ani-card-chevron {
+  transform: rotate(90deg);
+}
+
+.ani-card-body {
+  padding: 4px 12px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ─── Inline Field Errors ─────────────────────────────────────────── */
+
+.ani-field-error {
+  color: var(--text-error) !important;
 }
 
 /* ─── Delete Config ───────────────────────────────────────────────── */

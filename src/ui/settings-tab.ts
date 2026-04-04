@@ -94,6 +94,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Credentials section
     this.renderCredentialsSection(containerEl);
 
+    // Debug settings (global, above per-config tabs)
+    this.renderDebugSettings(containerEl);
+
     // Tab bar for config switching
     this.renderTabBar(containerEl);
 
@@ -106,40 +109,43 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .setName('No configuration')
           .setDesc('Add a configuration using the + tab above.');
       }
-      this.renderDebugSettings(containerEl);
       return;
     }
 
     // Config header: name, enabled toggle, credential selector
     this.renderConfigHeader(containerEl, config);
 
-    // Section 1: Airtable Connection (expanded by default)
+    // Summary card stack
+    const cardStack = containerEl.createDiv({ cls: 'ani-card-stack' });
+
     if (credential.apiKey) {
-      this.renderCollapsibleSection(containerEl, 'airtable-connection', 'Airtable Connection', (container) => {
-        this.renderBaseSelector(container, config, credential);
-      });
+      this.renderSummaryCard(cardStack, 'airtable-connection', '\u{1F4E1}', 'Airtable Connection',
+        this.getConnectionSummary(config),
+        config.baseId && config.tableId ? 'ok' : 'off',
+        config.baseId && config.tableId ? 'Connected' : 'Setup required',
+        (container) => { this.renderBaseSelector(container, config, credential); });
     }
 
-    // Section 2: File Settings
-    this.renderCollapsibleSection(containerEl, 'file-settings', 'File Settings', (container) => {
-      this.renderFileSettings(container, config);
-    });
+    this.renderSummaryCard(cardStack, 'file-settings', '\u{1F4C1}', 'File Settings',
+      this.getFileSummary(config),
+      config.folderPath ? 'ok' : 'off',
+      config.folderPath ? 'Configured' : 'Setup required',
+      (container) => { this.renderFileSettings(container, config); });
 
-    // Section 3: Bases Database
-    this.renderCollapsibleSection(containerEl, 'bases-database', 'Bases Database', (container) => {
-      this.renderBasesSettings(container, config);
-    });
+    this.renderSummaryCard(cardStack, 'bases-database', '\u{1F4BE}', 'Bases Database',
+      config.generateBasesFile ? 'Auto-generate enabled' : '',
+      config.generateBasesFile ? 'ok' : 'off',
+      config.generateBasesFile ? 'On' : 'Off',
+      (container) => { this.renderBasesSettings(container, config); });
 
-    // Section 4: Bidirectional Sync
-    this.renderCollapsibleSection(containerEl, 'bidirectional-sync', 'Bidirectional Sync', (container) => {
-      this.renderBidirectionalSyncSettings(container, config);
-    });
+    this.renderSummaryCard(cardStack, 'bidirectional-sync', '\u{1F504}', 'Bidirectional Sync',
+      this.getSyncSummary(config),
+      config.bidirectionalSync ? 'ok' : 'off',
+      config.bidirectionalSync ? 'On' : 'Off',
+      (container) => { this.renderBidirectionalSyncSettings(container, config); });
 
     // Delete config button
     this.renderDeleteConfigButton(containerEl, config);
-
-    // Debug settings
-    this.renderDebugSettings(containerEl);
   }
 
   // ─── Credentials Section ───────────────────────────────────────────
@@ -360,10 +366,14 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         this.display();
         return;
       }
+      const existingNames = new Set(configs.map(c => c.name));
+      let nameIdx = configs.length + 1;
+      while (existingNames.has(`Config ${nameIdx}`)) nameIdx++;
+
       const newConfig: ConfigEntry = {
         ...DEFAULT_CONFIG_ENTRY,
         id: generateId(),
-        name: `Config ${configs.length + 1}`,
+        name: `Config ${nameIdx}`,
         credentialId: this.plugin.settings.credentials[0].id,
       };
       this.plugin.settings.configs.push(newConfig);
@@ -379,13 +389,23 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName('Configuration').setHeading();
 
     // Config name
-    new Setting(containerEl)
+    const nameSetting = new Setting(containerEl)
       .setName('Configuration name')
       .setDesc('A display name for this sync configuration.')
       .addText(text => text
         .setPlaceholder('My Config')
         .setValue(config.name)
         .onChange(async (value) => {
+          const duplicate = this.plugin.settings.configs.some(
+            c => c.id !== config.id && c.name.trim() === value.trim(),
+          );
+          if (duplicate) {
+            nameSetting.descEl.textContent = 'This name is already used by another configuration.';
+            nameSetting.descEl.addClass('ani-field-error');
+            return;
+          }
+          nameSetting.descEl.textContent = 'A display name for this sync configuration.';
+          nameSetting.descEl.removeClass('ani-field-error');
           config.name = value;
           await this.plugin.saveSettings();
           // Update tab text without full re-render
@@ -446,6 +466,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             new Notice('Auto Note Importer: Cannot delete the last configuration.');
             return;
           }
+          const confirmed = confirm(`Delete configuration "${config.name}"? This cannot be undone.`);
+          if (!confirmed) return;
           this.plugin.settings.configs = configs.filter(c => c.id !== config.id);
           // Switch to first remaining config
           this.plugin.settings.activeConfigId = this.plugin.settings.configs[0]?.id ?? '';
@@ -455,22 +477,31 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     setting.settingEl.addClass('ani-delete-config');
   }
 
-  // ─── Collapsible Sections ─────────────────────────────────────────
+  // ─── Summary Cards ─────────────────────────────────────────────────
 
-  private renderCollapsibleSection(
+  private renderSummaryCard(
     containerEl: HTMLElement,
     sectionId: string,
+    icon: string,
     title: string,
+    summary: string,
+    badgeStatus: 'ok' | 'off',
+    badgeText: string,
     renderContent: (container: HTMLElement) => void,
   ): void {
     const isExpanded = this.expandedSections.has(sectionId);
-    const indicator = isExpanded ? '\u25BC' : '\u25B6';
+    const card = containerEl.createDiv({ cls: `ani-summary-card${isExpanded ? ' is-expanded' : ''}` });
 
-    const heading = new Setting(containerEl)
-      .setName(`${indicator} ${title}`)
-      .setHeading();
-    heading.settingEl.addClass('ani-section-heading');
-    heading.settingEl.addEventListener('click', () => {
+    const header = card.createDiv({ cls: 'ani-card-header' });
+    header.createSpan({ cls: 'ani-card-icon', text: icon });
+    header.createSpan({ cls: 'ani-card-title', text: title });
+    if (summary) {
+      header.createSpan({ cls: 'ani-card-summary', text: summary });
+    }
+    header.createSpan({ cls: `ani-card-badge ani-card-badge-${badgeStatus}`, text: badgeText });
+    header.createSpan({ cls: 'ani-card-chevron', text: '\u25B6' });
+
+    header.addEventListener('click', () => {
       if (this.expandedSections.has(sectionId)) {
         this.expandedSections.delete(sectionId);
       } else {
@@ -480,18 +511,45 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     });
 
     if (isExpanded) {
-      const content = containerEl.createDiv({ cls: 'ani-section-content' });
-      renderContent(content);
+      const body = card.createDiv({ cls: 'ani-card-body' });
+      renderContent(body);
     }
+  }
+
+  private getConnectionSummary(config: ConfigEntry): string {
+    if (!config.baseId || !config.tableId) return '';
+    const parts: string[] = [];
+    if (config.filenameFieldName) parts.push(config.filenameFieldName);
+    if (config.viewId) parts.push('View filtered');
+    return parts.join(' \u00B7 ');
+  }
+
+  private getFileSummary(config: ConfigEntry): string {
+    const parts: string[] = [];
+    if (config.folderPath) parts.push(config.folderPath + '/');
+    if (config.templatePath) {
+      parts.push(config.templatePath.split('/').pop() ?? config.templatePath);
+    }
+    if (config.syncInterval > 0) parts.push(config.syncInterval + 'min');
+    return parts.join(' \u00B7 ');
+  }
+
+  private getSyncSummary(config: ConfigEntry): string {
+    if (!config.bidirectionalSync) return '';
+    const parts: string[] = [];
+    parts.push(config.conflictResolution);
+    if (config.watchForChanges) parts.push('watching');
+    return parts.join(' \u00B7 ');
   }
 
   // ─── File Settings ──────────────────────────────────────────────────
 
   private renderFileSettings(containerEl: HTMLElement, config: ConfigEntry): void {
-    // Folder path setting (with overlap validation)
-    new Setting(containerEl)
+    // Folder path setting (with inline overlap validation)
+    const folderDesc = 'Example: folder1/folder2';
+    const folderSetting = new Setting(containerEl)
       .setName("New file location")
-      .setDesc("Example: folder1/folder2")
+      .setDesc(folderDesc)
       .addText(text => {
         const input = text
           .setPlaceholder("Crawling")
@@ -499,9 +557,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             const error = validateFolderPath(config.id, value, this.plugin.settings.configs);
             if (error) {
-              new Notice(`Auto Note Importer: ${error}`);
+              folderSetting.descEl.textContent = error;
+              folderSetting.descEl.addClass('ani-field-error');
               return;
             }
+            folderSetting.descEl.textContent = folderDesc;
+            folderSetting.descEl.removeClass('ani-field-error');
             config.folderPath = value;
             await this.plugin.saveSettings();
           });
@@ -851,9 +912,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderDebugSettings(containerEl: HTMLElement): void {
-    new Setting(containerEl).setName('Debug').setHeading();
+    const section = containerEl.createDiv({ cls: 'ani-debug-section' });
 
-    new Setting(containerEl)
+    new Setting(section).setName('Debug').setHeading();
+
+    new Setting(section)
       .setName("Debug mode (slow sync)")
       .setDesc("Slows down all sync operations by 5x for easier testing and observation.")
       .addToggle(toggle => toggle
