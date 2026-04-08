@@ -1,5 +1,6 @@
 /**
  * Tests for bases-file-generator functions.
+ * @covers src/builders/bases-file-generator.ts
  */
 
 import { describe, it, expect } from 'vitest';

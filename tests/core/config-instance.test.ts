@@ -1,5 +1,6 @@
 /**
  * Tests for ConfigInstance.
+ * @covers src/core/config-instance.ts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

@@ -2,6 +2,7 @@
  * File watcher for detecting changes in the sync folder.
  *
  * @handbook 6.2-state-management
+ * @tested tests/file-operations/file-watcher.test.ts
  */
 
 import type { App, EventRef } from "obsidian";

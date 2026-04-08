@@ -2,6 +2,7 @@
  * Field caching service for Airtable metadata.
  *
  * @handbook 9.7-field-cache
+ * @tested tests/services/field-cache.test.ts
  */
 
 import { requestUrl } from "obsidian";

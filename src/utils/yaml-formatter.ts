@@ -1,6 +1,7 @@
 /**
  * YAML formatting utilities.
  * @handbook 4.3-data-flow
+ * @tested tests/utils/yaml-formatter.test.ts
  */
 
 /**

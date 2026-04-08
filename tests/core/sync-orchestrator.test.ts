@@ -1,5 +1,6 @@
 /**
  * Tests for SyncOrchestrator.
+ * @covers src/core/sync-orchestrator.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

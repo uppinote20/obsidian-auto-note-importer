@@ -1,5 +1,7 @@
 /**
  * Validation utilities for plugin configuration.
+ *
+ * @tested tests/utils/validation.test.ts
  */
 
 import { normalizePath } from 'obsidian';

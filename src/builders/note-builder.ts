@@ -1,6 +1,7 @@
 /**
  * Markdown note content builders.
  * @handbook 4.3-data-flow
+ * @tested tests/builders/note-builder.test.ts
  */
 
 import { getNestedValue, formatYamlValue, formatFieldForBases } from '../utils';

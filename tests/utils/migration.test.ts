@@ -1,5 +1,6 @@
 /**
  * Tests for settings migration utility.
+ * @covers src/utils/migration.ts
  */
 
 import { describe, it, expect } from 'vitest';

@@ -2,6 +2,7 @@
  * Rate limiter service to prevent overwhelming the Airtable API.
  *
  * @handbook 9.6-api-patterns
+ * @tested tests/services/rate-limiter.test.ts
  */
 
 import {

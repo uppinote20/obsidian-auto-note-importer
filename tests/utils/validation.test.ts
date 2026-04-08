@@ -1,5 +1,6 @@
 /**
  * Tests for folder overlap validation utility.
+ * @covers src/utils/validation.ts
  */
 
 import { describe, it, expect } from 'vitest';

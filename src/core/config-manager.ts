@@ -3,6 +3,9 @@
  *
  * Handles lifecycle of per-config service stacks: creation, update,
  * enable/disable transitions, and teardown.
+ *
+ * @tested tests/core/config-manager.test.ts
+ * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
 import type { App } from "obsidian";

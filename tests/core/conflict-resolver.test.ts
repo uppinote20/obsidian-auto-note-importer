@@ -1,5 +1,6 @@
 /**
  * Tests for conflict-resolver service.
+ * @covers src/core/conflict-resolver.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
