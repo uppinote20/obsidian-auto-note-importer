@@ -1,5 +1,6 @@
 /**
  * Tests for rate-limiter service.
+ * @covers src/services/rate-limiter.ts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

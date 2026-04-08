@@ -5,6 +5,8 @@
  * Follows the same stateless pattern as note-builder.ts.
  *
  * @handbook 4.3-data-flow
+ * @tested tests/builders/bases-file-generator.test.ts
+ * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
 import { normalizePath } from 'obsidian';

@@ -3,6 +3,14 @@
  *
  * Runs against a live Obsidian instance via Chrome DevTools Protocol (CDP).
  *
+ * @covers src/core/sync-orchestrator.ts
+ * @covers src/core/config-manager.ts
+ * @covers src/core/config-instance.ts
+ * @covers src/core/conflict-resolver.ts
+ * @covers src/services/airtable-client.ts
+ * @covers src/builders/bases-file-generator.ts
+ * @covers src/main.ts
+ *
  * Prerequisites:
  *   1. Obsidian running with --remote-debugging-port=9222
  *      /Applications/Obsidian.app/Contents/MacOS/Obsidian --remote-debugging-port=9222

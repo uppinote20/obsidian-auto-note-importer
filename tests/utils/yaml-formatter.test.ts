@@ -1,5 +1,6 @@
 /**
  * Tests for yaml-formatter utility functions.
+ * @covers src/utils/yaml-formatter.ts
  */
 
 import { describe, it, expect } from 'vitest';

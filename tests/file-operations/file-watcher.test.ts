@@ -1,5 +1,6 @@
 /**
  * Tests for FileWatcher service.
+ * @covers src/file-operations/file-watcher.ts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

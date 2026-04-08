@@ -6,6 +6,8 @@
  * @handbook 4.2-sync-architecture
  * @handbook 5.3-statusbar-abstraction
  * @handbook 9.1-sync-flow
+ * @tested tests/core/sync-orchestrator.test.ts
+ * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";

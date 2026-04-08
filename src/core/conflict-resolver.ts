@@ -2,6 +2,8 @@
  * Conflict detection and resolution for bidirectional sync.
  *
  * @handbook 9.5-conflict-resolution-modes
+ * @tested tests/core/conflict-resolver.test.ts
+ * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
 import { Notice } from "obsidian";

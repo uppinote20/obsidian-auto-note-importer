@@ -1,5 +1,6 @@
 /**
  * Tests for system-fields constants and functions.
+ * @covers src/constants/system-fields.ts
  */
 
 import { describe, it, expect } from 'vitest';

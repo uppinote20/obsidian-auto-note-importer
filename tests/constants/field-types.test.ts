@@ -1,5 +1,6 @@
 /**
  * Tests for field-types constants and functions.
+ * @covers src/constants/field-types.ts
  */
 
 import { describe, it, expect } from 'vitest';

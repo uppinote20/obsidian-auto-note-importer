@@ -1,5 +1,6 @@
 /**
  * Tests for note-builder functions.
+ * @covers src/builders/note-builder.ts
  */
 
 import { describe, it, expect } from 'vitest';

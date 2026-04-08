@@ -1,5 +1,6 @@
 /**
  * Tests for FieldCache service.
+ * @covers src/services/field-cache.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

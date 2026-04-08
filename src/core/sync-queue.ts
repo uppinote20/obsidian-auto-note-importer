@@ -4,6 +4,7 @@
  *
  * @handbook 6.2-state-management
  * @handbook 9.1-sync-flow
+ * @tested tests/core/sync-queue.test.ts
  */
 
 import { generateId } from '../utils';

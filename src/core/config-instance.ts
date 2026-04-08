@@ -5,6 +5,8 @@
  * SyncQueue, ConflictResolver, and a per-config sync scheduler.
  *
  * @handbook 9.2-service-initialization-order
+ * @tested tests/core/config-instance.test.ts
+ * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
 import type { App } from "obsidian";

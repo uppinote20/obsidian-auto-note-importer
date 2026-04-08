@@ -2,6 +2,7 @@
  * System field constants.
  * These fields are used internally and should not be synced to Airtable.
  * @handbook 7.3-read-only-field-protection
+ * @tested tests/constants/system-fields.test.ts
  */
 
 /**

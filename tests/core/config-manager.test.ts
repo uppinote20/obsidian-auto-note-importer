@@ -1,5 +1,6 @@
 /**
  * Tests for ConfigManager.
+ * @covers src/core/config-manager.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

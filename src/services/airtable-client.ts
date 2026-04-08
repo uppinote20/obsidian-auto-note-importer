@@ -3,6 +3,9 @@
  *
  * @handbook 6.1-error-handling
  * @handbook 9.6-api-patterns
+ * @tested tests/services/airtable-client.test.ts
+ * @tested tests/services/airtable-client-view.test.ts
+ * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
 import { requestUrl } from "obsidian";

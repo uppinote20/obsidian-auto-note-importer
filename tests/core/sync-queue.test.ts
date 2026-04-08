@@ -1,5 +1,6 @@
 /**
  * Tests for sync-queue service.
+ * @covers src/core/sync-queue.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

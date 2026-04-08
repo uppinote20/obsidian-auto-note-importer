@@ -4,6 +4,8 @@
  * Tests summary card rendering, badge statuses, summaries, expand/collapse,
  * and all config option combinations via Chrome DevTools Protocol (CDP).
  *
+ * @covers src/ui/settings-tab.ts
+ *
  * Prerequisites:
  *   1. Obsidian running with --remote-debugging-port=9222
  *   2. A vault with the plugin installed and at least one configured credential

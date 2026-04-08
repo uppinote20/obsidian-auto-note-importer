@@ -2,6 +2,7 @@
  * Tests for frontmatter-parser ensurePrimaryField pure logic.
  * Note: Only testing the ensurePrimaryField method which is pure logic.
  * Other methods require Obsidian App which is harder to mock.
+ * @covers src/file-operations/frontmatter-parser.ts
  */
 
 import { describe, it, expect, vi } from 'vitest';

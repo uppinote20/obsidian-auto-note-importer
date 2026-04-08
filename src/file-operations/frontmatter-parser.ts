@@ -2,6 +2,7 @@
  * Frontmatter parsing and manipulation utilities.
  *
  * @handbook 7.3-read-only-field-protection
+ * @tested tests/file-operations/frontmatter-parser.test.ts
  */
 
 import type { App } from "obsidian";

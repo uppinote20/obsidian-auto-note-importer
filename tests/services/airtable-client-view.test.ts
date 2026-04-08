@@ -1,5 +1,6 @@
 /**
  * Tests for AirtableClient view parameter support.
+ * @covers src/services/airtable-client.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

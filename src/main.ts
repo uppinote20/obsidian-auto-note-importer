@@ -7,6 +7,7 @@
  * @handbook 9.2-service-initialization-order
  * @handbook 9.3-settings-update-pattern
  * @handbook 9.4-conditional-command-visibility
+ * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
 import { Plugin, normalizePath } from "obsidian";

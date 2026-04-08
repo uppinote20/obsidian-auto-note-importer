@@ -1,5 +1,6 @@
 /**
  * Tests for sanitizers utility functions.
+ * @covers src/utils/sanitizers.ts
  */
 
 import { describe, it, expect } from 'vitest';

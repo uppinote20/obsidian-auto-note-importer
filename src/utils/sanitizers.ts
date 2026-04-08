@@ -2,6 +2,7 @@
  * File and path sanitization utilities.
  *
  * @handbook 7.1-input-validation
+ * @tested tests/utils/sanitizers.test.ts
  */
 
 /**

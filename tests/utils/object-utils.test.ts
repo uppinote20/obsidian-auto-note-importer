@@ -1,5 +1,6 @@
 /**
  * Tests for object-utils utility functions.
+ * @covers src/utils/object-utils.ts
  */
 
 import { describe, it, expect } from 'vitest';
