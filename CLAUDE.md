@@ -111,6 +111,10 @@ Code ↔ Docs 양방향 링크 시스템:
 | Settings update pattern | 9.3 |
 | Conflict resolution | 9.5 |
 | API patterns | 9.6 |
+| Multi-config architecture | 9.8 |
+| Settings migration | 9.9 |
+| Folder overlap validation | 9.10 |
+| Bases file generation | 9.11 |
 
 ## Commit Guidelines
 

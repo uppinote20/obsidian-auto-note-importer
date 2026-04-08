@@ -1,6 +1,7 @@
 /**
  * Validation utilities for plugin configuration.
  *
+ * @handbook 9.10-folder-overlap-validation
  * @tested tests/utils/validation.test.ts
  */
 

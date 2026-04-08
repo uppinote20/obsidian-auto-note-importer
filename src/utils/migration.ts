@@ -1,6 +1,7 @@
 /**
  * Settings migration utility for upgrading legacy single-config settings to v2 multi-config format.
  *
+ * @handbook 9.9-settings-migration
  * @tested tests/utils/migration.test.ts
  */
 

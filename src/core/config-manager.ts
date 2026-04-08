@@ -4,6 +4,7 @@
  * Handles lifecycle of per-config service stacks: creation, update,
  * enable/disable transitions, and teardown.
  *
+ * @handbook 9.8-multi-config-architecture
  * @tested tests/core/config-manager.test.ts
  * @tested e2e:tests/e2e/run-e2e.mjs
  */
