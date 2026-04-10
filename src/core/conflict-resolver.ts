@@ -8,18 +8,18 @@
 
 import { Notice } from "obsidian";
 import { areValuesEqual } from '../utils';
-import type { LegacySettings, ConflictInfo, SyncResult, DatabaseClient } from '../types';
+import type { LegacySettings, ConflictInfo, SyncResult, DatabaseProvider } from '../types';
 
 /**
- * Handles conflict detection and resolution between Obsidian and Airtable.
+ * Handles conflict detection and resolution between Obsidian and remote databases.
  */
 export class ConflictResolver {
   private settings: LegacySettings;
-  private client: DatabaseClient;
+  private provider: DatabaseProvider;
 
-  constructor(settings: LegacySettings, client: DatabaseClient) {
+  constructor(settings: LegacySettings, provider: DatabaseProvider) {
     this.settings = settings;
-    this.client = client;
+    this.provider = provider;
   }
 
   /**
@@ -37,7 +37,7 @@ export class ConflictResolver {
     obsidianFields: Record<string, unknown>,
     filePath: string
   ): Promise<ConflictInfo[]> {
-    const record = await this.client.fetchRecord(recordId);
+    const record = await this.provider.fetchRecord(recordId);
 
     if (!record) {
       return [];
@@ -72,7 +72,7 @@ export class ConflictResolver {
   ): Promise<SyncResult> {
     switch (this.settings.conflictResolution) {
       case 'obsidian-wins':
-        return this.client.updateRecord(recordId, fieldsToSync);
+        return this.provider.updateRecord(recordId, fieldsToSync);
 
       case 'airtable-wins':
         return this.resolveAirtableWins(conflicts, fieldsToSync, recordId);
@@ -110,7 +110,7 @@ export class ConflictResolver {
     }
 
     if (Object.keys(nonConflictedFields).length > 0) {
-      return this.client.updateRecord(recordId, nonConflictedFields);
+      return this.provider.updateRecord(recordId, nonConflictedFields);
     }
 
     return {

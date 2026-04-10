@@ -13,7 +13,7 @@ import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
 import type { ExtraButtonComponent, Plugin } from "obsidian";
 import { FieldCache } from '../services';
 import { isFieldTypeSupported } from '../constants';
-import type { AutoNoteImporterSettings, ConfigEntry, Credential, ConflictResolutionMode, BasesFileLocation } from '../types';
+import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
@@ -122,12 +122,13 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const cardStack = containerEl.createDiv({ cls: 'ani-card-stack' });
 
     const connected = !!(config.baseId && config.tableId);
-    if (credential.apiKey) {
+    if (credential.type === 'airtable' && credential.apiKey) {
+      const airtableCred = credential;
       this.renderSummaryCard(cardStack, {
         sectionId: 'airtable-connection', icon: '\u{1F4E1}', title: 'Airtable Connection',
         summary: this.getConnectionSummary(config),
         badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
-        renderContent: (c) => this.renderBaseSelector(c, config, credential),
+        renderContent: (c) => this.renderBaseSelector(c, config, airtableCred),
       });
     }
 
@@ -199,6 +200,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
   }
 
+  private credentialTypeLabel(type: Credential['type']): string {
+    switch (type) {
+      case 'airtable': return 'Airtable';
+      case 'seatable': return 'SeaTable';
+      case 'supabase': return 'Supabase';
+      case 'notion': return 'Notion';
+      case 'custom-api': return 'Custom API';
+    }
+  }
+
   private maskApiKey(apiKey: string): string {
     if (apiKey.length <= 4) return apiKey ? '****' : '';
     return '\u2022\u2022\u2022\u2022' + apiKey.slice(-4);
@@ -207,11 +218,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private renderCredentialTableRow(tbody: HTMLElement, cred: Credential): void {
     const row = tbody.createEl('tr');
     row.createEl('td', { cls: 'ani-cred-name', text: cred.name });
-    row.createEl('td', { cls: 'ani-cred-type', text: 'Airtable' });
+    row.createEl('td', { cls: 'ani-cred-type', text: this.credentialTypeLabel(cred.type) });
 
     const keyCell = row.createEl('td');
-    if (cred.apiKey) {
-      keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(cred.apiKey) });
+    const displayKey = cred.type === 'airtable' ? cred.apiKey : '';
+    if (displayKey) {
+      keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(displayKey) });
     } else {
       const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set API key' });
       setLink.addEventListener('click', () => {
@@ -255,6 +267,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderCredentialEditRow(containerEl: HTMLElement, cred: Credential): void {
+    if (cred.type !== 'airtable') {
+      new Setting(containerEl)
+        .setName('Edit not supported')
+        .setDesc(`Editing ${cred.type} credentials is not yet supported.`);
+      return;
+    }
     let nameValue = cred.name;
     let keyValue = cred.apiKey;
 
@@ -645,7 +663,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
   // ─── Existing Render Methods ───────────────────────────────────────
 
-  private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
+  private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
     new Setting(containerEl)
       .setName("Select base")
       .setDesc("Choose the Airtable base you want to import notes from.")
@@ -678,7 +696,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
   }
 
-  private renderTableSelector(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
+  private renderTableSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
     new Setting(containerEl)
       .setName("Select table")
       .setDesc("Choose the specific table within the selected base.")
@@ -714,7 +732,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
   }
 
-  private renderViewSelector(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
+  private renderViewSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
     new Setting(containerEl)
       .setName("Select view (optional)")
       .setDesc("Filter synced records by an Airtable view. Leave empty to sync all records.")
@@ -744,7 +762,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       }));
   }
 
-  private renderFieldSelectors(containerEl: HTMLElement, config: ConfigEntry, credential: Credential): void {
+  private renderFieldSelectors(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
     this.renderFieldDropdown(containerEl, "Filename field", "Select the field to use for the note's filename.", "-- Select field --",
       config.filenameFieldName, (value) => { config.filenameFieldName = value; }, config, credential);
 
@@ -760,7 +778,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     currentValue: string,
     onSelect: (value: string) => void,
     config: ConfigEntry,
-    credential: Credential
+    credential: AirtableCredential
   ): void {
     new Setting(containerEl)
       .setName(name)

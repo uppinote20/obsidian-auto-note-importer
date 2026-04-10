@@ -10,13 +10,32 @@
 
 import { requestUrl } from "obsidian";
 import { AIRTABLE_API_BASE_URL, AIRTABLE_BATCH_SIZE } from '../constants';
-import type { LegacySettings, RemoteNote, SyncResult, BatchUpdate, DatabaseClient } from '../types';
+import type {
+  LegacySettings,
+  RemoteNote,
+  SyncResult,
+  BatchUpdate,
+  DatabaseProvider,
+  ProviderCapabilities,
+  Credential,
+  ConfigEntry,
+  CredentialType,
+} from '../types';
 import { RateLimiter } from './rate-limiter';
+
+const AIRTABLE_CAPABILITIES: ProviderCapabilities = {
+  bidirectional: true,
+  hasComputedFields: true,
+  batchUpdateMaxSize: AIRTABLE_BATCH_SIZE,
+};
 
 /**
  * Client for interacting with the Airtable API.
  */
-export class AirtableClient implements DatabaseClient {
+export class AirtableClient implements DatabaseProvider {
+  readonly providerType: CredentialType = 'airtable';
+  readonly capabilities: ProviderCapabilities = AIRTABLE_CAPABILITIES;
+
   private settings: LegacySettings;
   private rateLimiter: RateLimiter;
 
@@ -30,6 +49,20 @@ export class AirtableClient implements DatabaseClient {
    */
   updateSettings(settings: LegacySettings): void {
     this.settings = settings;
+  }
+
+  /**
+   * Reconfigures the provider with new credential and config values.
+   */
+  reconfigure(credential: Credential, config: ConfigEntry, debugMode: boolean): void {
+    if (credential.type !== 'airtable') {
+      throw new Error(`AirtableClient cannot be reconfigured with a ${credential.type} credential`);
+    }
+    this.settings = {
+      ...config,
+      apiKey: credential.apiKey,
+      debugMode,
+    } as LegacySettings;
   }
 
   /**

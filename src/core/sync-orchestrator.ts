@@ -11,7 +11,7 @@
  */
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
-import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseClient } from '../types';
+import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseProvider } from '../types';
 import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from '../constants';
 import { FieldCache } from '../services';
 import { ConflictResolver } from './conflict-resolver';
@@ -31,7 +31,7 @@ export interface StatusBarController {
 export class SyncOrchestrator {
   private app: App;
   private settings: LegacySettings;
-  private client: DatabaseClient;
+  private provider: DatabaseProvider;
   private fieldCache: FieldCache;
   private frontmatterParser: FrontmatterParser;
   private fileWatcher: FileWatcher;
@@ -41,7 +41,7 @@ export class SyncOrchestrator {
   constructor(
     app: App,
     settings: LegacySettings,
-    client: DatabaseClient,
+    provider: DatabaseProvider,
     fieldCache: FieldCache,
     frontmatterParser: FrontmatterParser,
     fileWatcher: FileWatcher,
@@ -50,7 +50,7 @@ export class SyncOrchestrator {
   ) {
     this.app = app;
     this.settings = settings;
-    this.client = client;
+    this.provider = provider;
     this.fieldCache = fieldCache;
     this.frontmatterParser = frontmatterParser;
     this.fileWatcher = fileWatcher;
@@ -191,7 +191,7 @@ export class SyncOrchestrator {
 
     this.fileWatcher.setSyncing(true);
     try {
-      const remoteNote = await this.client.fetchRecord(recordId);
+      const remoteNote = await this.provider.fetchRecord(recordId);
       if (!remoteNote) {
         new Notice("Auto Note Importer: Record not found in Airtable");
         return;
@@ -217,7 +217,7 @@ export class SyncOrchestrator {
 
     this.fileWatcher.setSyncing(true);
     try {
-      const remoteNotes = await this.client.fetchNotes();
+      const remoteNotes = await this.provider.fetchNotes();
 
       let existingPrimaryFields: Set<string> | null = null;
       if (!this.settings.allowOverwrite) {
@@ -419,7 +419,7 @@ export class SyncOrchestrator {
       const batch = batchUpdates.slice(i, i + AIRTABLE_BATCH_SIZE);
 
       try {
-        const results = await this.client.batchUpdate(batch);
+        const results = await this.provider.batchUpdate(batch);
         const failures: string[] = [];
         for (const result of results) {
           if (result.success) {

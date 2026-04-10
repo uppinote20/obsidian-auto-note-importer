@@ -1,7 +1,7 @@
 /**
  * ConfigInstance owns the full service stack for one config entry.
  *
- * Creates and manages: DatabaseClient, FileWatcher, SyncOrchestrator,
+ * Creates and manages: DatabaseProvider, FileWatcher, SyncOrchestrator,
  * SyncQueue, ConflictResolver, and a per-config sync scheduler.
  *
  * @handbook 9.2-service-initialization-order
@@ -11,8 +11,16 @@
 
 import type { App } from "obsidian";
 import { Notice } from "obsidian";
-import type { LegacySettings, SyncMode, SyncScope, ConfigEntry, Credential, SharedServices } from '../types';
-import { AirtableClient, RateLimiter } from '../services';
+import type {
+  LegacySettings,
+  SyncMode,
+  SyncScope,
+  ConfigEntry,
+  Credential,
+  SharedServices,
+  DatabaseProvider,
+} from '../types';
+import { RateLimiter, createProvider } from '../services';
 import { SyncQueue, ConflictResolver, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
 import { FileWatcher } from '../file-operations';
@@ -20,17 +28,21 @@ import { FileWatcher } from '../file-operations';
 /**
  * Merges a ConfigEntry with credential and debug info to produce
  * an object structurally compatible with LegacySettings.
+ *
+ * Non-Airtable credentials do not populate the legacy `apiKey` field;
+ * their providers resolve auth from the credential directly.
  */
 function buildSettingsFromConfig(
   config: ConfigEntry,
   credential: Credential,
   debugMode: boolean,
 ): LegacySettings {
+  const apiKey = credential.type === 'airtable' ? credential.apiKey : '';
   return {
     ...config,
-    apiKey: credential.apiKey,
+    apiKey,
     debugMode,
-  } as LegacySettings;
+  };
 }
 
 /**
@@ -45,7 +57,7 @@ export class ConfigInstance {
   private settings: LegacySettings;
 
   private rateLimiter: RateLimiter;
-  private airtableClient: AirtableClient;
+  private databaseProvider: DatabaseProvider;
   private conflictResolver: ConflictResolver;
   private fileWatcher: FileWatcher;
   private syncOrchestrator: SyncOrchestrator;
@@ -63,11 +75,16 @@ export class ConfigInstance {
     // 1. Get or create RateLimiter (shared per credential)
     this.rateLimiter = this.getOrCreateRateLimiter(credential.id);
 
-    // 2. Create AirtableClient
-    this.airtableClient = new AirtableClient(this.settings, this.rateLimiter);
+    // 2. Create DatabaseProvider via registry (based on credential.type)
+    this.databaseProvider = createProvider(
+      credential,
+      config,
+      this.rateLimiter,
+      shared.getDebugMode(),
+    );
 
     // 3. Create ConflictResolver
-    this.conflictResolver = new ConflictResolver(this.settings, this.airtableClient);
+    this.conflictResolver = new ConflictResolver(this.settings, this.databaseProvider);
 
     // 4. Create FileWatcher (callback captures syncQueue via closure — safe because
     //    setup() is called after syncQueue is assigned, and callbacks fire asynchronously)
@@ -94,7 +111,7 @@ export class ConfigInstance {
     this.syncOrchestrator = new SyncOrchestrator(
       this.app,
       this.settings,
-      this.airtableClient,
+      this.databaseProvider,
       this.shared.fieldCache,
       this.shared.frontmatterParser,
       this.fileWatcher,
@@ -147,7 +164,7 @@ export class ConfigInstance {
     this.rateLimiter.setDebugMode(this.shared.getDebugMode());
 
     // Propagate settings to all services
-    this.airtableClient.updateSettings(this.settings);
+    this.databaseProvider.reconfigure(credential, config, this.shared.getDebugMode());
     this.conflictResolver.updateSettings(this.settings);
     this.syncOrchestrator.updateSettings(this.settings);
 

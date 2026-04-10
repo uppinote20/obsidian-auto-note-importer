@@ -275,7 +275,7 @@ describe('ConfigInstance', () => {
 
       instance.updateSettings(updatedConfig, updatedCredential);
 
-      expect(airtableInstance.updateSettings).toHaveBeenCalled();
+      expect(airtableInstance.reconfigure).toHaveBeenCalled();
       expect(conflictInstance.updateSettings).toHaveBeenCalled();
       expect(orchestratorInstance.updateSettings).toHaveBeenCalled();
       expect(fileWatcherInstance.teardown).toHaveBeenCalled();

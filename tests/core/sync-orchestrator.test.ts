@@ -10,7 +10,7 @@ import type { LegacySettings } from '../../src/types';
 import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
 // Import from 'obsidian' (aliased to mock) to ensure same module identity as source code
 import { createMockApp, createMockTFile, createMockTFolder } from 'obsidian';
-import { createMockDatabaseClient } from '../__mocks__/database-client.mock';
+import { createMockDatabaseProvider } from '../__mocks__/database-client.mock';
 import { FieldCache } from '../../src/services/field-cache';
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
 import { FileWatcher } from '../../src/file-operations/file-watcher';
@@ -42,7 +42,7 @@ function createMockStatusBar(): StatusBarController & { lastItem: StatusBarHandl
 
 describe('SyncOrchestrator', () => {
   let mockApp: ReturnType<typeof createMockApp>;
-  let mockClient: ReturnType<typeof createMockDatabaseClient>;
+  let mockProvider: ReturnType<typeof createMockDatabaseProvider>;
   let fieldCache: FieldCache;
   let frontmatterParser: FrontmatterParser;
   let fileWatcher: FileWatcher;
@@ -56,17 +56,17 @@ describe('SyncOrchestrator', () => {
 
     settings = createSettings();
     mockApp = createMockApp();
-    mockClient = createMockDatabaseClient();
+    mockProvider = createMockDatabaseProvider();
     fieldCache = new FieldCache();
     frontmatterParser = new FrontmatterParser(mockApp as unknown as App);
     fileWatcher = new FileWatcher(mockApp as unknown as App, settings, vi.fn());
-    conflictResolver = new ConflictResolver(settings, mockClient as never);
+    conflictResolver = new ConflictResolver(settings, mockProvider as never);
     statusBar = createMockStatusBar();
 
     orchestrator = new SyncOrchestrator(
       mockApp as unknown as App,
       settings,
-      mockClient as never,
+      mockProvider as never,
       fieldCache,
       frontmatterParser,
       fileWatcher,
@@ -77,7 +77,7 @@ describe('SyncOrchestrator', () => {
 
   describe('processSyncRequest — from-airtable', () => {
     it('should create status bar item and remove it after sync', async () => {
-      mockClient.fetchNotes.mockResolvedValue([]);
+      mockProvider.fetchNotes.mockResolvedValue([]);
       mockApp.vault.adapter.exists.mockResolvedValue(true);
 
       await orchestrator.processSyncRequest('from-airtable', 'all');
@@ -88,7 +88,7 @@ describe('SyncOrchestrator', () => {
     });
 
     it('should create sync folder if it does not exist', async () => {
-      mockClient.fetchNotes.mockResolvedValue([]);
+      mockProvider.fetchNotes.mockResolvedValue([]);
       mockApp.vault.adapter.exists.mockResolvedValue(false);
 
       await orchestrator.processSyncRequest('from-airtable', 'all');
@@ -97,7 +97,7 @@ describe('SyncOrchestrator', () => {
     });
 
     it('should create notes from fetched records', async () => {
-      mockClient.fetchNotes.mockResolvedValue([
+      mockProvider.fetchNotes.mockResolvedValue([
         { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note 1' } },
       ]);
       mockApp.vault.adapter.exists.mockResolvedValue(true);
@@ -109,7 +109,7 @@ describe('SyncOrchestrator', () => {
     });
 
     it('should set and clear syncing flag on fileWatcher in correct order', async () => {
-      mockClient.fetchNotes.mockResolvedValue([]);
+      mockProvider.fetchNotes.mockResolvedValue([]);
       mockApp.vault.adapter.exists.mockResolvedValue(true);
 
       const setSyncingSpy = vi.spyOn(fileWatcher, 'setSyncing');
@@ -123,7 +123,7 @@ describe('SyncOrchestrator', () => {
     });
 
     it('should remove status bar and reset syncing even when sync throws', async () => {
-      mockClient.fetchNotes.mockRejectedValue(new Error('API down'));
+      mockProvider.fetchNotes.mockRejectedValue(new Error('API down'));
 
       const setSyncingSpy = vi.spyOn(fileWatcher, 'setSyncing');
 
@@ -164,15 +164,15 @@ describe('SyncOrchestrator', () => {
       vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Name: 'test' });
       vi.spyOn(conflictResolver, 'shouldSkipConflictDetection').mockReturnValue(true);
 
-      mockClient.batchUpdate.mockResolvedValue([{ success: true, recordId: 'rec1', updatedFields: {} }]);
-      mockClient.fetchNotes.mockResolvedValue([]);
+      mockProvider.batchUpdate.mockResolvedValue([{ success: true, recordId: 'rec1', updatedFields: {} }]);
+      mockProvider.fetchNotes.mockResolvedValue([]);
 
       await orchestrator.processSyncRequest('bidirectional', 'all');
 
       // Phase 1: push to Airtable
-      expect(mockClient.batchUpdate).toHaveBeenCalled();
+      expect(mockProvider.batchUpdate).toHaveBeenCalled();
       // Phase 2: pull back
-      expect(mockClient.fetchNotes).toHaveBeenCalled();
+      expect(mockProvider.fetchNotes).toHaveBeenCalled();
     });
 
     it('should skip phase 2 when autoSyncFormulas is false', async () => {
@@ -190,12 +190,12 @@ describe('SyncOrchestrator', () => {
       vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Name: 'test' });
       vi.spyOn(conflictResolver, 'shouldSkipConflictDetection').mockReturnValue(true);
 
-      mockClient.batchUpdate.mockResolvedValue([{ success: true, recordId: 'rec1', updatedFields: {} }]);
+      mockProvider.batchUpdate.mockResolvedValue([{ success: true, recordId: 'rec1', updatedFields: {} }]);
 
       await orchestrator.processSyncRequest('bidirectional', 'all');
 
-      expect(mockClient.batchUpdate).toHaveBeenCalled();
-      expect(mockClient.fetchNotes).not.toHaveBeenCalled();
+      expect(mockProvider.batchUpdate).toHaveBeenCalled();
+      expect(mockProvider.fetchNotes).not.toHaveBeenCalled();
     });
   });
 
@@ -206,7 +206,7 @@ describe('SyncOrchestrator', () => {
 
       vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
 
-      mockClient.fetchRecord.mockResolvedValue({
+      mockProvider.fetchRecord.mockResolvedValue({
         id: 'rec1', primaryField: 'rec1', fields: { title: 'Updated' },
       });
       mockApp.vault.getAbstractFileByPath.mockReturnValue(file);
@@ -215,13 +215,13 @@ describe('SyncOrchestrator', () => {
 
       await orchestrator.processSyncRequest('from-airtable', 'current');
 
-      expect(mockClient.fetchRecord).toHaveBeenCalledWith('rec1');
+      expect(mockProvider.fetchRecord).toHaveBeenCalledWith('rec1');
     });
   });
 
   describe('error propagation', () => {
     it('should catch errors and show notice without throwing', async () => {
-      mockClient.fetchNotes.mockRejectedValue(new Error('Network error'));
+      mockProvider.fetchNotes.mockRejectedValue(new Error('Network error'));
 
       // Should not throw
       await expect(

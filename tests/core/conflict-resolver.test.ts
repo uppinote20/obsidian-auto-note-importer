@@ -11,12 +11,12 @@ vi.mock('obsidian', () => ({
 }));
 
 import { ConflictResolver } from '../../src/core/conflict-resolver';
-import { createMockDatabaseClient, MockDatabaseClient } from '../__mocks__/database-client.mock';
-import type { LegacySettings, ConflictInfo, DatabaseClient } from '../../src/types';
+import { createMockDatabaseProvider, MockDatabaseProvider } from '../__mocks__/database-client.mock';
+import type { LegacySettings, ConflictInfo, DatabaseProvider } from '../../src/types';
 import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
 
 describe('ConflictResolver', () => {
-  let mockClient: MockDatabaseClient;
+  let mockProvider: MockDatabaseProvider;
   let resolver: ConflictResolver;
 
   const createSettings = (conflictResolution: 'obsidian-wins' | 'airtable-wins' | 'manual'): LegacySettings => ({
@@ -31,27 +31,27 @@ describe('ConflictResolver', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient = createMockDatabaseClient();
+    mockProvider = createMockDatabaseProvider();
   });
 
   describe('shouldSkipConflictDetection', () => {
     it('should return true for obsidian-wins mode (CR-2.1)', () => {
       const settings = createSettings('obsidian-wins');
-      resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(true);
     });
 
     it('should return false for airtable-wins mode (CR-2.2)', () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(false);
     });
 
     it('should return false for manual mode', () => {
       const settings = createSettings('manual');
-      resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(false);
     });
@@ -60,9 +60,9 @@ describe('ConflictResolver', () => {
   describe('detectConflicts', () => {
     it('should return empty array when record not found', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
-      mockClient.fetchRecord.mockResolvedValue(null);
+      mockProvider.fetchRecord.mockResolvedValue(null);
 
       const conflicts = await resolver.detectConflicts(
         'rec123',
@@ -75,9 +75,9 @@ describe('ConflictResolver', () => {
 
     it('should detect conflicting field values', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
-      mockClient.fetchRecord.mockResolvedValue({
+      mockProvider.fetchRecord.mockResolvedValue({
         id: 'rec123',
         fields: {
           field1: 'airtable-value',
@@ -106,9 +106,9 @@ describe('ConflictResolver', () => {
 
     it('should not detect conflict when values are equal', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
-      mockClient.fetchRecord.mockResolvedValue({
+      mockProvider.fetchRecord.mockResolvedValue({
         id: 'rec123',
         fields: { field1: 'same-value' }
       });
@@ -124,9 +124,9 @@ describe('ConflictResolver', () => {
 
     it('should not detect conflict for new fields in obsidian', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
-      mockClient.fetchRecord.mockResolvedValue({
+      mockProvider.fetchRecord.mockResolvedValue({
         id: 'rec123',
         fields: {}
       });
@@ -142,9 +142,9 @@ describe('ConflictResolver', () => {
 
     it('should propagate fetch errors to caller', async () => {
       const settings = createSettings('airtable-wins');
-      resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
-      mockClient.fetchRecord.mockRejectedValue(new Error('Network error'));
+      mockProvider.fetchRecord.mockRejectedValue(new Error('Network error'));
 
       await expect(
         resolver.detectConflicts('rec123', { field1: 'value' }, 'notes/test.md')
@@ -164,7 +164,7 @@ describe('ConflictResolver', () => {
     describe('obsidian-wins mode (CR-1.1)', () => {
       it('should sync all fields, overwriting Airtable', async () => {
         const settings = createSettings('obsidian-wins');
-        resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+        resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
         const conflicts = [createConflict('field1')];
         const fieldsToSync = {
@@ -172,7 +172,7 @@ describe('ConflictResolver', () => {
           field2: 'other-value'
         };
 
-        mockClient.updateRecord.mockResolvedValue({
+        mockProvider.updateRecord.mockResolvedValue({
           success: true,
           recordId: 'rec123',
           updatedFields: fieldsToSync
@@ -180,7 +180,7 @@ describe('ConflictResolver', () => {
 
         const result = await resolver.resolve(conflicts, fieldsToSync, 'rec123');
 
-        expect(mockClient.updateRecord).toHaveBeenCalledWith('rec123', fieldsToSync);
+        expect(mockProvider.updateRecord).toHaveBeenCalledWith('rec123', fieldsToSync);
         expect(result.success).toBe(true);
       });
     });
@@ -188,7 +188,7 @@ describe('ConflictResolver', () => {
     describe('airtable-wins mode (CR-1.2)', () => {
       it('should skip conflicted fields and sync non-conflicted fields only', async () => {
         const settings = createSettings('airtable-wins');
-        resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+        resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
         const conflicts = [createConflict('field1')];
         const fieldsToSync = {
@@ -196,7 +196,7 @@ describe('ConflictResolver', () => {
           field2: 'non-conflicted-value'
         };
 
-        mockClient.updateRecord.mockResolvedValue({
+        mockProvider.updateRecord.mockResolvedValue({
           success: true,
           recordId: 'rec123',
           updatedFields: { field2: 'non-conflicted-value' }
@@ -204,7 +204,7 @@ describe('ConflictResolver', () => {
 
         const result = await resolver.resolve(conflicts, fieldsToSync, 'rec123');
 
-        expect(mockClient.updateRecord).toHaveBeenCalledWith('rec123', {
+        expect(mockProvider.updateRecord).toHaveBeenCalledWith('rec123', {
           field2: 'non-conflicted-value'
         });
         expect(result.success).toBe(true);
@@ -212,14 +212,14 @@ describe('ConflictResolver', () => {
 
       it('should return success without calling updateRecord if all fields conflicted', async () => {
         const settings = createSettings('airtable-wins');
-        resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+        resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
         const conflicts = [createConflict('field1')];
         const fieldsToSync = { field1: 'obsidian-value' };
 
         const result = await resolver.resolve(conflicts, fieldsToSync, 'rec123');
 
-        expect(mockClient.updateRecord).not.toHaveBeenCalled();
+        expect(mockProvider.updateRecord).not.toHaveBeenCalled();
         expect(result.success).toBe(true);
         expect(result.updatedFields).toEqual({});
       });
@@ -228,14 +228,14 @@ describe('ConflictResolver', () => {
     describe('manual mode (CR-1.3)', () => {
       it('should not sync and return error', async () => {
         const settings = createSettings('manual');
-        resolver = new ConflictResolver(settings, mockClient as unknown as DatabaseClient);
+        resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
         const conflicts = [createConflict('field1')];
         const fieldsToSync = { field1: 'obsidian-value' };
 
         const result = await resolver.resolve(conflicts, fieldsToSync, 'rec123');
 
-        expect(mockClient.updateRecord).not.toHaveBeenCalled();
+        expect(mockProvider.updateRecord).not.toHaveBeenCalled();
         expect(result.success).toBe(false);
         expect(result.error).toContain('Conflicts detected');
       });
@@ -245,7 +245,7 @@ describe('ConflictResolver', () => {
   describe('updateSettings', () => {
     it('should update internal settings reference', () => {
       const initialSettings = createSettings('obsidian-wins');
-      resolver = new ConflictResolver(initialSettings, mockClient as unknown as DatabaseClient);
+      resolver = new ConflictResolver(initialSettings, mockProvider as unknown as DatabaseProvider);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(true);
 
