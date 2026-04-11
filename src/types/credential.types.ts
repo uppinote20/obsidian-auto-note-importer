@@ -3,6 +3,9 @@
  *
  * Credentials are discriminated by `type`, which also determines which
  * DatabaseProvider is instantiated for any ConfigEntry referencing the credential.
+ *
+ * @handbook 9.8-multi-config-architecture
+ * @handbook 4.4-provider-abstraction
  */
 
 export type CredentialType =

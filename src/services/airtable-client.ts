@@ -1,6 +1,9 @@
 /**
  * Airtable API client service.
  *
+ * First concrete implementation of the DatabaseProvider interface.
+ *
+ * @handbook 4.4-provider-abstraction
  * @handbook 6.1-error-handling
  * @handbook 9.6-api-patterns
  * @tested tests/services/airtable-client.test.ts

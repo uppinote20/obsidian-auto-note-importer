@@ -6,6 +6,7 @@
  * registry based on the credential's type, decoupling service wiring
  * from specific providers.
  *
+ * @handbook 4.4-provider-abstraction
  * @tested tests/services/provider-registry.test.ts
  */
 

@@ -3,6 +3,8 @@
  *
  * These types are used by the DatabaseProvider interface and all
  * concrete provider implementations (Airtable, SeaTable, Supabase, etc.).
+ *
+ * @handbook 4.4-provider-abstraction
  */
 
 import type { Credential, CredentialType } from './credential.types';
