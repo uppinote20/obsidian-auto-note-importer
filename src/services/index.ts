@@ -8,6 +8,10 @@ export {
   registerFieldTypeMapper,
   getFieldTypeMapper,
   hasFieldTypeMapper,
+  registerCredentialFormRenderer,
+  getCredentialFormRenderer,
+  hasCredentialFormRenderer,
 } from './provider-registry';
 export type { ProviderFactory } from './provider-registry';
 export { airtableFieldMapper } from './airtable-field-mapper';
+export { airtableCredentialFormRenderer } from './airtable-credential-form';

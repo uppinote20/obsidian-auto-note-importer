@@ -11,7 +11,14 @@
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
 import type { ExtraButtonComponent, Plugin } from "obsidian";
-import { FieldCache, getFieldTypeMapper, hasFieldTypeMapper } from '../services';
+import {
+  FieldCache,
+  getFieldTypeMapper,
+  hasFieldTypeMapper,
+  getCredentialFormRenderer,
+  hasCredentialFormRenderer,
+} from '../services';
+import type { CredentialFormState } from '../types';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
@@ -260,14 +267,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderCredentialEditRow(containerEl: HTMLElement, cred: Credential): void {
-    if (cred.type !== 'airtable') {
+    if (!hasCredentialFormRenderer(cred.type)) {
       new Setting(containerEl)
         .setName('Edit not supported')
         .setDesc(`Editing ${cred.type} credentials is not yet supported.`);
       return;
     }
+    const renderer = getCredentialFormRenderer(cred.type);
+    const state: CredentialFormState = {};
     let nameValue = cred.name;
-    let keyValue = cred.apiKey;
 
     const nameSetting = new Setting(containerEl)
       .setName('Name')
@@ -277,32 +285,40 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .onChange(value => { nameValue = value; }));
     nameSetting.settingEl.addClass('ani-credential-edit');
 
-    const keySetting = new Setting(containerEl)
-      .setName('API Key')
-      .addText(text => {
-        text
-          .setValue(cred.apiKey)
-          .setPlaceholder('pat-xxx...')
-          .onChange(value => { keyValue = value; });
-        text.inputEl.type = 'password';
-      });
-    keySetting.settingEl.addClass('ani-credential-edit');
+    renderer.renderFields(containerEl, state, cred);
 
     new Setting(containerEl)
       .addButton(button => button
         .setButtonText('Save')
         .setCta()
         .onClick(async () => {
-          if (!nameValue.trim()) {
-            new Notice('Auto Note Importer: Credential name cannot be empty.');
+          const result = renderer.build(nameValue, state, cred.id);
+          if (!result.ok) {
+            new Notice(`Auto Note Importer: ${result.error}`);
             return;
           }
-          cred.name = nameValue.trim();
-          cred.apiKey = keyValue;
+          // Replace the existing credential in-place
+          const idx = this.plugin.settings.credentials.findIndex(c => c.id === cred.id);
+          if (idx >= 0) {
+            this.plugin.settings.credentials[idx] = result.credential;
+          }
           await this.plugin.saveSettings();
           this.editingCredentialId = null;
           this.display();
         }))
+      .addButton(button => {
+        button
+          .setButtonText('Test')
+          .setDisabled(!renderer.testConnection)
+          .onClick(() => {
+            const result = renderer.build(nameValue, state, cred.id);
+            if (!result.ok) {
+              new Notice(`Auto Note Importer: ${result.error}`);
+              return;
+            }
+            this.runConnectionTest(renderer, result.credential);
+          });
+      })
       .addButton(button => button
         .setButtonText('Cancel')
         .onClick(() => {
@@ -312,15 +328,19 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderCredentialAddRow(containerEl: HTMLElement): void {
-    // Name + Type persist across detail re-renders; key is type-specific
-    // and held in the same closure so it survives dropdown switches.
-    const state = { name: '', key: '' };
+    // Name persists across detail re-renders. The provider-specific state
+    // bag survives dropdown switches within the same closure so a user who
+    // types a key, switches types, and switches back doesn't lose input.
+    const context = {
+      name: '',
+      state: {} as CredentialFormState,
+    };
 
     const nameSetting = new Setting(containerEl)
       .setName('Name')
       .addText(text => text
         .setPlaceholder('e.g. Personal Airtable')
-        .onChange(value => { state.name = value; }));
+        .onChange(value => { context.name = value; }));
     nameSetting.settingEl.addClass('ani-credential-edit');
 
     const typeSetting = new Setting(containerEl).setName('Type');
@@ -329,7 +349,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const detailEl = containerEl.createDiv({ cls: 'ani-credential-add-details' });
     const renderDetails = () => {
       detailEl.empty();
-      this.renderCredentialAddDetails(detailEl, state);
+      this.renderCredentialAddDetails(detailEl, context);
     };
 
     typeSetting.addDropdown(dropdown => {
@@ -348,55 +368,63 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
   private renderCredentialAddDetails(
     containerEl: HTMLElement,
-    state: { name: string; key: string },
+    context: { name: string; state: CredentialFormState },
   ): void {
     const type = this.addingCredentialType;
-    const isAirtable = type === 'airtable';
 
-    if (isAirtable) {
-      const keySetting = new Setting(containerEl)
-        .setName('API Key')
-        .addText(text => {
-          text
-            .setValue(state.key)
-            .setPlaceholder('pat-xxx...')
-            .onChange(value => { state.key = value; });
-          text.inputEl.type = 'password';
-        });
-      keySetting.settingEl.addClass('ani-credential-edit');
-    } else {
+    if (!hasCredentialFormRenderer(type)) {
       const noticeSetting = new Setting(containerEl)
         .setName('Not yet supported')
         .setDesc(`${CREDENTIAL_TYPE_LABELS[type]} provider will be available in a future release.`);
       noticeSetting.settingEl.addClass('ani-credential-edit');
+
+      new Setting(containerEl)
+        .addButton(button => button.setButtonText('Save').setCta().setDisabled(true))
+        .addButton(button => button
+          .setButtonText('Cancel')
+          .onClick(() => {
+            this.addingCredential = false;
+            this.addingCredentialType = 'airtable';
+            this.display();
+          }));
+      return;
     }
+
+    const renderer = getCredentialFormRenderer(type);
+    if (renderer.description) {
+      containerEl.createEl('p', { cls: 'ani-credential-desc', text: renderer.description });
+    }
+    renderer.renderFields(containerEl, context.state);
 
     new Setting(containerEl)
       .addButton(button => {
         button
           .setButtonText('Save')
           .setCta()
-          .setDisabled(!isAirtable)
           .onClick(async () => {
-            if (!isAirtable) return;
-            if (!state.name.trim()) {
-              new Notice('Auto Note Importer: Credential name cannot be empty.');
+            const result = renderer.build(context.name, context.state, generateId());
+            if (!result.ok) {
+              new Notice(`Auto Note Importer: ${result.error}`);
               return;
             }
-            if (!state.key.trim()) {
-              new Notice('Auto Note Importer: API key cannot be empty.');
-              return;
-            }
-            this.plugin.settings.credentials.push({
-              id: generateId(),
-              name: state.name.trim(),
-              type: 'airtable',
-              apiKey: state.key.trim(),
-            });
+            this.plugin.settings.credentials.push(result.credential);
             await this.plugin.saveSettings();
             this.addingCredential = false;
             this.addingCredentialType = 'airtable';
             this.display();
+          });
+      })
+      .addButton(button => {
+        button
+          .setButtonText('Test')
+          .setDisabled(!renderer.testConnection)
+          .onClick(() => {
+            const result = renderer.build(context.name, context.state, 'test-only');
+            if (!result.ok) {
+              new Notice(`Auto Note Importer: ${result.error}`);
+              return;
+            }
+            this.runConnectionTest(renderer, result.credential);
           });
       })
       .addButton(button => button
@@ -406,6 +434,26 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           this.addingCredentialType = 'airtable';
           this.display();
         }));
+  }
+
+  private async runConnectionTest(
+    renderer: import('../types').CredentialFormRenderer,
+    credential: Credential,
+  ): Promise<void> {
+    if (!renderer.testConnection) return;
+    new Notice('Auto Note Importer: Testing connection\u2026');
+    try {
+      const result = await renderer.testConnection(credential);
+      if (result.success) {
+        const detail = result.detail ? ` ${result.detail}` : '';
+        new Notice(`Auto Note Importer: Connection OK.${detail}`);
+      } else {
+        new Notice(`Auto Note Importer: Connection failed \u2014 ${result.error}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Auto Note Importer: Connection test errored \u2014 ${message}`);
+    }
   }
 
   // ─── Tab Bar ───────────────────────────────────────────────────────

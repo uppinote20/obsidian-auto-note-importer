@@ -35,6 +35,13 @@ export type {
 } from './field-types.types';
 
 export type {
+  CredentialFormState,
+  CredentialBuildResult,
+  ConnectionTestResult,
+  CredentialFormRenderer,
+} from './provider-settings.types';
+
+export type {
   SharedServices,
   ConfigEntry,
 } from './config.types';
