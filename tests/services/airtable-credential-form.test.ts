@@ -124,7 +124,7 @@ describe('airtableCredentialFormRenderer', () => {
       expect(result.detail).toMatch(/3 base/);
     });
 
-    it('should include the bearer token in the Authorization header', async () => {
+    it('should include the bearer token and Accept header', async () => {
       mockRequestUrl.mockResolvedValueOnce({
         status: 200,
         json: { bases: [] },
@@ -137,7 +137,10 @@ describe('airtableCredentialFormRenderer', () => {
 
       const call = mockRequestUrl.mock.calls[0][0];
       expect(call.headers?.Authorization).toBe('Bearer pat-test-key');
+      expect(call.headers?.Accept).toBe('application/json');
+      expect(call.headers?.['Content-Type']).toBeUndefined();
       expect(call.url).toContain('/meta/bases');
+      expect(call.method).toBe('GET');
     });
 
     it('should report success with no-bases detail when auth is OK but empty', async () => {

@@ -18,7 +18,7 @@ import {
   getCredentialFormRenderer,
   hasCredentialFormRenderer,
 } from '../services';
-import type { CredentialFormState } from '../types';
+import type { CredentialFormState, CredentialFormRenderer } from '../types';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
@@ -316,7 +316,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               new Notice(`Auto Note Importer: ${result.error}`);
               return;
             }
-            this.runConnectionTest(renderer, result.credential);
+            void this.runConnectionTest(renderer, result.credential);
           });
       })
       .addButton(button => button
@@ -424,7 +424,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               new Notice(`Auto Note Importer: ${result.error}`);
               return;
             }
-            this.runConnectionTest(renderer, result.credential);
+            void this.runConnectionTest(renderer, result.credential);
           });
       })
       .addButton(button => button
@@ -437,7 +437,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private async runConnectionTest(
-    renderer: import('../types').CredentialFormRenderer,
+    renderer: CredentialFormRenderer,
     credential: Credential,
   ): Promise<void> {
     if (!renderer.testConnection) return;

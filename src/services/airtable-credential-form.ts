@@ -78,7 +78,7 @@ class AirtableCredentialFormRendererImpl implements CredentialFormRenderer {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${credential.apiKey}`,
-          'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
       });
       if (response.status !== 200) {
