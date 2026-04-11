@@ -164,7 +164,7 @@ export class ConfigInstance {
     this.rateLimiter.setDebugMode(this.shared.getDebugMode());
 
     // Propagate settings to all services
-    this.databaseProvider.reconfigure(credential, config, this.shared.getDebugMode());
+    this.databaseProvider.reconfigure(credential, config, this.rateLimiter, this.shared.getDebugMode());
     this.conflictResolver.updateSettings(this.settings);
     this.syncOrchestrator.updateSettings(this.settings);
 

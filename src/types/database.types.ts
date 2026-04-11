@@ -9,6 +9,7 @@
 
 import type { Credential, CredentialType } from './credential.types';
 import type { ConfigEntry } from './config.types';
+import type { RateLimiter } from '../services/rate-limiter';
 
 /**
  * A record fetched from a remote database, normalized across providers.
@@ -82,9 +83,18 @@ export interface DatabaseProvider {
   batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]>;
 
   /**
-   * Reconfigures the provider with new credential and config values.
+   * Reconfigures the provider with new credential, config, and rate limiter.
    * Called by ConfigInstance when settings change, keeping references
    * held by other services stable.
+   *
+   * The rate limiter may change when a config is reassigned to a different
+   * credential — providers must rebind to the new limiter so the per-credential
+   * sharing invariant in `SharedServices.rateLimiters` stays intact.
    */
-  reconfigure(credential: Credential, config: ConfigEntry, debugMode: boolean): void;
+  reconfigure(
+    credential: Credential,
+    config: ConfigEntry,
+    rateLimiter: RateLimiter,
+    debugMode: boolean,
+  ): void;
 }

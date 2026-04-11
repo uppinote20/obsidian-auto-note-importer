@@ -48,11 +48,16 @@ export class AirtableClient implements DatabaseProvider {
   }
 
   /**
-   * Reconfigures the provider with new credential and config values.
+   * Reconfigures the provider with new credential, config, and rate limiter.
    * ConfigInstance calls this instead of updateSettings so the provider
    * can narrow on its credential variant.
    */
-  reconfigure(credential: Credential, config: ConfigEntry, debugMode: boolean): void {
+  reconfigure(
+    credential: Credential,
+    config: ConfigEntry,
+    rateLimiter: RateLimiter,
+    debugMode: boolean,
+  ): void {
     if (credential.type !== 'airtable') {
       throw new Error(`AirtableClient cannot be reconfigured with a ${credential.type} credential`);
     }
@@ -61,6 +66,7 @@ export class AirtableClient implements DatabaseProvider {
       apiKey: credential.apiKey,
       debugMode,
     };
+    this.rateLimiter = rateLimiter;
   }
 
   /**

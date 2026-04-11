@@ -173,7 +173,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       const headerRow = thead.createEl('tr');
       headerRow.createEl('th', { text: 'Name' });
       headerRow.createEl('th', { text: 'Type' });
-      headerRow.createEl('th', { text: 'API Key' });
+      headerRow.createEl('th', { text: 'Auth' });
       headerRow.createEl('th', { text: 'Actions' });
 
       const tbody = table.createEl('tbody');
@@ -222,15 +222,18 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     row.createEl('td', { cls: 'ani-cred-type', text: this.credentialTypeLabel(cred.type) });
 
     const keyCell = row.createEl('td');
-    const displayKey = cred.type === 'airtable' ? cred.apiKey : '';
-    if (displayKey) {
-      keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(displayKey) });
+    if (cred.type === 'airtable') {
+      if (cred.apiKey) {
+        keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(cred.apiKey) });
+      } else {
+        const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set API key' });
+        setLink.addEventListener('click', () => {
+          this.editingCredentialId = cred.id;
+          this.display();
+        });
+      }
     } else {
-      const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set API key' });
-      setLink.addEventListener('click', () => {
-        this.editingCredentialId = cred.id;
-        this.display();
-      });
+      keyCell.createSpan({ cls: 'ani-cred-key-na', text: '\u2014' });
     }
 
     const actionsCell = row.createEl('td', { cls: 'ani-cred-actions' });

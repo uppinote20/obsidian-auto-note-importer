@@ -264,7 +264,7 @@ describe('AirtableClient', () => {
     it('should update settings from credential + config', async () => {
       mockRequestUrl.mockResolvedValue(mockResponse({ records: [] }));
 
-      client.reconfigure(createCredential(), createConfig(), false);
+      client.reconfigure(createCredential(), createConfig(), rateLimiter, false);
       await client.fetchNotes();
 
       const url = mockRequestUrl.mock.calls[0][0].url;
@@ -276,11 +276,26 @@ describe('AirtableClient', () => {
     it('should apply viewId from config', async () => {
       mockRequestUrl.mockResolvedValue(mockResponse({ records: [] }));
 
-      client.reconfigure(createCredential(), createConfig({ viewId: 'viwTest' }), false);
+      client.reconfigure(createCredential(), createConfig({ viewId: 'viwTest' }), rateLimiter, false);
       await client.fetchNotes();
 
       const url = mockRequestUrl.mock.calls[0][0].url;
       expect(url).toContain('view=viwTest');
+    });
+
+    it('should rebind to the new rate limiter', async () => {
+      mockRequestUrl.mockResolvedValue(mockResponse({ records: [] }));
+
+      const originalLimiter = rateLimiter;
+      const newLimiter = new RateLimiter(0);
+      const originalExecute = vi.spyOn(originalLimiter, 'execute');
+      const newExecute = vi.spyOn(newLimiter, 'execute');
+
+      client.reconfigure(createCredential(), createConfig(), newLimiter, false);
+      await client.fetchNotes();
+
+      expect(newExecute).toHaveBeenCalled();
+      expect(originalExecute).not.toHaveBeenCalled();
     });
 
     it('should throw when given a non-airtable credential', () => {
@@ -292,7 +307,7 @@ describe('AirtableClient', () => {
         serverUrl: 'https://cloud.seatable.io',
       };
 
-      expect(() => client.reconfigure(seatableCred, createConfig(), false)).toThrow(
+      expect(() => client.reconfigure(seatableCred, createConfig(), rateLimiter, false)).toThrow(
         /AirtableClient cannot be reconfigured with a seatable credential/,
       );
     });
