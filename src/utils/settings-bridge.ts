@@ -3,6 +3,7 @@
  * single-config settings shape still consumed by most services.
  *
  * @handbook 9.8-multi-config-architecture
+ * @tested tests/utils/settings-bridge.test.ts
  */
 
 import type { Credential, ConfigEntry, LegacySettings } from '../types';
