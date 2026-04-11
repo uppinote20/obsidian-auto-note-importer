@@ -24,26 +24,7 @@ import { RateLimiter, createProvider } from '../services';
 import { SyncQueue, ConflictResolver, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
 import { FileWatcher } from '../file-operations';
-
-/**
- * Merges a ConfigEntry with credential and debug info to produce
- * an object structurally compatible with LegacySettings.
- *
- * Non-Airtable credentials do not populate the legacy `apiKey` field;
- * their providers resolve auth from the credential directly.
- */
-function buildSettingsFromConfig(
-  config: ConfigEntry,
-  credential: Credential,
-  debugMode: boolean,
-): LegacySettings {
-  const apiKey = credential.type === 'airtable' ? credential.apiKey : '';
-  return {
-    ...config,
-    apiKey,
-    debugMode,
-  };
-}
+import { buildLegacySettings } from '../utils';
 
 /**
  * Manages the full service stack for a single configuration entry.
@@ -70,7 +51,7 @@ export class ConfigInstance {
     this.credentialId = credential.id;
     this.app = app;
     this.shared = shared;
-    this.settings = buildSettingsFromConfig(config, credential, shared.getDebugMode());
+    this.settings = buildLegacySettings(config, credential, shared.getDebugMode());
 
     // 1. Get or create RateLimiter (shared per credential)
     this.rateLimiter = this.getOrCreateRateLimiter(credential.id);
@@ -154,7 +135,7 @@ export class ConfigInstance {
    */
   updateSettings(config: ConfigEntry, credential: Credential): void {
     this.credentialId = credential.id;
-    this.settings = buildSettingsFromConfig(config, credential, this.shared.getDebugMode());
+    this.settings = buildLegacySettings(config, credential, this.shared.getDebugMode());
 
     // Update RateLimiter if credential changed
     const newRateLimiter = this.getOrCreateRateLimiter(credential.id);

@@ -8,12 +8,23 @@
  * @handbook 4.4-provider-abstraction
  */
 
-export type CredentialType =
-  | 'airtable'
-  | 'seatable'
-  | 'supabase'
-  | 'notion'
-  | 'custom-api';
+export const CREDENTIAL_TYPES = [
+  'airtable',
+  'seatable',
+  'supabase',
+  'notion',
+  'custom-api',
+] as const;
+
+export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
+
+export const CREDENTIAL_TYPE_LABELS: Record<CredentialType, string> = {
+  airtable: 'Airtable',
+  seatable: 'SeaTable',
+  supabase: 'Supabase',
+  notion: 'Notion',
+  'custom-api': 'Custom API',
+};
 
 interface BaseCredential {
   id: string;

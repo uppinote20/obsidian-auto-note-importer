@@ -2,18 +2,12 @@
  * Provider registry and factory for DatabaseProvider instances.
  *
  * Each CredentialType has an associated factory that constructs the
- * concrete provider. ConfigInstance delegates provider creation to the
- * registry based on the credential's type, decoupling service wiring
- * from specific providers.
+ * concrete provider. ConfigInstance looks up the factory by the
+ * credential's type, decoupling service wiring from specific providers.
  *
- * ## Registration pattern
- *
- * Built-in providers are registered as module side-effects at the bottom
- * of this file. Future providers (SeaTable, Supabase, Notion, Custom API)
- * should follow the same pattern and be imported here so their side-effects
- * fire when `provider-registry` is loaded. Avoid registering from the
- * client module itself — that would require plugin init to import every
- * client module explicitly just to trigger registration.
+ * Built-in factories register as module side-effects at the bottom of
+ * this file; future providers register here too so a single import
+ * wires them all up.
  *
  * @handbook 4.4-provider-abstraction
  * @tested tests/services/provider-registry.test.ts
@@ -24,8 +18,8 @@ import type {
   CredentialType,
   ConfigEntry,
   DatabaseProvider,
-  LegacySettings,
 } from '../types';
+import { buildLegacySettings } from '../utils';
 import type { RateLimiter } from './rate-limiter';
 import { AirtableClient } from './airtable-client';
 
@@ -76,13 +70,5 @@ export function hasProvider(type: CredentialType): boolean {
 // ─── Built-in provider registrations ─────────────────────────────────
 
 registerProvider('airtable', (credential, config, rateLimiter, debugMode) => {
-  if (credential.type !== 'airtable') {
-    throw new Error(`Airtable factory received ${credential.type} credential`);
-  }
-  const settings: LegacySettings = {
-    ...config,
-    apiKey: credential.apiKey,
-    debugMode,
-  };
-  return new AirtableClient(settings, rateLimiter);
+  return new AirtableClient(buildLegacySettings(config, credential, debugMode), rateLimiter);
 });

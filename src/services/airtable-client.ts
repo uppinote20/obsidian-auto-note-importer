@@ -1,8 +1,6 @@
 /**
  * Airtable API client service.
  *
- * First concrete implementation of the DatabaseProvider interface.
- *
  * @handbook 4.4-provider-abstraction
  * @handbook 6.1-error-handling
  * @handbook 9.6-api-patterns
@@ -24,6 +22,7 @@ import type {
   ConfigEntry,
   CredentialType,
 } from '../types';
+import { buildLegacySettings } from '../utils';
 import { RateLimiter } from './rate-limiter';
 
 const AIRTABLE_CAPABILITIES: ProviderCapabilities = {
@@ -49,8 +48,7 @@ export class AirtableClient implements DatabaseProvider {
 
   /**
    * Reconfigures the provider with new credential, config, and rate limiter.
-   * ConfigInstance calls this instead of updateSettings so the provider
-   * can narrow on its credential variant.
+   * Takes Credential directly so providers can narrow on their credential variant.
    */
   reconfigure(
     credential: Credential,
@@ -61,11 +59,7 @@ export class AirtableClient implements DatabaseProvider {
     if (credential.type !== 'airtable') {
       throw new Error(`AirtableClient cannot be reconfigured with a ${credential.type} credential`);
     }
-    this.settings = {
-      ...config,
-      apiKey: credential.apiKey,
-      debugMode,
-    };
+    this.settings = buildLegacySettings(config, credential, debugMode);
     this.rateLimiter = rateLimiter;
   }
 

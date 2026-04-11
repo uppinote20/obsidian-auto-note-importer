@@ -44,3 +44,4 @@ export type {
   NotionCredential,
   CustomApiCredential,
 } from './credential.types';
+export { CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from './credential.types';

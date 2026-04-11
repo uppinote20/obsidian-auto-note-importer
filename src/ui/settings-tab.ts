@@ -14,7 +14,7 @@ import type { ExtraButtonComponent, Plugin } from "obsidian";
 import { FieldCache } from '../services';
 import { isFieldTypeSupported } from '../constants';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
-import { DEFAULT_CONFIG_ENTRY } from '../types';
+import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
 import { validateFolderPath } from '../utils/validation';
@@ -201,16 +201,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
   }
 
-  private credentialTypeLabel(type: Credential['type']): string {
-    switch (type) {
-      case 'airtable': return 'Airtable';
-      case 'seatable': return 'SeaTable';
-      case 'supabase': return 'Supabase';
-      case 'notion': return 'Notion';
-      case 'custom-api': return 'Custom API';
-    }
-  }
-
   private maskApiKey(apiKey: string): string {
     if (apiKey.length <= 4) return apiKey ? '****' : '';
     return '\u2022\u2022\u2022\u2022' + apiKey.slice(-4);
@@ -219,7 +209,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private renderCredentialTableRow(tbody: HTMLElement, cred: Credential): void {
     const row = tbody.createEl('tr');
     row.createEl('td', { cls: 'ani-cred-name', text: cred.name });
-    row.createEl('td', { cls: 'ani-cred-type', text: this.credentialTypeLabel(cred.type) });
+    row.createEl('td', { cls: 'ani-cred-type', text: CREDENTIAL_TYPE_LABELS[cred.type] });
 
     const keyCell = row.createEl('td');
     if (cred.type === 'airtable') {
@@ -323,47 +313,62 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderCredentialAddRow(containerEl: HTMLElement): void {
-    let nameValue = '';
-    let keyValue = '';
-    const selectedType = this.addingCredentialType;
-    const isAirtable = selectedType === 'airtable';
+    // Name + Type persist across detail re-renders; key is type-specific
+    // and held in the same closure so it survives dropdown switches.
+    const state = { name: '', key: '' };
 
     const nameSetting = new Setting(containerEl)
       .setName('Name')
       .addText(text => text
         .setPlaceholder('e.g. Personal Airtable')
-        .onChange(value => { nameValue = value; }));
+        .onChange(value => { state.name = value; }));
     nameSetting.settingEl.addClass('ani-credential-edit');
 
-    const typeSetting = new Setting(containerEl)
-      .setName('Type')
-      .addDropdown(dropdown => {
-        const types: CredentialType[] = ['airtable', 'seatable', 'supabase', 'notion', 'custom-api'];
-        for (const t of types) {
-          dropdown.addOption(t, this.credentialTypeLabel(t));
-        }
-        dropdown.setValue(selectedType);
-        dropdown.onChange(value => {
-          this.addingCredentialType = value as CredentialType;
-          this.display();
-        });
-      });
+    const typeSetting = new Setting(containerEl).setName('Type');
     typeSetting.settingEl.addClass('ani-credential-edit');
+
+    const detailEl = containerEl.createDiv({ cls: 'ani-credential-add-details' });
+    const renderDetails = () => {
+      detailEl.empty();
+      this.renderCredentialAddDetails(detailEl, state);
+    };
+
+    typeSetting.addDropdown(dropdown => {
+      for (const t of CREDENTIAL_TYPES) {
+        dropdown.addOption(t, CREDENTIAL_TYPE_LABELS[t]);
+      }
+      dropdown.setValue(this.addingCredentialType);
+      dropdown.onChange(value => {
+        this.addingCredentialType = value as CredentialType;
+        renderDetails();
+      });
+    });
+
+    renderDetails();
+  }
+
+  private renderCredentialAddDetails(
+    containerEl: HTMLElement,
+    state: { name: string; key: string },
+  ): void {
+    const type = this.addingCredentialType;
+    const isAirtable = type === 'airtable';
 
     if (isAirtable) {
       const keySetting = new Setting(containerEl)
         .setName('API Key')
         .addText(text => {
           text
+            .setValue(state.key)
             .setPlaceholder('pat-xxx...')
-            .onChange(value => { keyValue = value; });
+            .onChange(value => { state.key = value; });
           text.inputEl.type = 'password';
         });
       keySetting.settingEl.addClass('ani-credential-edit');
     } else {
       const noticeSetting = new Setting(containerEl)
         .setName('Not yet supported')
-        .setDesc(`${this.credentialTypeLabel(selectedType)} provider will be available in a future release.`);
+        .setDesc(`${CREDENTIAL_TYPE_LABELS[type]} provider will be available in a future release.`);
       noticeSetting.settingEl.addClass('ani-credential-edit');
     }
 
@@ -375,21 +380,20 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .setDisabled(!isAirtable)
           .onClick(async () => {
             if (!isAirtable) return;
-            if (!nameValue.trim()) {
+            if (!state.name.trim()) {
               new Notice('Auto Note Importer: Credential name cannot be empty.');
               return;
             }
-            if (!keyValue.trim()) {
+            if (!state.key.trim()) {
               new Notice('Auto Note Importer: API key cannot be empty.');
               return;
             }
-            const newCred: Credential = {
+            this.plugin.settings.credentials.push({
               id: generateId(),
-              name: nameValue.trim(),
+              name: state.name.trim(),
               type: 'airtable',
-              apiKey: keyValue.trim(),
-            };
-            this.plugin.settings.credentials.push(newCred);
+              apiKey: state.key.trim(),
+            });
             await this.plugin.saveSettings();
             this.addingCredential = false;
             this.addingCredentialType = 'airtable';
