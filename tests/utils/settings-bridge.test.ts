@@ -151,14 +151,15 @@ describe('buildLegacySettings', () => {
       expect(JSON.stringify(config)).toBe(snapshot);
     });
 
-    it('should not leak credential fields other than apiKey into the result', () => {
+    it('should prefer config fields over credential fields with the same name', () => {
+      // Credential has id='cred-1', name='Secret Name'; config has id='cfg-1',
+      // name='Test Config'. LegacySettings inherits from ConfigEntry, so config
+      // values must win — credential id/name must not bleed through.
       const cred = createAirtableCredential({ name: 'Secret Name' });
       const result = buildLegacySettings(createConfig(), cred, false) as Record<string, unknown>;
 
-      // Only apiKey + debugMode are added on top of ConfigEntry; credential
-      // name/id must not appear in LegacySettings.
-      expect(result['id']).toBe('cfg-1');  // from ConfigEntry, not credential
-      expect(Object.keys(result)).not.toContain('credentialId' in result && 'apiToken');
+      expect(result['id']).toBe('cfg-1');
+      expect(result['name']).toBe('Test Config');
     });
   });
 });
