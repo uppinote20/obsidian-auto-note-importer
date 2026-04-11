@@ -5,8 +5,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AirtableClient } from '../../src/services/airtable-client';
-import type { LegacySettings } from '../../src/types';
-import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
+import type { LegacySettings, AirtableCredential, ConfigEntry, Credential } from '../../src/types';
+import { DEFAULT_LEGACY_SETTINGS, DEFAULT_CONFIG_ENTRY } from '../../src/types';
 import { AIRTABLE_BATCH_SIZE } from '../../src/constants';
 import { RateLimiter } from '../../src/services/rate-limiter';
 import { requestUrl } from 'obsidian';
@@ -236,6 +236,80 @@ describe('AirtableClient', () => {
       await client.fetchNotes();
       const secondUrl = mockRequestUrl.mock.calls[1][0].url;
       expect(secondUrl).toContain('appNew/tblNew');
+    });
+  });
+
+  describe('DatabaseProvider interface', () => {
+    it('should advertise airtable providerType', () => {
+      expect(client.providerType).toBe('airtable');
+    });
+
+    it('should advertise capabilities metadata', () => {
+      expect(client.capabilities).toEqual({
+        bidirectional: true,
+        hasComputedFields: true,
+        batchUpdateMaxSize: AIRTABLE_BATCH_SIZE,
+      });
+    });
+  });
+
+  describe('reconfigure', () => {
+    function createConfig(overrides: Partial<ConfigEntry> = {}): ConfigEntry {
+      return {
+        ...DEFAULT_CONFIG_ENTRY,
+        id: 'cfg-1',
+        name: 'Test Config',
+        credentialId: 'cred-1',
+        baseId: 'appReconfigured',
+        tableId: 'tblReconfigured',
+        ...overrides,
+      };
+    }
+
+    function createCredential(overrides: Partial<AirtableCredential> = {}): AirtableCredential {
+      return {
+        id: 'cred-1',
+        name: 'Test',
+        type: 'airtable',
+        apiKey: 'pat-reconfigured',
+        ...overrides,
+      };
+    }
+
+    it('should update settings from credential + config', async () => {
+      mockRequestUrl.mockResolvedValue(mockResponse({ records: [] }));
+
+      client.reconfigure(createCredential(), createConfig(), false);
+      await client.fetchNotes();
+
+      const url = mockRequestUrl.mock.calls[0][0].url;
+      const headers = mockRequestUrl.mock.calls[0][0].headers as Record<string, string>;
+      expect(url).toContain('appReconfigured/tblReconfigured');
+      expect(headers['Authorization']).toBe('Bearer pat-reconfigured');
+    });
+
+    it('should apply viewId from config', async () => {
+      mockRequestUrl.mockResolvedValue(mockResponse({ records: [] }));
+
+      client.reconfigure(createCredential(), createConfig({ viewId: 'viwTest' }), false);
+      await client.fetchNotes();
+
+      const url = mockRequestUrl.mock.calls[0][0].url;
+      expect(url).toContain('view=viwTest');
+    });
+
+    it('should throw when given a non-airtable credential', () => {
+      const seatableCred: Credential = {
+        id: 'cred-2',
+        name: 'SeaTable',
+        type: 'seatable',
+        apiToken: 'st-token',
+        serverUrl: 'https://cloud.seatable.io',
+      };
+
+      expect(() => client.reconfigure(seatableCred, createConfig(), false)).toThrow(
+        /AirtableClient cannot be reconfigured with a seatable credential/,
+      );
     });
   });
 });

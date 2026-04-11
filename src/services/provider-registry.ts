@@ -5,6 +5,8 @@
  * concrete provider. ConfigInstance delegates provider creation to the
  * registry based on the credential's type, decoupling service wiring
  * from specific providers.
+ *
+ * @tested tests/services/provider-registry.test.ts
  */
 
 import type {

@@ -749,6 +749,93 @@ async function setConfigAndQuery(overrides) {
       return { pass, detail: `tabs=${r.count} names=[${r.names.join(', ')}] addTab=${r.hasAddTab}` };
     });
 
+    // ════════════════════════════════════════════════════════════════
+    // Group 8: Credential Add Form (Provider Type)
+    // ════════════════════════════════════════════════════════════════
+
+    await test('credential / add form shows type dropdown with 5 providers', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        await openSettingsTab();
+        const c = getContainer();
+        const addBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent.includes('Add credential'));
+        if (!addBtn) return JSON.stringify({ error: 'no add button' });
+        addBtn.click();
+        await new Promise(r => setTimeout(r, 300));
+
+        const select = c.querySelector('.ani-credential-edit select');
+        const options = select ? Array.from(select.options).map(o => o.value) : [];
+
+        // Close add form
+        const cancelBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent === 'Cancel');
+        cancelBtn?.click();
+        await new Promise(r => setTimeout(r, 200));
+
+        return JSON.stringify({ hasDropdown: !!select, options });
+      })()`, 10000);
+      const expected = ['airtable', 'seatable', 'supabase', 'notion', 'custom-api'];
+      const pass = r.hasDropdown && expected.every(t => r.options.includes(t)) && r.options.length === 5;
+      return { pass, detail: `dropdown=${r.hasDropdown} options=[${(r.options || []).join(',')}]` };
+    });
+
+    await test('credential / airtable type shows API Key field and enabled Save', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        await openSettingsTab();
+        const c = getContainer();
+        const addBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent.includes('Add credential'));
+        addBtn?.click();
+        await new Promise(r => setTimeout(r, 300));
+
+        const fields = Array.from(c.querySelectorAll('.ani-credential-edit')).map(el =>
+          el.querySelector('.setting-item-name')?.textContent || ''
+        );
+        const saveBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent === 'Save');
+        const saveDisabled = !!saveBtn?.disabled;
+
+        const cancelBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent === 'Cancel');
+        cancelBtn?.click();
+        await new Promise(r => setTimeout(r, 200));
+
+        return JSON.stringify({ fields, saveDisabled });
+      })()`, 10000);
+      const pass = r.fields.includes('Name') && r.fields.includes('Type') && r.fields.includes('API Key') && !r.saveDisabled;
+      return { pass, detail: `fields=[${r.fields.join(',')}] saveDisabled=${r.saveDisabled}` };
+    });
+
+    await test('credential / non-airtable type shows Not yet supported and disabled Save', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        await openSettingsTab();
+        const c = getContainer();
+        const addBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent.includes('Add credential'));
+        addBtn?.click();
+        await new Promise(r => setTimeout(r, 300));
+
+        const select = c.querySelector('.ani-credential-edit select');
+        select.value = 'seatable';
+        select.dispatchEvent(new Event('change'));
+        await new Promise(r => setTimeout(r, 400));
+
+        const c2 = getContainer();
+        const fields = Array.from(c2.querySelectorAll('.ani-credential-edit')).map(el =>
+          el.querySelector('.setting-item-name')?.textContent || ''
+        );
+        const hasNotSupported = fields.includes('Not yet supported');
+        const hasApiKey = fields.includes('API Key');
+        const saveBtn = Array.from(c2.querySelectorAll('button')).find(b => b.textContent === 'Save');
+        const saveDisabled = !!saveBtn?.disabled;
+
+        const cancelBtn = Array.from(c2.querySelectorAll('button')).find(b => b.textContent === 'Cancel');
+        cancelBtn?.click();
+        await new Promise(r => setTimeout(r, 200));
+
+        return JSON.stringify({ hasNotSupported, hasApiKey, saveDisabled });
+      })()`, 10000);
+      const pass = r.hasNotSupported && !r.hasApiKey && r.saveDisabled;
+      return { pass, detail: `notSupported=${r.hasNotSupported} apiKey=${r.hasApiKey} saveDisabled=${r.saveDisabled}` };
+    });
+
     await test('edge / debug toggle reflects global debugMode', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
