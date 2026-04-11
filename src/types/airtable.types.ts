@@ -1,5 +1,7 @@
 /**
- * Airtable-related type definitions.
+ * Airtable-specific metadata type definitions.
+ * Provider-agnostic record/sync types live in database.types.ts.
+ *
  * @handbook 2.1-naming-rules
  */
 
@@ -36,39 +38,4 @@ export interface AirtableView {
   id: string;
   name: string;
   type: string;
-}
-
-/**
- * Represents a note fetched from Airtable.
- */
-export interface RemoteNote {
-  id: string;
-  primaryField: string;
-  fields: Record<string, unknown>;
-}
-
-/**
- * Result of a sync operation (discriminated union on `success`).
- */
-export type SyncResult =
-  | { success: true; recordId: string; updatedFields: Record<string, unknown> }
-  | { success: false; recordId: string; error: string };
-
-/**
- * Information about a field conflict between Obsidian and Airtable.
- */
-export interface ConflictInfo {
-  field: string;
-  obsidianValue: unknown;
-  airtableValue: unknown;
-  recordId: string;
-  filePath: string;
-}
-
-/**
- * Batch update request structure.
- */
-export interface BatchUpdate {
-  recordId: string;
-  fields: Record<string, unknown>;
 }

@@ -12,10 +12,6 @@ export type {
   AirtableBase,
   AirtableTable,
   AirtableView,
-  RemoteNote,
-  SyncResult,
-  ConflictInfo,
-  BatchUpdate,
 } from './airtable.types';
 
 export type {
@@ -24,7 +20,14 @@ export type {
   NoteCreationResult,
 } from './sync.types';
 
-export type { DatabaseClient } from './database.types';
+export type {
+  RemoteNote,
+  SyncResult,
+  ConflictInfo,
+  BatchUpdate,
+  ProviderCapabilities,
+  DatabaseProvider,
+} from './database.types';
 
 export type {
   SharedServices,
@@ -35,4 +38,10 @@ export { DEFAULT_CONFIG_ENTRY } from './config.types';
 export type {
   CredentialType,
   Credential,
+  AirtableCredential,
+  SeaTableCredential,
+  SupabaseCredential,
+  NotionCredential,
+  CustomApiCredential,
 } from './credential.types';
+export { CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from './credential.types';

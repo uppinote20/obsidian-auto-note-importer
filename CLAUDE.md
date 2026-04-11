@@ -49,7 +49,9 @@ src/
 
 ### Key Classes
 
-- **`AirtableClient`** - Airtable API operations with rate limiting
+- **`DatabaseProvider`** - Provider-agnostic interface for remote databases (see handbook §4.4)
+- **`AirtableClient`** - First concrete `DatabaseProvider` impl; Airtable REST API with rate limiting
+- **`ProviderRegistry`** - Credential-type → provider factory lookup (`createProvider()`)
 - **`SyncQueue`** - Prevents concurrent syncs, merges duplicate requests
 - **`FileWatcher`** - Detects file changes, triggers sync with debounce
 - **`FrontmatterParser`** - Extracts/filters fields from YAML frontmatter
@@ -57,9 +59,9 @@ src/
 
 ### Sync Flow
 
-1. **From Airtable**: `AirtableClient.fetchNotes()` → `createNoteFromRemote()` → writes `.md` with `primaryField`
-2. **To Airtable**: `FileWatcher` detects changes → `SyncQueue.enqueue()` → `AirtableClient.batchUpdate()`
-3. **Bidirectional**: Push to Airtable → wait for formula computation → pull back computed values
+1. **From remote**: `DatabaseProvider.fetchNotes()` → `createNoteFromRemote()` → writes `.md` with `primaryField`
+2. **To remote**: `FileWatcher` detects changes → `SyncQueue.enqueue()` → `DatabaseProvider.batchUpdate()`
+3. **Bidirectional**: Push to remote → wait for server-side computation → pull back computed values
 
 ### Key Design Decisions
 
@@ -100,6 +102,7 @@ Code ↔ Docs 양방향 링크 시스템:
 | Import order | 2.2 |
 | Module structure | 4.1 |
 | Sync architecture | 4.2 |
+| Provider abstraction | 4.4 |
 | StatusBar abstraction | 5.3 |
 | Error handling | 6.1 |
 | State management | 6.2 |

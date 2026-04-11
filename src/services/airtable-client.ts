@@ -1,6 +1,7 @@
 /**
  * Airtable API client service.
  *
+ * @handbook 4.4-provider-abstraction
  * @handbook 6.1-error-handling
  * @handbook 9.6-api-patterns
  * @tested tests/services/airtable-client.test.ts
@@ -10,13 +11,33 @@
 
 import { requestUrl } from "obsidian";
 import { AIRTABLE_API_BASE_URL, AIRTABLE_BATCH_SIZE } from '../constants';
-import type { LegacySettings, RemoteNote, SyncResult, BatchUpdate, DatabaseClient } from '../types';
+import type {
+  LegacySettings,
+  RemoteNote,
+  SyncResult,
+  BatchUpdate,
+  DatabaseProvider,
+  ProviderCapabilities,
+  Credential,
+  ConfigEntry,
+  CredentialType,
+} from '../types';
+import { buildLegacySettings } from '../utils';
 import { RateLimiter } from './rate-limiter';
+
+const AIRTABLE_CAPABILITIES: ProviderCapabilities = {
+  bidirectional: true,
+  hasComputedFields: true,
+  batchUpdateMaxSize: AIRTABLE_BATCH_SIZE,
+};
 
 /**
  * Client for interacting with the Airtable API.
  */
-export class AirtableClient implements DatabaseClient {
+export class AirtableClient implements DatabaseProvider {
+  readonly providerType: CredentialType = 'airtable';
+  readonly capabilities: ProviderCapabilities = AIRTABLE_CAPABILITIES;
+
   private settings: LegacySettings;
   private rateLimiter: RateLimiter;
 
@@ -26,10 +47,20 @@ export class AirtableClient implements DatabaseClient {
   }
 
   /**
-   * Updates the settings reference.
+   * Reconfigures the provider with new credential, config, and rate limiter.
+   * Takes Credential directly so providers can narrow on their credential variant.
    */
-  updateSettings(settings: LegacySettings): void {
-    this.settings = settings;
+  reconfigure(
+    credential: Credential,
+    config: ConfigEntry,
+    rateLimiter: RateLimiter,
+    debugMode: boolean,
+  ): void {
+    if (credential.type !== 'airtable') {
+      throw new Error(`AirtableClient cannot be reconfigured with a ${credential.type} credential`);
+    }
+    this.settings = buildLegacySettings(config, credential, debugMode);
+    this.rateLimiter = rateLimiter;
   }
 
   /**

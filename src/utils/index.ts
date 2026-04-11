@@ -15,3 +15,5 @@ export {
   areValuesEqual,
   generateId,
 } from './object-utils';
+
+export { buildLegacySettings } from './settings-bridge';
