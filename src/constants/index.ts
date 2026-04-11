@@ -1,15 +1,4 @@
 export {
-  SUPPORTED_FIELD_TYPES,
-  READ_ONLY_FIELD_TYPES,
-  isFieldTypeSupported,
-  isReadOnlyFieldType,
-} from './field-types';
-export type {
-  SupportedFieldType,
-  ReadOnlyFieldType,
-} from './field-types';
-
-export {
   SYSTEM_FIELDS,
   isSystemField,
 } from './system-fields';

@@ -18,10 +18,12 @@ import type {
   CredentialType,
   ConfigEntry,
   DatabaseProvider,
+  FieldTypeMapper,
 } from '../types';
 import { buildLegacySettings } from '../utils';
 import type { RateLimiter } from './rate-limiter';
 import { AirtableClient } from './airtable-client';
+import { airtableFieldMapper } from './airtable-field-mapper';
 
 /**
  * Factory signature for creating a provider instance.
@@ -34,6 +36,7 @@ export type ProviderFactory = (
 ) => DatabaseProvider;
 
 const factories = new Map<CredentialType, ProviderFactory>();
+const fieldTypeMappers = new Map<CredentialType, FieldTypeMapper>();
 
 /**
  * Registers a factory for a given credential type. Overwrites any
@@ -41,6 +44,34 @@ const factories = new Map<CredentialType, ProviderFactory>();
  */
 export function registerProvider(type: CredentialType, factory: ProviderFactory): void {
   factories.set(type, factory);
+}
+
+/**
+ * Registers a field type mapper for a given credential type.
+ * Callers without a provider instance (e.g. settings UI) look up
+ * the mapper here by credential type.
+ */
+export function registerFieldTypeMapper(type: CredentialType, mapper: FieldTypeMapper): void {
+  fieldTypeMappers.set(type, mapper);
+}
+
+/**
+ * Returns the field type mapper registered for the given credential type.
+ * Throws if no mapper is registered.
+ */
+export function getFieldTypeMapper(type: CredentialType): FieldTypeMapper {
+  const mapper = fieldTypeMappers.get(type);
+  if (!mapper) {
+    throw new Error(`No field type mapper registered for credential type: ${type}`);
+  }
+  return mapper;
+}
+
+/**
+ * Returns true if a field type mapper is registered for the given type.
+ */
+export function hasFieldTypeMapper(type: CredentialType): boolean {
+  return fieldTypeMappers.has(type);
 }
 
 /**
@@ -72,3 +103,5 @@ export function hasProvider(type: CredentialType): boolean {
 registerProvider('airtable', (credential, config, rateLimiter, debugMode) => {
   return new AirtableClient(buildLegacySettings(config, credential, debugMode), rateLimiter);
 });
+
+registerFieldTypeMapper('airtable', airtableFieldMapper);

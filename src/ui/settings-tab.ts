@@ -11,8 +11,7 @@
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
 import type { ExtraButtonComponent, Plugin } from "obsidian";
-import { FieldCache } from '../services';
-import { isFieldTypeSupported } from '../constants';
+import { FieldCache, getFieldTypeMapper } from '../services';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
@@ -830,7 +829,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             config.tableId
           );
 
-          const supportedFields = fields.filter(field => isFieldTypeSupported(field.type));
+          const mapper = getFieldTypeMapper(credential.type);
+          const supportedFields = fields.filter(field => mapper.isFilenameSafe(field.type));
           const unsupportedCount = fields.length - supportedFields.length;
 
           for (const field of supportedFields) {

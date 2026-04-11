@@ -40,19 +40,28 @@ describe('provider-registry', () => {
   let registerProvider: typeof import('../../src/services/provider-registry').registerProvider;
   let createProvider: typeof import('../../src/services/provider-registry').createProvider;
   let hasProvider: typeof import('../../src/services/provider-registry').hasProvider;
+  let registerFieldTypeMapper: typeof import('../../src/services/provider-registry').registerFieldTypeMapper;
+  let getFieldTypeMapper: typeof import('../../src/services/provider-registry').getFieldTypeMapper;
+  let hasFieldTypeMapper: typeof import('../../src/services/provider-registry').hasFieldTypeMapper;
   let RateLimiter: typeof import('../../src/services/rate-limiter').RateLimiter;
   let AirtableClient: typeof import('../../src/services/airtable-client').AirtableClient;
+  let airtableFieldMapper: typeof import('../../src/services/airtable-field-mapper').airtableFieldMapper;
 
   beforeEach(async () => {
     vi.resetModules();
     const registry = await import('../../src/services/provider-registry');
     const rl = await import('../../src/services/rate-limiter');
     const ac = await import('../../src/services/airtable-client');
+    const afm = await import('../../src/services/airtable-field-mapper');
     registerProvider = registry.registerProvider;
     createProvider = registry.createProvider;
     hasProvider = registry.hasProvider;
+    registerFieldTypeMapper = registry.registerFieldTypeMapper;
+    getFieldTypeMapper = registry.getFieldTypeMapper;
+    hasFieldTypeMapper = registry.hasFieldTypeMapper;
     RateLimiter = rl.RateLimiter;
     AirtableClient = ac.AirtableClient;
+    airtableFieldMapper = afm.airtableFieldMapper;
   });
 
   describe('built-in registrations', () => {
@@ -65,6 +74,36 @@ describe('provider-registry', () => {
       expect(hasProvider('supabase')).toBe(false);
       expect(hasProvider('notion')).toBe(false);
       expect(hasProvider('custom-api')).toBe(false);
+    });
+
+    it('should register airtable field type mapper on module load', () => {
+      expect(hasFieldTypeMapper('airtable')).toBe(true);
+      expect(getFieldTypeMapper('airtable')).toBe(airtableFieldMapper);
+    });
+
+    it('should not register non-airtable field type mappers by default', () => {
+      expect(hasFieldTypeMapper('seatable')).toBe(false);
+      expect(hasFieldTypeMapper('supabase')).toBe(false);
+    });
+  });
+
+  describe('getFieldTypeMapper', () => {
+    it('should throw when no mapper is registered for credential type', () => {
+      expect(() => getFieldTypeMapper('notion')).toThrow(
+        /No field type mapper registered for credential type: notion/,
+      );
+    });
+
+    it('should return the mapper registered via registerFieldTypeMapper', () => {
+      const fake = {
+        mapToStandardType: () => 'text' as const,
+        isReadOnly: () => false,
+        isFilenameSafe: () => true,
+        getFilenameSafeTypes: () => [],
+        getReadOnlyTypes: () => [],
+      };
+      registerFieldTypeMapper('seatable', fake);
+      expect(getFieldTypeMapper('seatable')).toBe(fake);
     });
   });
 

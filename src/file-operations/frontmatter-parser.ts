@@ -7,9 +7,9 @@
 
 import type { App } from "obsidian";
 import { TFile, TFolder } from "obsidian";
-import { MAX_FOLDER_DEPTH, isSystemField, isReadOnlyFieldType } from '../constants';
+import { MAX_FOLDER_DEPTH, isSystemField } from '../constants';
 import { formatYamlValue } from '../utils';
-import type { AirtableField } from '../types';
+import type { AirtableField, FieldTypeMapper } from '../types';
 
 /**
  * Handles frontmatter parsing, extraction, and injection.
@@ -38,6 +38,7 @@ export class FrontmatterParser {
    */
   extractSyncableFields(
     file: TFile,
+    fieldTypeMapper: FieldTypeMapper,
     cachedFields?: AirtableField[]
   ): Record<string, unknown> | null {
     const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
@@ -58,10 +59,11 @@ export class FrontmatterParser {
         continue;
       }
 
-      // When field metadata is available, only sync fields that exist in Airtable and are writable
+      // When field metadata is available, only sync fields that exist remotely
+      // and are writable (provider decides via its FieldTypeMapper)
       if (cachedFields) {
         const fieldInfo = cachedFields.find(f => f.name === key);
-        if (!fieldInfo || isReadOnlyFieldType(fieldInfo.type)) {
+        if (!fieldInfo || fieldTypeMapper.isReadOnly(fieldInfo.type)) {
           continue;
         }
       }

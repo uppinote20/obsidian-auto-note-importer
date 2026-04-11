@@ -18,11 +18,13 @@ import type {
   BatchUpdate,
   DatabaseProvider,
   ProviderCapabilities,
+  FieldTypeMapper,
   Credential,
   ConfigEntry,
   CredentialType,
 } from '../types';
 import { buildLegacySettings } from '../utils';
+import { airtableFieldMapper } from './airtable-field-mapper';
 import { RateLimiter } from './rate-limiter';
 
 const AIRTABLE_CAPABILITIES: ProviderCapabilities = {
@@ -37,6 +39,7 @@ const AIRTABLE_CAPABILITIES: ProviderCapabilities = {
 export class AirtableClient implements DatabaseProvider {
   readonly providerType: CredentialType = 'airtable';
   readonly capabilities: ProviderCapabilities = AIRTABLE_CAPABILITIES;
+  readonly fieldTypeMapper: FieldTypeMapper = airtableFieldMapper;
 
   private settings: LegacySettings;
   private rateLimiter: RateLimiter;
