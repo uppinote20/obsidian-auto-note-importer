@@ -31,7 +31,6 @@ export type {
 
 export type {
   StandardFieldType,
-  FieldTypeInfo,
   FieldTypeMapper,
 } from './field-types.types';
 

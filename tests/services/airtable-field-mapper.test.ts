@@ -55,6 +55,9 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.mapToStandardType('rollup')).toBe('computed');
       expect(airtableFieldMapper.mapToStandardType('count')).toBe('computed');
       expect(airtableFieldMapper.mapToStandardType('lookup')).toBe('computed');
+      expect(airtableFieldMapper.mapToStandardType('externalSyncSource')).toBe('computed');
+      expect(airtableFieldMapper.mapToStandardType('aiText')).toBe('computed');
+      expect(airtableFieldMapper.mapToStandardType('button')).toBe('computed');
     });
 
     it('should map system metadata to "system"', () => {
@@ -77,6 +80,9 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.isReadOnly('rollup')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('count')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('lookup')).toBe(true);
+      expect(airtableFieldMapper.isReadOnly('externalSyncSource')).toBe(true);
+      expect(airtableFieldMapper.isReadOnly('aiText')).toBe(true);
+      expect(airtableFieldMapper.isReadOnly('button')).toBe(true);
     });
 
     it('should return true for system metadata types', () => {
@@ -98,9 +104,13 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.isReadOnly('multipleAttachments')).toBe(false);
     });
 
-    it('should return false for unknown types', () => {
-      expect(airtableFieldMapper.isReadOnly('bogusType')).toBe(false);
-      expect(airtableFieldMapper.isReadOnly('')).toBe(false);
+    it('should fail closed: treat unknown types as read-only', () => {
+      // Airtable introduces new field types periodically. Defaulting unknown
+      // types to read-only prevents silent 422 failures when pushing to fields
+      // the mapper hasn't been taught about yet.
+      expect(airtableFieldMapper.isReadOnly('bogusType')).toBe(true);
+      expect(airtableFieldMapper.isReadOnly('')).toBe(true);
+      expect(airtableFieldMapper.isReadOnly('someNewAirtableType')).toBe(true);
     });
   });
 
@@ -146,14 +156,15 @@ describe('airtableFieldMapper', () => {
   });
 
   describe('getReadOnlyTypes', () => {
-    it('should return exactly the 9 read-only types', () => {
+    it('should return all 12 read-only types (9 legacy + 3 newer)', () => {
       const types = airtableFieldMapper.getReadOnlyTypes();
-      expect(types).toHaveLength(9);
+      expect(types).toHaveLength(12);
       expect(types).toEqual(expect.arrayContaining([
         'formula', 'rollup', 'count', 'lookup',
         'createdTime', 'lastModifiedTime',
         'createdBy', 'lastModifiedBy',
         'autoNumber',
+        'externalSyncSource', 'aiText', 'button',
       ]));
     });
 

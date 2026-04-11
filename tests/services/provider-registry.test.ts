@@ -122,6 +122,17 @@ describe('provider-registry', () => {
       expect(provider.capabilities.batchUpdateMaxSize).toBe(10);
     });
 
+    it('should expose the same fieldTypeMapper from provider instance and registry', () => {
+      // Ensures the dual access paths stay in sync: sync-orchestrator uses
+      // provider.fieldTypeMapper while settings-tab uses getFieldTypeMapper
+      // by credential type. A new provider registered without a mapper would
+      // silently diverge these paths.
+      const credential = createAirtableCredential();
+      const provider = createProvider(credential, createConfig(), new RateLimiter(0), false);
+      expect(provider.fieldTypeMapper).toBe(getFieldTypeMapper(credential.type));
+      expect(provider.fieldTypeMapper).toBe(airtableFieldMapper);
+    });
+
     it('should throw when no factory is registered for credential type', () => {
       const credential: Credential = {
         id: 'cred-2',

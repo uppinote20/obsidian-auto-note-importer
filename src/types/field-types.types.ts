@@ -38,20 +38,6 @@ export type StandardFieldType =
   | 'unknown';
 
 /**
- * Metadata describing a provider-specific field type.
- */
-export interface FieldTypeInfo {
-  /** Provider-native type string (e.g. `singleLineText`, `rich_text`). */
-  providerType: string;
-  /** Normalized taxonomy entry this type maps to. */
-  standardType: StandardFieldType;
-  /** True if the plugin can write this type back to the remote. */
-  writable: boolean;
-  /** True if the type produces values safe for use as a filename / subfolder. */
-  filenameSafe: boolean;
-}
-
-/**
  * Per-provider field type mapper. Stateless singleton.
  *
  * Providers register their mapper via `provider-registry.ts` so

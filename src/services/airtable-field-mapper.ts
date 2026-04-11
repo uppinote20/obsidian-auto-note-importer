@@ -29,6 +29,9 @@ const READ_ONLY_TYPES = [
   'createdBy',
   'lastModifiedBy',
   'autoNumber',
+  'externalSyncSource',
+  'aiText',
+  'button',
 ] as const;
 
 const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
@@ -65,6 +68,9 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   rollup: 'computed',
   count: 'computed',
   lookup: 'computed',
+  externalSyncSource: 'computed',
+  aiText: 'computed',
+  button: 'computed',
   // system (read-only metadata)
   createdTime: 'system',
   lastModifiedTime: 'system',
@@ -82,7 +88,14 @@ class AirtableFieldMapperImpl implements FieldTypeMapper {
     return TYPE_TO_STANDARD[providerType] ?? 'unknown';
   }
 
+  /**
+   * Fail-closed: unknown types are treated as read-only so the plugin
+   * never silently attempts to write a field the Airtable API will reject.
+   * Airtable occasionally introduces new types (e.g. aiText, button) and
+   * we'd rather skip the push than 422 the whole batch.
+   */
   isReadOnly(providerType: string): boolean {
+    if (!(providerType in TYPE_TO_STANDARD)) return true;
     return (READ_ONLY_TYPES as readonly string[]).includes(providerType);
   }
 
