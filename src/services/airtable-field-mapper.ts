@@ -12,6 +12,9 @@
 
 import type { FieldTypeMapper, StandardFieldType } from '../types';
 
+// Intentional overlap with READ_ONLY_TYPES: `formula` is read-only (its
+// value is server-computed) but still safe to use as a filename source
+// because the computed value is stable and typically text-like.
 const FILENAME_SAFE_TYPES = [
   'singleLineText',
   'singleSelect',
