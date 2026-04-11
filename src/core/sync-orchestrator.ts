@@ -387,7 +387,11 @@ export class SyncOrchestrator {
         continue;
       }
 
-      const fields = this.frontmatterParser.extractSyncableFields(file, cachedFields);
+      const fields = this.frontmatterParser.extractSyncableFields(
+        file,
+        this.provider.fieldTypeMapper,
+        cachedFields,
+      );
       if (!fields) continue;
 
       if (!skipConflictDetection) {

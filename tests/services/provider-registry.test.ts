@@ -40,19 +40,28 @@ describe('provider-registry', () => {
   let registerProvider: typeof import('../../src/services/provider-registry').registerProvider;
   let createProvider: typeof import('../../src/services/provider-registry').createProvider;
   let hasProvider: typeof import('../../src/services/provider-registry').hasProvider;
+  let registerFieldTypeMapper: typeof import('../../src/services/provider-registry').registerFieldTypeMapper;
+  let getFieldTypeMapper: typeof import('../../src/services/provider-registry').getFieldTypeMapper;
+  let hasFieldTypeMapper: typeof import('../../src/services/provider-registry').hasFieldTypeMapper;
   let RateLimiter: typeof import('../../src/services/rate-limiter').RateLimiter;
   let AirtableClient: typeof import('../../src/services/airtable-client').AirtableClient;
+  let airtableFieldMapper: typeof import('../../src/services/airtable-field-mapper').airtableFieldMapper;
 
   beforeEach(async () => {
     vi.resetModules();
     const registry = await import('../../src/services/provider-registry');
     const rl = await import('../../src/services/rate-limiter');
     const ac = await import('../../src/services/airtable-client');
+    const afm = await import('../../src/services/airtable-field-mapper');
     registerProvider = registry.registerProvider;
     createProvider = registry.createProvider;
     hasProvider = registry.hasProvider;
+    registerFieldTypeMapper = registry.registerFieldTypeMapper;
+    getFieldTypeMapper = registry.getFieldTypeMapper;
+    hasFieldTypeMapper = registry.hasFieldTypeMapper;
     RateLimiter = rl.RateLimiter;
     AirtableClient = ac.AirtableClient;
+    airtableFieldMapper = afm.airtableFieldMapper;
   });
 
   describe('built-in registrations', () => {
@@ -65,6 +74,36 @@ describe('provider-registry', () => {
       expect(hasProvider('supabase')).toBe(false);
       expect(hasProvider('notion')).toBe(false);
       expect(hasProvider('custom-api')).toBe(false);
+    });
+
+    it('should register airtable field type mapper on module load', () => {
+      expect(hasFieldTypeMapper('airtable')).toBe(true);
+      expect(getFieldTypeMapper('airtable')).toBe(airtableFieldMapper);
+    });
+
+    it('should not register non-airtable field type mappers by default', () => {
+      expect(hasFieldTypeMapper('seatable')).toBe(false);
+      expect(hasFieldTypeMapper('supabase')).toBe(false);
+    });
+  });
+
+  describe('getFieldTypeMapper', () => {
+    it('should throw when no mapper is registered for credential type', () => {
+      expect(() => getFieldTypeMapper('notion')).toThrow(
+        /No field type mapper registered for credential type: notion/,
+      );
+    });
+
+    it('should return the mapper registered via registerFieldTypeMapper', () => {
+      const fake = {
+        mapToStandardType: () => 'text' as const,
+        isReadOnly: () => false,
+        isFilenameSafe: () => true,
+        getFilenameSafeTypes: () => [],
+        getReadOnlyTypes: () => [],
+      };
+      registerFieldTypeMapper('seatable', fake);
+      expect(getFieldTypeMapper('seatable')).toBe(fake);
     });
   });
 
@@ -81,6 +120,17 @@ describe('provider-registry', () => {
       expect(provider.capabilities.bidirectional).toBe(true);
       expect(provider.capabilities.hasComputedFields).toBe(true);
       expect(provider.capabilities.batchUpdateMaxSize).toBe(10);
+    });
+
+    it('should expose the same fieldTypeMapper from provider instance and registry', () => {
+      // Ensures the dual access paths stay in sync: sync-orchestrator uses
+      // provider.fieldTypeMapper while settings-tab uses getFieldTypeMapper
+      // by credential type. A new provider registered without a mapper would
+      // silently diverge these paths.
+      const credential = createAirtableCredential();
+      const provider = createProvider(credential, createConfig(), new RateLimiter(0), false);
+      expect(provider.fieldTypeMapper).toBe(getFieldTypeMapper(credential.type));
+      expect(provider.fieldTypeMapper).toBe(airtableFieldMapper);
     });
 
     it('should throw when no factory is registered for credential type', () => {

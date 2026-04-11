@@ -3,11 +3,12 @@
  */
 
 import { vi } from 'vitest';
-import type { DatabaseProvider, SyncResult } from '../../src/types';
+import type { DatabaseProvider, SyncResult, FieldTypeMapper } from '../../src/types';
 
 export type MockDatabaseProvider = {
   providerType: 'airtable';
   capabilities: DatabaseProvider['capabilities'];
+  fieldTypeMapper: FieldTypeMapper;
   fetchNotes: ReturnType<typeof vi.fn>;
   fetchRecord: ReturnType<typeof vi.fn>;
   updateRecord: ReturnType<typeof vi.fn>;
@@ -15,7 +16,17 @@ export type MockDatabaseProvider = {
   reconfigure: ReturnType<typeof vi.fn>;
 };
 
-export function createMockDatabaseProvider(): MockDatabaseProvider {
+const NOOP_MAPPER: FieldTypeMapper = {
+  mapToStandardType: () => 'unknown',
+  isReadOnly: () => false,
+  isFilenameSafe: () => true,
+  getFilenameSafeTypes: () => [],
+  getReadOnlyTypes: () => [],
+};
+
+export function createMockDatabaseProvider(
+  overrides: Partial<MockDatabaseProvider> = {},
+): MockDatabaseProvider {
   return {
     providerType: 'airtable',
     capabilities: {
@@ -23,6 +34,7 @@ export function createMockDatabaseProvider(): MockDatabaseProvider {
       hasComputedFields: true,
       batchUpdateMaxSize: 10,
     },
+    fieldTypeMapper: NOOP_MAPPER,
     fetchNotes: vi.fn().mockResolvedValue([]),
     fetchRecord: vi.fn().mockResolvedValue(null),
     updateRecord: vi.fn().mockResolvedValue({
@@ -32,5 +44,6 @@ export function createMockDatabaseProvider(): MockDatabaseProvider {
     } as SyncResult),
     batchUpdate: vi.fn().mockResolvedValue([]),
     reconfigure: vi.fn(),
+    ...overrides,
   };
 }

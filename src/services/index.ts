@@ -5,5 +5,9 @@ export {
   registerProvider,
   createProvider,
   hasProvider,
+  registerFieldTypeMapper,
+  getFieldTypeMapper,
+  hasFieldTypeMapper,
 } from './provider-registry';
 export type { ProviderFactory } from './provider-registry';
+export { airtableFieldMapper } from './airtable-field-mapper';

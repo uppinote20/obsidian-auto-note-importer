@@ -15,6 +15,7 @@ vi.mock('obsidian', () => ({
 }));
 
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
+import { airtableFieldMapper } from '../../src/services/airtable-field-mapper';
 
 describe('FrontmatterParser.ensurePrimaryField', () => {
   // Create a minimal parser with mocked app
@@ -169,7 +170,7 @@ Content here`;
         { id: 'fld4', name: 'Cal', type: 'formula' }
       ];
 
-      const result = parser.extractSyncableFields(mockFile, cachedFields);
+      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, cachedFields);
 
       expect(result).toEqual({ Name: 'Test', Count: 100, Status: 'Todo' });
       expect(result).not.toHaveProperty('created');
@@ -197,7 +198,7 @@ Content here`;
       const parser = new FrontmatterParser(mockApp as any);
       const mockFile = { path: 'test.md' } as any;
 
-      const result = parser.extractSyncableFields(mockFile, undefined);
+      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, undefined);
 
       expect(result).toHaveProperty('Name');
       expect(result).toHaveProperty('Count');
@@ -218,7 +219,7 @@ Content here`;
       const parser = new FrontmatterParser(mockApp as any);
       const mockFile = { path: 'test.md' } as any;
 
-      const result = parser.extractSyncableFields(mockFile, []);
+      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, []);
       expect(result).toBeNull();
     });
 
@@ -242,7 +243,7 @@ Content here`;
         { id: 'fld1', name: 'Cal', type: 'formula' }
       ];
 
-      const result = parser.extractSyncableFields(mockFile, cachedFields);
+      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, cachedFields);
       expect(result).toBeNull();
     });
 
@@ -270,7 +271,7 @@ Content here`;
         { id: 'fld3', name: 'Missing', type: 'singleLineText' }
       ];
 
-      const result = parser.extractSyncableFields(mockFile, cachedFields);
+      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, cachedFields);
       expect(result).toEqual({ Name: 'Test' });
     });
   });

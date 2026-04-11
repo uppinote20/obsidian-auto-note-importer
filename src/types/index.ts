@@ -30,6 +30,11 @@ export type {
 } from './database.types';
 
 export type {
+  StandardFieldType,
+  FieldTypeMapper,
+} from './field-types.types';
+
+export type {
   SharedServices,
   ConfigEntry,
 } from './config.types';

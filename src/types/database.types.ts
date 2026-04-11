@@ -9,6 +9,7 @@
 
 import type { Credential, CredentialType } from './credential.types';
 import type { ConfigEntry } from './config.types';
+import type { FieldTypeMapper } from './field-types.types';
 import type { RateLimiter } from '../services/rate-limiter';
 
 /**
@@ -76,6 +77,7 @@ export interface ProviderCapabilities {
 export interface DatabaseProvider {
   readonly providerType: CredentialType;
   readonly capabilities: ProviderCapabilities;
+  readonly fieldTypeMapper: FieldTypeMapper;
 
   fetchNotes(): Promise<RemoteNote[]>;
   fetchRecord(recordId: string): Promise<RemoteNote | null>;
