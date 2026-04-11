@@ -98,7 +98,7 @@ describe('ConflictResolver', () => {
       expect(conflicts[0]).toEqual({
         field: 'field1',
         obsidianValue: 'obsidian-value',
-        airtableValue: 'airtable-value',
+        remoteValue: 'airtable-value',
         recordId: 'rec123',
         filePath: 'notes/test.md'
       });
@@ -156,7 +156,7 @@ describe('ConflictResolver', () => {
     const createConflict = (field: string): ConflictInfo => ({
       field,
       obsidianValue: 'obsidian-value',
-      airtableValue: 'airtable-value',
+      remoteValue: 'airtable-value',
       recordId: 'rec123',
       filePath: 'notes/test.md'
     });

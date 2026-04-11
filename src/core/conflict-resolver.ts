@@ -11,7 +11,7 @@ import { areValuesEqual } from '../utils';
 import type { LegacySettings, ConflictInfo, SyncResult, DatabaseProvider } from '../types';
 
 /**
- * Handles conflict detection and resolution between Obsidian and remote databases.
+ * Handles conflict detection and resolution between Obsidian and the remote database.
  */
 export class ConflictResolver {
   private settings: LegacySettings;
@@ -30,7 +30,7 @@ export class ConflictResolver {
   }
 
   /**
-   * Detects conflicts between Obsidian and Airtable field values.
+   * Detects conflicts between Obsidian and the remote database field values.
    */
   async detectConflicts(
     recordId: string,
@@ -46,13 +46,13 @@ export class ConflictResolver {
     const conflicts: ConflictInfo[] = [];
 
     for (const [field, obsidianValue] of Object.entries(obsidianFields)) {
-      const airtableValue = record.fields[field];
+      const remoteValue = record.fields[field];
 
-      if (airtableValue !== undefined && !areValuesEqual(obsidianValue, airtableValue)) {
+      if (remoteValue !== undefined && !areValuesEqual(obsidianValue, remoteValue)) {
         conflicts.push({
           field,
           obsidianValue,
-          airtableValue,
+          remoteValue,
           recordId,
           filePath
         });

@@ -32,7 +32,7 @@ export type SyncResult =
 export interface ConflictInfo {
   field: string;
   obsidianValue: unknown;
-  airtableValue: unknown;
+  remoteValue: unknown;
   recordId: string;
   filePath: string;
 }
@@ -47,13 +47,22 @@ export interface BatchUpdate {
 
 /**
  * Capabilities a database provider advertises at runtime.
+ *
+ * Callers check these flags instead of branching on concrete provider
+ * classes — e.g. the sync orchestrator can skip the formula-wait phase
+ * when `hasComputedFields` is false.
  */
 export interface ProviderCapabilities {
   /** Supports writing records back to the database. */
   bidirectional: boolean;
   /** Has fields whose values are computed server-side (formulas, rollups, lookups). */
   hasComputedFields: boolean;
-  /** Maximum records per batch update call. */
+  /**
+   * Maximum records per batch update call. Providers should report the
+   * largest batch their API accepts; read-only providers (`bidirectional: false`)
+   * must still report a positive number (e.g. `1`) — callers guarantee they
+   * won't call `batchUpdate()` when `bidirectional` is false.
+   */
   batchUpdateMaxSize: number;
 }
 

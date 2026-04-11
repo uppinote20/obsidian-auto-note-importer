@@ -224,21 +224,6 @@ describe('AirtableClient', () => {
     });
   });
 
-  describe('updateSettings', () => {
-    it('should use updated settings for subsequent calls', async () => {
-      mockRequestUrl.mockResolvedValue(mockResponse({ records: [] }));
-
-      await client.fetchNotes();
-      const firstUrl = mockRequestUrl.mock.calls[0][0].url;
-      expect(firstUrl).toContain('appTest/tblTest');
-
-      client.updateSettings(createSettings({ baseId: 'appNew', tableId: 'tblNew' }));
-      await client.fetchNotes();
-      const secondUrl = mockRequestUrl.mock.calls[1][0].url;
-      expect(secondUrl).toContain('appNew/tblNew');
-    });
-  });
-
   describe('DatabaseProvider interface', () => {
     it('should advertise airtable providerType', () => {
       expect(client.providerType).toBe('airtable');

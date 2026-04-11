@@ -163,7 +163,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private renderCredentialsSection(containerEl: HTMLElement): void {
     const section = containerEl.createDiv({ cls: 'ani-credentials-section' });
     section.createEl('h3', { text: 'Credentials' });
-    section.createEl('p', { cls: 'ani-credentials-desc', text: 'Configure your Airtable credentials.' });
+    section.createEl('p', { cls: 'ani-credentials-desc', text: 'Configure credentials for your database providers.' });
 
     const { credentials } = this.plugin.settings;
 

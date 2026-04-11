@@ -803,6 +803,42 @@ async function setConfigAndQuery(overrides) {
       return { pass, detail: `fields=[${r.fields.join(',')}] saveDisabled=${r.saveDisabled}` };
     });
 
+    await test('credential / edit form rejects non-airtable credentials', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        // Inject a fake seatable credential temporarily
+        const fakeId = 'e2e-fake-seatable-' + Date.now();
+        const savedCreds = [...p.settings.credentials];
+        p.settings.credentials.push({
+          id: fakeId,
+          name: 'Fake SeaTable',
+          type: 'seatable',
+          apiToken: 'x',
+          serverUrl: 'https://cloud.seatable.io',
+        });
+
+        await openSettingsTab();
+        const tab = getSettingsTab();
+        tab.editingCredentialId = fakeId;
+        tab.display();
+        await new Promise(r => setTimeout(r, 300));
+
+        const c = getContainer();
+        const fieldNames = Array.from(c.querySelectorAll('.setting-item-name')).map(el => el.textContent);
+        const hasEditNotSupported = fieldNames.includes('Edit not supported');
+
+        // Restore
+        tab.editingCredentialId = null;
+        p.settings.credentials = savedCreds;
+        await p.saveSettings();
+
+        return JSON.stringify({ hasEditNotSupported });
+      })()`, 10000);
+      const pass = r.hasEditNotSupported;
+      return { pass, detail: `editNotSupported=${r.hasEditNotSupported}` };
+    });
+
     await test('credential / non-airtable type shows Not yet supported and disabled Save', async () => {
       const r = await run(`(async () => {
         ${HELPERS}

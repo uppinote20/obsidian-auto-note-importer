@@ -48,14 +48,9 @@ export class AirtableClient implements DatabaseProvider {
   }
 
   /**
-   * Updates the settings reference.
-   */
-  updateSettings(settings: LegacySettings): void {
-    this.settings = settings;
-  }
-
-  /**
    * Reconfigures the provider with new credential and config values.
+   * ConfigInstance calls this instead of updateSettings so the provider
+   * can narrow on its credential variant.
    */
   reconfigure(credential: Credential, config: ConfigEntry, debugMode: boolean): void {
     if (credential.type !== 'airtable') {
@@ -65,7 +60,7 @@ export class AirtableClient implements DatabaseProvider {
       ...config,
       apiKey: credential.apiKey,
       debugMode,
-    } as LegacySettings;
+    };
   }
 
   /**
