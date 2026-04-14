@@ -837,21 +837,20 @@ async function setConfigAndQuery(overrides) {
     await test('credential / edit form shows Test button for airtable', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
-        await openSettingsTab();
-        const c = getContainer();
         const p = getPlugin();
         const cred = p.settings.credentials[0];
         if (!cred) return JSON.stringify({ error: 'no credential' });
 
         const tab = getSettingsTab();
+        await openSettingsTab();
         tab.editingCredentialId = cred.id;
         tab.display();
         await new Promise(r => setTimeout(r, 300));
 
-        const c2 = getContainer();
-        const testBtn = Array.from(c2.querySelectorAll('button')).find(b => b.textContent === 'Test');
-        const saveBtn = Array.from(c2.querySelectorAll('button')).find(b => b.textContent === 'Save');
-        const cancelBtn = Array.from(c2.querySelectorAll('button')).find(b => b.textContent === 'Cancel');
+        const c = getContainer();
+        const testBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent === 'Test');
+        const saveBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent === 'Save');
+        const cancelBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent === 'Cancel');
 
         // Cleanup
         tab.editingCredentialId = null;
