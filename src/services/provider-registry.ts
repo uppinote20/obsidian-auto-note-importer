@@ -19,11 +19,13 @@ import type {
   ConfigEntry,
   DatabaseProvider,
   FieldTypeMapper,
+  CredentialFormRenderer,
 } from '../types';
 import { buildLegacySettings } from '../utils';
 import type { RateLimiter } from './rate-limiter';
 import { AirtableClient } from './airtable-client';
 import { airtableFieldMapper } from './airtable-field-mapper';
+import { airtableCredentialFormRenderer } from './airtable-credential-form';
 
 /**
  * Factory signature for creating a provider instance.
@@ -37,6 +39,7 @@ export type ProviderFactory = (
 
 const factories = new Map<CredentialType, ProviderFactory>();
 const fieldTypeMappers = new Map<CredentialType, FieldTypeMapper>();
+const credentialFormRenderers = new Map<CredentialType, CredentialFormRenderer>();
 
 /**
  * Registers a factory for a given credential type. Overwrites any
@@ -75,6 +78,37 @@ export function hasFieldTypeMapper(type: CredentialType): boolean {
 }
 
 /**
+ * Registers a credential form renderer for a given credential type.
+ * The settings UI delegates to the registered renderer for auth field
+ * rendering, credential construction, and (optional) connection testing.
+ */
+export function registerCredentialFormRenderer(
+  type: CredentialType,
+  renderer: CredentialFormRenderer,
+): void {
+  credentialFormRenderers.set(type, renderer);
+}
+
+/**
+ * Returns the credential form renderer registered for the given type.
+ * Throws if no renderer is registered.
+ */
+export function getCredentialFormRenderer(type: CredentialType): CredentialFormRenderer {
+  const renderer = credentialFormRenderers.get(type);
+  if (!renderer) {
+    throw new Error(`No credential form renderer registered for credential type: ${type}`);
+  }
+  return renderer;
+}
+
+/**
+ * Returns true if a credential form renderer is registered for the given type.
+ */
+export function hasCredentialFormRenderer(type: CredentialType): boolean {
+  return credentialFormRenderers.has(type);
+}
+
+/**
  * Creates a provider instance for the given credential and config.
  * Throws if no factory is registered for the credential's type.
  */
@@ -105,3 +139,4 @@ registerProvider('airtable', (credential, config, rateLimiter, debugMode) => {
 });
 
 registerFieldTypeMapper('airtable', airtableFieldMapper);
+registerCredentialFormRenderer('airtable', airtableCredentialFormRenderer);

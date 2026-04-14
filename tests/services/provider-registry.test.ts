@@ -43,9 +43,13 @@ describe('provider-registry', () => {
   let registerFieldTypeMapper: typeof import('../../src/services/provider-registry').registerFieldTypeMapper;
   let getFieldTypeMapper: typeof import('../../src/services/provider-registry').getFieldTypeMapper;
   let hasFieldTypeMapper: typeof import('../../src/services/provider-registry').hasFieldTypeMapper;
+  let registerCredentialFormRenderer: typeof import('../../src/services/provider-registry').registerCredentialFormRenderer;
+  let getCredentialFormRenderer: typeof import('../../src/services/provider-registry').getCredentialFormRenderer;
+  let hasCredentialFormRenderer: typeof import('../../src/services/provider-registry').hasCredentialFormRenderer;
   let RateLimiter: typeof import('../../src/services/rate-limiter').RateLimiter;
   let AirtableClient: typeof import('../../src/services/airtable-client').AirtableClient;
   let airtableFieldMapper: typeof import('../../src/services/airtable-field-mapper').airtableFieldMapper;
+  let airtableCredentialFormRenderer: typeof import('../../src/services/airtable-credential-form').airtableCredentialFormRenderer;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -53,15 +57,20 @@ describe('provider-registry', () => {
     const rl = await import('../../src/services/rate-limiter');
     const ac = await import('../../src/services/airtable-client');
     const afm = await import('../../src/services/airtable-field-mapper');
+    const acf = await import('../../src/services/airtable-credential-form');
     registerProvider = registry.registerProvider;
     createProvider = registry.createProvider;
     hasProvider = registry.hasProvider;
     registerFieldTypeMapper = registry.registerFieldTypeMapper;
     getFieldTypeMapper = registry.getFieldTypeMapper;
     hasFieldTypeMapper = registry.hasFieldTypeMapper;
+    registerCredentialFormRenderer = registry.registerCredentialFormRenderer;
+    getCredentialFormRenderer = registry.getCredentialFormRenderer;
+    hasCredentialFormRenderer = registry.hasCredentialFormRenderer;
     RateLimiter = rl.RateLimiter;
     AirtableClient = ac.AirtableClient;
     airtableFieldMapper = afm.airtableFieldMapper;
+    airtableCredentialFormRenderer = acf.airtableCredentialFormRenderer;
   });
 
   describe('built-in registrations', () => {
@@ -85,6 +94,16 @@ describe('provider-registry', () => {
       expect(hasFieldTypeMapper('seatable')).toBe(false);
       expect(hasFieldTypeMapper('supabase')).toBe(false);
     });
+
+    it('should register airtable credential form renderer on module load', () => {
+      expect(hasCredentialFormRenderer('airtable')).toBe(true);
+      expect(getCredentialFormRenderer('airtable')).toBe(airtableCredentialFormRenderer);
+    });
+
+    it('should not register non-airtable credential form renderers by default', () => {
+      expect(hasCredentialFormRenderer('seatable')).toBe(false);
+      expect(hasCredentialFormRenderer('notion')).toBe(false);
+    });
   });
 
   describe('getFieldTypeMapper', () => {
@@ -104,6 +123,25 @@ describe('provider-registry', () => {
       };
       registerFieldTypeMapper('seatable', fake);
       expect(getFieldTypeMapper('seatable')).toBe(fake);
+    });
+  });
+
+  describe('getCredentialFormRenderer', () => {
+    it('should throw when no renderer is registered for credential type', () => {
+      expect(() => getCredentialFormRenderer('notion')).toThrow(
+        /No credential form renderer registered for credential type: notion/,
+      );
+    });
+
+    it('should return the renderer registered via registerCredentialFormRenderer', () => {
+      const fake = {
+        type: 'seatable' as const,
+        label: 'SeaTable',
+        renderFields: vi.fn(),
+        build: vi.fn(),
+      };
+      registerCredentialFormRenderer('seatable', fake);
+      expect(getCredentialFormRenderer('seatable')).toBe(fake);
     });
   });
 
