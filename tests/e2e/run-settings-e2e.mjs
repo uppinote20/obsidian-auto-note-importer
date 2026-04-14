@@ -834,6 +834,41 @@ async function setConfigAndQuery(overrides) {
       return { pass, detail: `fields=[${r.fields.join(',')}] saveDisabled=${r.saveDisabled}` };
     });
 
+    await test('credential / edit form shows Test button for airtable', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        await openSettingsTab();
+        const c = getContainer();
+        const p = getPlugin();
+        const cred = p.settings.credentials[0];
+        if (!cred) return JSON.stringify({ error: 'no credential' });
+
+        const tab = getSettingsTab();
+        tab.editingCredentialId = cred.id;
+        tab.display();
+        await new Promise(r => setTimeout(r, 300));
+
+        const c2 = getContainer();
+        const testBtn = Array.from(c2.querySelectorAll('button')).find(b => b.textContent === 'Test');
+        const saveBtn = Array.from(c2.querySelectorAll('button')).find(b => b.textContent === 'Save');
+        const cancelBtn = Array.from(c2.querySelectorAll('button')).find(b => b.textContent === 'Cancel');
+
+        // Cleanup
+        tab.editingCredentialId = null;
+        tab.display();
+        await new Promise(r => setTimeout(r, 200));
+
+        return JSON.stringify({
+          hasTestBtn: !!testBtn,
+          testBtnDisabled: !!testBtn?.disabled,
+          hasSaveBtn: !!saveBtn,
+          hasCancelBtn: !!cancelBtn,
+        });
+      })()`, 10000);
+      const pass = r.hasTestBtn && !r.testBtnDisabled && r.hasSaveBtn && r.hasCancelBtn;
+      return { pass, detail: `testBtn=${r.hasTestBtn} disabled=${r.testBtnDisabled} save=${r.hasSaveBtn} cancel=${r.hasCancelBtn}` };
+    });
+
     await test('credential / edit form rejects non-airtable credentials', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
