@@ -23,10 +23,10 @@ describe('SyncQueue', () => {
     it('should process single request immediately', async () => {
       const queue = new SyncQueue(mockProcessor);
 
-      await queue.enqueue('to-airtable', 'current');
+      await queue.enqueue('push', 'current');
 
       expect(mockProcessor).toHaveBeenCalledTimes(1);
-      expect(processedRequests[0].mode).toBe('to-airtable');
+      expect(processedRequests[0].mode).toBe('push');
       expect(processedRequests[0].scope).toBe('current');
     });
 
@@ -45,16 +45,16 @@ describe('SyncQueue', () => {
 
       const queue = new SyncQueue(slowProcessor);
 
-      const firstEnqueue = queue.enqueue('to-airtable', 'current');
-      const secondEnqueue = queue.enqueue('from-airtable', 'all');
+      const firstEnqueue = queue.enqueue('push', 'current');
+      const secondEnqueue = queue.enqueue('pull', 'all');
 
       resolveFirst!();
       await firstEnqueue;
       await secondEnqueue;
 
       expect(processedRequests.length).toBe(2);
-      expect(processedRequests[0].mode).toBe('to-airtable');
-      expect(processedRequests[1].mode).toBe('from-airtable');
+      expect(processedRequests[0].mode).toBe('push');
+      expect(processedRequests[1].mode).toBe('pull');
     });
 
     it('should merge duplicate requests with same mode/scope (SQ-1.2)', async () => {
@@ -72,9 +72,9 @@ describe('SyncQueue', () => {
 
       const queue = new SyncQueue(slowProcessor);
 
-      const firstEnqueue = queue.enqueue('to-airtable', 'current');
-      queue.enqueue('to-airtable', 'modified', ['file1.md']);
-      queue.enqueue('to-airtable', 'modified', ['file2.md']);
+      const firstEnqueue = queue.enqueue('push', 'current');
+      queue.enqueue('push', 'modified', ['file1.md']);
+      queue.enqueue('push', 'modified', ['file2.md']);
 
       resolveFirst!();
       await firstEnqueue;
@@ -101,9 +101,9 @@ describe('SyncQueue', () => {
 
       const queue = new SyncQueue(slowProcessor);
 
-      const firstEnqueue = queue.enqueue('to-airtable', 'current');
-      queue.enqueue('to-airtable', 'modified', ['file1.md', 'file2.md']);
-      queue.enqueue('to-airtable', 'modified', ['file2.md', 'file3.md']);
+      const firstEnqueue = queue.enqueue('push', 'current');
+      queue.enqueue('push', 'modified', ['file1.md', 'file2.md']);
+      queue.enqueue('push', 'modified', ['file2.md', 'file3.md']);
 
       resolveFirst!();
       await firstEnqueue;
@@ -130,8 +130,8 @@ describe('SyncQueue', () => {
       const queue = new SyncQueue(trackingProcessor);
 
       const promises = [
-        queue.enqueue('to-airtable', 'current'),
-        queue.enqueue('from-airtable', 'current'),
+        queue.enqueue('push', 'current'),
+        queue.enqueue('pull', 'current'),
         queue.enqueue('bidirectional', 'current')
       ];
 
@@ -145,15 +145,15 @@ describe('SyncQueue', () => {
     it('should continue processing after error', async () => {
       const errorProcessor: SyncProcessor = vi.fn(async (request: SyncRequest) => {
         processedRequests.push(request);
-        if (request.mode === 'to-airtable') {
+        if (request.mode === 'push') {
           throw new Error('Sync failed');
         }
       });
 
       const queue = new SyncQueue(errorProcessor);
 
-      await queue.enqueue('to-airtable', 'current');
-      await queue.enqueue('from-airtable', 'all');
+      await queue.enqueue('push', 'current');
+      await queue.enqueue('pull', 'all');
 
       expect(processedRequests.length).toBe(2);
     });
@@ -166,7 +166,7 @@ describe('SyncQueue', () => {
 
       const queue = new SyncQueue(errorProcessor, onError);
 
-      await queue.enqueue('to-airtable', 'current');
+      await queue.enqueue('push', 'current');
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);

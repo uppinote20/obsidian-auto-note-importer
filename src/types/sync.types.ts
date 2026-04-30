@@ -7,8 +7,11 @@ import type { SyncScope } from './settings.types';
 
 /**
  * Sync direction/mode.
+ *
+ * Provider-agnostic terms — applies to any DatabaseProvider, not just Airtable.
+ * `push`: local Obsidian → remote. `pull`: remote → local Obsidian. `bidirectional`: push then pull.
  */
-export type SyncMode = 'to-airtable' | 'from-airtable' | 'bidirectional';
+export type SyncMode = 'push' | 'pull' | 'bidirectional';
 
 /**
  * Represents a sync request in the queue.

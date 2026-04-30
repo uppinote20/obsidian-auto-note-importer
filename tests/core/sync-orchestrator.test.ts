@@ -75,12 +75,12 @@ describe('SyncOrchestrator', () => {
     );
   });
 
-  describe('processSyncRequest — from-airtable', () => {
+  describe('processSyncRequest — pull', () => {
     it('should create status bar item and remove it after sync', async () => {
       mockProvider.fetchNotes.mockResolvedValue([]);
       mockApp.vault.adapter.exists.mockResolvedValue(true);
 
-      await orchestrator.processSyncRequest('from-airtable', 'all');
+      await orchestrator.processSyncRequest('pull', 'all');
 
       expect(statusBar.createItem).toHaveBeenCalledTimes(1);
       expect(statusBar.lastItem.setText).toHaveBeenCalled();
@@ -91,7 +91,7 @@ describe('SyncOrchestrator', () => {
       mockProvider.fetchNotes.mockResolvedValue([]);
       mockApp.vault.adapter.exists.mockResolvedValue(false);
 
-      await orchestrator.processSyncRequest('from-airtable', 'all');
+      await orchestrator.processSyncRequest('pull', 'all');
 
       expect(mockApp.vault.createFolder).toHaveBeenCalledWith('Sync');
     });
@@ -103,7 +103,7 @@ describe('SyncOrchestrator', () => {
       mockApp.vault.adapter.exists.mockResolvedValue(true);
       mockApp.vault.getAbstractFileByPath.mockReturnValue(null);
 
-      await orchestrator.processSyncRequest('from-airtable', 'all');
+      await orchestrator.processSyncRequest('pull', 'all');
 
       expect(mockApp.vault.create).toHaveBeenCalled();
     });
@@ -115,7 +115,7 @@ describe('SyncOrchestrator', () => {
       const setSyncingSpy = vi.spyOn(fileWatcher, 'setSyncing');
       const clearPendingSpy = vi.spyOn(fileWatcher, 'clearPending');
 
-      await orchestrator.processSyncRequest('from-airtable', 'all');
+      await orchestrator.processSyncRequest('pull', 'all');
 
       expect(setSyncingSpy).toHaveBeenNthCalledWith(1, true);
       expect(setSyncingSpy).toHaveBeenNthCalledWith(2, false);
@@ -127,7 +127,7 @@ describe('SyncOrchestrator', () => {
 
       const setSyncingSpy = vi.spyOn(fileWatcher, 'setSyncing');
 
-      await orchestrator.processSyncRequest('from-airtable', 'all');
+      await orchestrator.processSyncRequest('pull', 'all');
 
       expect(statusBar.lastItem.remove).toHaveBeenCalledTimes(1);
       // setSyncing(false) must be called even on error (via finally block in syncFromAirtable)
@@ -135,11 +135,11 @@ describe('SyncOrchestrator', () => {
     });
   });
 
-  describe('processSyncRequest — to-airtable', () => {
+  describe('processSyncRequest — push', () => {
     it('should clean up status bar when active file is missing', async () => {
       mockApp.workspace.getActiveViewOfType.mockReturnValue(null);
 
-      await orchestrator.processSyncRequest('to-airtable', 'current');
+      await orchestrator.processSyncRequest('push', 'current');
 
       // Error is caught and shown via Notice — status bar still cleaned up
       expect(statusBar.lastItem.remove).toHaveBeenCalled();
@@ -213,7 +213,7 @@ describe('SyncOrchestrator', () => {
       mockApp.vault.adapter.exists.mockResolvedValue(true);
       mockApp.vault.read.mockResolvedValue('old content');
 
-      await orchestrator.processSyncRequest('from-airtable', 'current');
+      await orchestrator.processSyncRequest('pull', 'current');
 
       expect(mockProvider.fetchRecord).toHaveBeenCalledWith('rec1');
     });
@@ -225,7 +225,7 @@ describe('SyncOrchestrator', () => {
 
       // Should not throw
       await expect(
-        orchestrator.processSyncRequest('from-airtable', 'all')
+        orchestrator.processSyncRequest('pull', 'all')
       ).resolves.toBeUndefined();
     });
   });

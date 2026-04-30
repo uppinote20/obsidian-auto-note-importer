@@ -179,7 +179,7 @@ function resetExpr() {
       ]})
     });
     setMode('manual', false);
-    await enqueueSync('from-airtable', 'all');
+    await enqueueSync('pull', 'all');
     await new Promise(r => setTimeout(r, 5000));
     return '"reset"';
   })()`;
@@ -286,10 +286,10 @@ async function test(name, fn) {
 
     // -- Pull tests --
 
-    await test('from-airtable / all', async () => {
+    await test('pull / all', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
-        await enqueueSync('from-airtable', 'all');
+        await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const files = app.vault.getFiles().filter(f => f.path.startsWith(getConfig().folderPath + '/'));
         return JSON.stringify({ fileCount: files.length });
@@ -297,7 +297,7 @@ async function test(name, fn) {
       return { pass: r.fileCount >= 8, detail: `${r.fileCount} files` };
     });
 
-    await test('from-airtable / bases file generation', async () => {
+    await test('pull / bases file generation', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
@@ -316,7 +316,7 @@ async function test(name, fn) {
         for (const f of existingBases) await app.vault.delete(f);
 
         // Sync from Airtable
-        await enqueueSync('from-airtable', 'all');
+        await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 6000));
 
         // Check .base file was created
@@ -336,7 +336,7 @@ async function test(name, fn) {
 
         // Verify regenerate=false skips existing file
         const contentBefore = content;
-        await enqueueSync('from-airtable', 'all');
+        await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 6000));
         const contentAfter = await app.vault.read(baseFile);
         const skipWorks = contentBefore === contentAfter;
@@ -354,7 +354,7 @@ async function test(name, fn) {
       return { pass: r.pass, detail: r.detail || 'ok' };
     });
 
-    await test('from-airtable / view filter', async () => {
+    await test('pull / view filter', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
@@ -377,7 +377,7 @@ async function test(name, fn) {
         cfg.viewId = nonDefault.id;
         getInstance().updateSettings(cfg, cred);
 
-        await enqueueSync('from-airtable', 'all');
+        await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const viewFiles = app.vault.getFiles().filter(
           f => f.path.startsWith(cfg.folderPath + '/') && f.extension === 'md'
@@ -389,7 +389,7 @@ async function test(name, fn) {
         cfg.allowOverwrite = true;
         getInstance().updateSettings(cfg, cred);
 
-        await enqueueSync('from-airtable', 'all');
+        await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const allFiles = app.vault.getFiles().filter(
           f => f.path.startsWith(cfg.folderPath + '/') && f.extension === 'md'
@@ -409,12 +409,12 @@ async function test(name, fn) {
       return { pass: r.pass, detail: r.detail || 'ok' };
     });
 
-    await test('from-airtable / current', async () => {
+    await test('pull / current', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
         const file = await openAndActivate(getConfig().folderPath + '/E2E-Pull-Test.md');
         try {
-          await enqueueSync('from-airtable', 'current');
+          await enqueueSync('pull', 'current');
           await new Promise(r => setTimeout(r, 3000));
           const content = await app.vault.read(file);
           return JSON.stringify({ pass: content.includes('${testRecordIds[0]}') });
@@ -427,14 +427,14 @@ async function test(name, fn) {
 
     // -- Push tests --
 
-    await test('to-airtable / all / obsidian-wins', async () => {
+    await test('push / all / obsidian-wins', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 555);
-        await enqueueSync('to-airtable', 'all');
+        await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         setMode('manual');
@@ -443,14 +443,14 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `Count=${r.count}` };
     });
 
-    await test('to-airtable / current / obsidian-wins', async () => {
+    await test('push / current / obsidian-wins', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
         const file = await openAndActivate(getConfig().folderPath + '/E2E-Bidir-Test.md');
         await modifyCount(file, 888);
-        await enqueueSync('to-airtable', 'current');
+        await enqueueSync('push', 'current');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[2]}');
         setMode('manual');
@@ -459,14 +459,14 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `Count=${r.count}` };
     });
 
-    await test('to-airtable / all / airtable-wins', async () => {
+    await test('push / all / airtable-wins', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('airtable-wins');
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
         await modifyCount(file, 9999);
-        await enqueueSync('to-airtable', 'all');
+        await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[0]}');
         setMode('manual');
@@ -475,14 +475,14 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `Count=${r.count} (expected 100)` };
     });
 
-    await test('to-airtable / current / airtable-wins', async () => {
+    await test('push / current / airtable-wins', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('airtable-wins');
         const file = await openAndActivate(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 7777);
-        await enqueueSync('to-airtable', 'current');
+        await enqueueSync('push', 'current');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         setMode('manual');
@@ -491,14 +491,14 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `Count=${r.count} (expected 200)` };
     });
 
-    await test('to-airtable / all / manual (conflict blocks)', async () => {
+    await test('push / all / manual (conflict blocks)', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('manual');
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 7777);
-        await enqueueSync('to-airtable', 'all');
+        await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         return JSON.stringify({ pass: fields.Count === 200, count: fields.Count });
@@ -692,7 +692,7 @@ async function test(name, fn) {
           .map(f => f.path);
 
         // Sync config 2
-        await enqueueSync('from-airtable', 'all', cfg2);
+        await enqueueSync('pull', 'all', cfg2);
         await new Promise(r => setTimeout(r, 5000));
 
         // Check config 2 files created in its folder
