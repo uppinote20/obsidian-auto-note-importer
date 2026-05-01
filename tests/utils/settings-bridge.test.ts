@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildLegacySettings } from '../../src/utils/settings-bridge';
-import type { ConfigEntry, Credential, AirtableCredential } from '../../src/types';
-import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
+import { buildLegacySettings, findCredentialForConfig } from '../../src/utils/settings-bridge';
+import type { ConfigEntry, Credential, AirtableCredential, AutoNoteImporterSettings } from '../../src/types';
+import { DEFAULT_CONFIG_ENTRY, DEFAULT_SETTINGS } from '../../src/types';
 
 function createConfig(overrides: Partial<ConfigEntry> = {}): ConfigEntry {
   return {
@@ -161,5 +161,26 @@ describe('buildLegacySettings', () => {
       expect(result['id']).toBe('cfg-1');
       expect(result['name']).toBe('Test Config');
     });
+  });
+});
+
+describe('findCredentialForConfig', () => {
+  function createSettings(credentials: Credential[]): AutoNoteImporterSettings {
+    return { ...DEFAULT_SETTINGS, credentials };
+  }
+
+  it('returns the matching credential by id', () => {
+    const cred = createAirtableCredential({ id: 'cred-1' });
+    const settings = createSettings([cred]);
+    expect(findCredentialForConfig(settings, createConfig({ credentialId: 'cred-1' }))).toBe(cred);
+  });
+
+  it('returns undefined when the linked credential is missing', () => {
+    const settings = createSettings([createAirtableCredential({ id: 'cred-1' })]);
+    expect(findCredentialForConfig(settings, createConfig({ credentialId: 'cred-99' }))).toBeUndefined();
+  });
+
+  it('returns undefined when credentials list is empty', () => {
+    expect(findCredentialForConfig(createSettings([]), createConfig())).toBeUndefined();
   });
 });

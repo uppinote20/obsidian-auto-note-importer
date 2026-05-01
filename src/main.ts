@@ -18,6 +18,7 @@ import { ConfigManager } from './core';
 import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
 import { migrateSettings } from './utils/migration';
+import { findCredentialForConfig } from './utils';
 
 /**
  * Main plugin class for Auto Note Importer.
@@ -70,7 +71,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
   private getCommandFingerprint(): string {
     return this.settings.configs
       .map(c => {
-        const credType = this.settings.credentials.find(cr => cr.id === c.credentialId)?.type ?? '';
+        const credType = findCredentialForConfig(this.settings, c)?.type ?? '';
         return `${c.id}:${c.name}:${c.enabled}:${c.bidirectionalSync}:${credType}`;
       })
       .join('|');
@@ -116,20 +117,15 @@ export default class AutoNoteImporterPlugin extends Plugin {
   /**
    * Registers sync commands for a single config entry.
    * Uses checkCallback with dynamic lookup to avoid capturing stale references.
-   *
-   * Command names include the provider label (Airtable / SeaTable / Notion / \u2026)
-   * derived from the linked credential type. `getCommandFingerprint()` includes
-   * credential type so changing a config's credential triggers re-registration
-   * and the labels stay in sync.
+   * Command names include the provider label derived from the linked credential type.
    */
   private registerCommandsForConfig(config: ConfigEntry): void {
     const configId = config.id;
-    const credential = this.settings.credentials.find(c => c.id === config.credentialId);
+    const credential = findCredentialForConfig(this.settings, config);
     if (!credential) return;
     const providerLabel = CREDENTIAL_TYPE_LABELS[credential.type];
     const suffix = ` \u2014 ${config.name}`;
 
-    // Pull commands (remote → local)
     this.addCommand({
       id: `sync-pull-${configId}`,
       name: `Sync current note from ${providerLabel}${suffix}`,
@@ -153,7 +149,6 @@ export default class AutoNoteImporterPlugin extends Plugin {
       },
     });
 
-    // Push commands (local → remote, gated by bidirectionalSync)
     this.addCommand({
       id: `sync-push-current-${configId}`,
       name: `Sync current note to ${providerLabel}${suffix}`,
@@ -188,7 +183,6 @@ export default class AutoNoteImporterPlugin extends Plugin {
       },
     });
 
-    // Bidirectional commands
     this.addCommand({
       id: `bidirectional-sync-current-${configId}`,
       name: `Bidirectional sync current note${suffix}`,
@@ -248,7 +242,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
     }
 
     for (const config of this.settings.configs) {
-      const credential = this.settings.credentials.find(c => c.id === config.credentialId);
+      const credential = findCredentialForConfig(this.settings, config);
       if (credential) {
         this.configManager.updateConfig(config.id, config, credential);
       } else {

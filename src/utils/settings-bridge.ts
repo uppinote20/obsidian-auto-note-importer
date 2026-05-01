@@ -6,7 +6,7 @@
  * @tested tests/utils/settings-bridge.test.ts
  */
 
-import type { Credential, ConfigEntry, LegacySettings } from '../types';
+import type { Credential, ConfigEntry, LegacySettings, AutoNoteImporterSettings } from '../types';
 
 /**
  * Merges a ConfigEntry with its Credential and debug flag to produce
@@ -24,4 +24,16 @@ export function buildLegacySettings(
 ): LegacySettings {
   const apiKey = credential.type === 'airtable' ? credential.apiKey : '';
   return { ...config, apiKey, debugMode };
+}
+
+/**
+ * Looks up the credential linked to a config by `credentialId`.
+ * Returns `undefined` if the credential is missing (e.g., deleted while a
+ * config still references it). Callers must handle the undefined case.
+ */
+export function findCredentialForConfig(
+  settings: AutoNoteImporterSettings,
+  config: ConfigEntry,
+): Credential | undefined {
+  return settings.credentials.find(c => c.id === config.credentialId);
 }
