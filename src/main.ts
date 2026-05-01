@@ -122,6 +122,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
   private registerCommandsForConfig(config: ConfigEntry): void {
     const configId = config.id;
     const credential = findCredentialForConfig(this.settings, config);
+    // Configs with an orphaned credentialId register no commands. Recovery is automatic
+    // when a credential is (re-)linked: saveSettings() detects the fingerprint change
+    // and triggers reregisterAllCommands().
     if (!credential) return;
     const providerLabel = CREDENTIAL_TYPE_LABELS[credential.type];
     const suffix = ` \u2014 ${config.name}`;

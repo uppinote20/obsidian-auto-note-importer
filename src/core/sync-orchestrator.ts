@@ -199,17 +199,18 @@ export class SyncOrchestrator {
       return;
     }
 
+    const label = this.providerLabel;
     this.fileWatcher.setSyncing(true);
     try {
       const remoteNote = await this.provider.fetchRecord(recordId);
       if (!remoteNote) {
-        new Notice(`Auto Note Importer: Record not found in ${this.providerLabel}`);
+        new Notice(`Auto Note Importer: Record not found in ${label}`);
         return;
       }
 
       const result = await this.createNoteFromRemote(remoteNote);
       if (result === "updated") {
-        new Notice(`Auto Note Importer: Current note updated from ${this.providerLabel}`);
+        new Notice(`Auto Note Importer: Current note updated from ${label}`);
       } else if (result === "skipped") {
         new Notice("Auto Note Importer: No changes detected");
       }
