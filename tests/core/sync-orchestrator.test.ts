@@ -229,4 +229,47 @@ describe('SyncOrchestrator', () => {
       ).resolves.toBeUndefined();
     });
   });
+
+  // Regression guard: status bar / Notice text must derive the provider name
+  // from `provider.providerType` via CREDENTIAL_TYPE_LABELS, not a hardcoded string.
+  describe('provider-aware labels', () => {
+    function createOrchestrator(provider: typeof mockProvider): SyncOrchestrator {
+      return new SyncOrchestrator(
+        mockApp as unknown as App,
+        settings,
+        provider as never,
+        fieldCache,
+        frontmatterParser,
+        fileWatcher,
+        conflictResolver,
+        statusBar,
+      );
+    }
+
+    it("should label status bar with the provider's display name (airtable)", async () => {
+      mockApp.vault.adapter.exists.mockResolvedValue(true);
+      mockProvider.fetchNotes.mockResolvedValue([]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(statusBar.lastItem.setText).toHaveBeenCalledWith(
+        expect.stringContaining('Airtable'),
+      );
+    });
+
+    it('should reflect a different provider type in status bar text', async () => {
+      const notionProvider = createMockDatabaseProvider({ providerType: 'notion' });
+      notionProvider.fetchNotes.mockResolvedValue([]);
+      mockApp.vault.adapter.exists.mockResolvedValue(true);
+
+      const notionOrchestrator = createOrchestrator(notionProvider);
+      await notionOrchestrator.processSyncRequest('pull', 'all');
+
+      const calls = (statusBar.lastItem.setText as ReturnType<typeof vi.fn>).mock.calls.map(
+        (c) => String(c[0]),
+      );
+      expect(calls.some((text) => text.includes('Notion'))).toBe(true);
+      expect(calls.every((text) => !text.includes('Airtable'))).toBe(true);
+    });
+  });
 });
