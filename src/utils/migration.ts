@@ -12,14 +12,18 @@ import { generateId } from './object-utils';
 
 const CURRENT_VERSION = 3 as const;
 
+const VALID_CONFLICT_MODES: readonly ConflictResolutionMode[] = ['obsidian-wins', 'remote-wins', 'manual'];
+
 /**
  * Normalizes a possibly-legacy conflictResolution value to the current `ConflictResolutionMode`.
  * v2 used `'airtable-wins'`; v3 uses `'remote-wins'`. Unknown values fall back to `'manual'`.
  */
 function migrateConflictResolution(value: unknown): ConflictResolutionMode {
-  if (value === 'obsidian-wins' || value === 'remote-wins' || value === 'manual') {
-    return value;
+  if (typeof value === 'string' && (VALID_CONFLICT_MODES as readonly string[]).includes(value)) {
+    return value as ConflictResolutionMode;
   }
+  // v2 → v3 rename
+
   if (value === 'airtable-wins') {
     return 'remote-wins';
   }
@@ -41,7 +45,8 @@ function readAutoSyncComputedFields(record: Record<string, unknown>, fallback: b
  * Migrates settings data to the current version.
  *
  * - Returns null for null/undefined input (fresh install, no migration needed).
- * - Returns null if data is already at the current version.
+ * - Returns null if data is already at the current version OR a future version
+ *   (downgrades are refused; caller falls back to defaults to avoid corruption).
  * - v2 → v3: rename `autoSyncFormulas` → `autoSyncComputedFields` and `airtable-wins` → `remote-wins` per config; bump version.
  * - v1 / unknown → v3: convert flat legacy single-config layout to multi-config with current field names.
  *
@@ -54,29 +59,58 @@ export function migrateSettings(data: unknown): AutoNoteImporterSettings | null 
   }
 
   const record = data as Record<string, unknown>;
+  const versionRaw = record['version'];
+  const version = typeof versionRaw === 'number' ? versionRaw : 0;
 
-  if (record['version'] === CURRENT_VERSION) {
+  if (version >= CURRENT_VERSION) {
     return null;
   }
 
-  if (record['version'] === 2) {
+  if (version === 2) {
     return migrateV2toV3(record);
   }
 
   return migrateLegacyToV3(record);
 }
 
+function buildConfigFromRecord(
+  raw: Record<string, unknown>,
+  fallbackId: string,
+): ConfigEntry {
+  return {
+    id: typeof raw['id'] === 'string' ? raw['id'] : fallbackId,
+    name: typeof raw['name'] === 'string' ? raw['name'] : 'Default',
+    enabled: typeof raw['enabled'] === 'boolean' ? raw['enabled'] : true,
+    credentialId: typeof raw['credentialId'] === 'string' ? raw['credentialId'] : '',
+    baseId: typeof raw['baseId'] === 'string' ? raw['baseId'] : '',
+    tableId: typeof raw['tableId'] === 'string' ? raw['tableId'] : '',
+    viewId: typeof raw['viewId'] === 'string' ? raw['viewId'] : '',
+    folderPath: typeof raw['folderPath'] === 'string' ? raw['folderPath'] : '',
+    templatePath: typeof raw['templatePath'] === 'string' ? raw['templatePath'] : '',
+    filenameFieldName: typeof raw['filenameFieldName'] === 'string' ? raw['filenameFieldName'] : '',
+    subfolderFieldName: typeof raw['subfolderFieldName'] === 'string' ? raw['subfolderFieldName'] : '',
+    syncInterval: typeof raw['syncInterval'] === 'number' ? raw['syncInterval'] : 0,
+    allowOverwrite: typeof raw['allowOverwrite'] === 'boolean' ? raw['allowOverwrite'] : true,
+    bidirectionalSync: typeof raw['bidirectionalSync'] === 'boolean' ? raw['bidirectionalSync'] : false,
+    conflictResolution: migrateConflictResolution(raw['conflictResolution']),
+    watchForChanges: typeof raw['watchForChanges'] === 'boolean' ? raw['watchForChanges'] : false,
+    fileWatchDebounce: typeof raw['fileWatchDebounce'] === 'number' ? raw['fileWatchDebounce'] : 2000,
+    autoSyncComputedFields: readAutoSyncComputedFields(raw, false),
+    formulaSyncDelay: typeof raw['formulaSyncDelay'] === 'number' ? raw['formulaSyncDelay'] : 1500,
+    generateBasesFile: typeof raw['generateBasesFile'] === 'boolean' ? raw['generateBasesFile'] : false,
+    basesFileLocation: (raw['basesFileLocation'] === 'synced-folder' || raw['basesFileLocation'] === 'custom')
+      ? raw['basesFileLocation']
+      : 'vault-root',
+    basesCustomPath: typeof raw['basesCustomPath'] === 'string' ? raw['basesCustomPath'] : '',
+    basesRegenerateOnSync: typeof raw['basesRegenerateOnSync'] === 'boolean' ? raw['basesRegenerateOnSync'] : false,
+  };
+}
+
 function migrateV2toV3(record: Record<string, unknown>): AutoNoteImporterSettings {
   const credentials = Array.isArray(record['credentials']) ? record['credentials'] as Credential[] : [];
   const rawConfigs = Array.isArray(record['configs']) ? record['configs'] as Record<string, unknown>[] : [];
 
-  const configs = rawConfigs.map(cfg => {
-    const next: Record<string, unknown> = { ...cfg };
-    next['conflictResolution'] = migrateConflictResolution(cfg['conflictResolution']);
-    next['autoSyncComputedFields'] = readAutoSyncComputedFields(cfg, false);
-    delete next['autoSyncFormulas'];
-    return next as unknown as ConfigEntry;
-  });
+  const configs = rawConfigs.map(cfg => buildConfigFromRecord(cfg, generateId()));
 
   return {
     version: CURRENT_VERSION,
@@ -98,33 +132,7 @@ function migrateLegacyToV3(record: Record<string, unknown>): AutoNoteImporterSet
     apiKey: typeof record['apiKey'] === 'string' ? record['apiKey'] : '',
   };
 
-  const config: ConfigEntry = {
-    id: configId,
-    name: 'Default',
-    enabled: true,
-    credentialId,
-    baseId: typeof record['baseId'] === 'string' ? record['baseId'] : '',
-    tableId: typeof record['tableId'] === 'string' ? record['tableId'] : '',
-    viewId: typeof record['viewId'] === 'string' ? record['viewId'] : '',
-    folderPath: typeof record['folderPath'] === 'string' ? record['folderPath'] : '',
-    templatePath: typeof record['templatePath'] === 'string' ? record['templatePath'] : '',
-    filenameFieldName: typeof record['filenameFieldName'] === 'string' ? record['filenameFieldName'] : '',
-    subfolderFieldName: typeof record['subfolderFieldName'] === 'string' ? record['subfolderFieldName'] : '',
-    syncInterval: typeof record['syncInterval'] === 'number' ? record['syncInterval'] : 0,
-    allowOverwrite: typeof record['allowOverwrite'] === 'boolean' ? record['allowOverwrite'] : true,
-    bidirectionalSync: typeof record['bidirectionalSync'] === 'boolean' ? record['bidirectionalSync'] : false,
-    conflictResolution: migrateConflictResolution(record['conflictResolution']),
-    watchForChanges: typeof record['watchForChanges'] === 'boolean' ? record['watchForChanges'] : false,
-    fileWatchDebounce: typeof record['fileWatchDebounce'] === 'number' ? record['fileWatchDebounce'] : 2000,
-    autoSyncComputedFields: readAutoSyncComputedFields(record, false),
-    formulaSyncDelay: typeof record['formulaSyncDelay'] === 'number' ? record['formulaSyncDelay'] : 1500,
-    generateBasesFile: typeof record['generateBasesFile'] === 'boolean' ? record['generateBasesFile'] : false,
-    basesFileLocation: (record['basesFileLocation'] === 'synced-folder' || record['basesFileLocation'] === 'custom')
-      ? record['basesFileLocation']
-      : 'vault-root',
-    basesCustomPath: typeof record['basesCustomPath'] === 'string' ? record['basesCustomPath'] : '',
-    basesRegenerateOnSync: typeof record['basesRegenerateOnSync'] === 'boolean' ? record['basesRegenerateOnSync'] : false,
-  };
+  const config: ConfigEntry = buildConfigFromRecord({ ...record, id: configId, name: 'Default', credentialId }, configId);
 
   return {
     version: CURRENT_VERSION,

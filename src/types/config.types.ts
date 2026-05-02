@@ -1,5 +1,7 @@
 /**
  * Configuration entry type definitions for multi-config support.
+ *
+ * @handbook 9.8-multi-config-architecture
  */
 
 import type { ConflictResolutionMode, BasesFileLocation } from './settings.types';

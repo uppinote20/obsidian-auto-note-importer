@@ -16,4 +16,9 @@ export {
   generateId,
 } from './object-utils';
 
-export { buildLegacySettings, findCredentialForConfig } from './settings-bridge';
+export {
+  buildLegacySettings,
+  findCredentialForConfig,
+  findConfigById,
+  buildCredentialIndex,
+} from './settings-bridge';

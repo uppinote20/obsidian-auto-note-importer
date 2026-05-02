@@ -18,7 +18,7 @@ import { ConfigManager } from './core';
 import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
 import { migrateSettings } from './utils/migration';
-import { findCredentialForConfig } from './utils';
+import { findCredentialForConfig, findConfigById, buildCredentialIndex } from './utils';
 
 /**
  * Main plugin class for Auto Note Importer.
@@ -68,10 +68,11 @@ export default class AutoNoteImporterPlugin extends Plugin {
     this.commandFingerprint = this.getCommandFingerprint();
   }
 
-  private getCommandFingerprint(): string {
+  private getCommandFingerprint(credIndex?: Map<string, { type: string }>): string {
+    const index = credIndex ?? buildCredentialIndex(this.settings);
     return this.settings.configs
       .map(c => {
-        const credType = findCredentialForConfig(this.settings, c)?.type ?? '';
+        const credType = index.get(c.credentialId)?.type ?? '';
         return `${c.id}:${c.name}:${c.enabled}:${c.bidirectionalSync}:${credType}`;
       })
       .join('|');
@@ -116,15 +117,12 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   /**
    * Registers sync commands for a single config entry.
-   * Uses checkCallback with dynamic lookup to avoid capturing stale references.
-   * Command names include the provider label derived from the linked credential type.
+   * Configs with an orphaned credentialId register no commands; they recover
+   * automatically when a credential is linked (fingerprint changes → re-register).
    */
   private registerCommandsForConfig(config: ConfigEntry): void {
     const configId = config.id;
     const credential = findCredentialForConfig(this.settings, config);
-    // Configs with an orphaned credentialId register no commands. Recovery is automatic
-    // when a credential is (re-)linked: saveSettings() detects the fingerprint change
-    // and triggers reregisterAllCommands().
     if (!credential) return;
     const providerLabel = CREDENTIAL_TYPE_LABELS[credential.type];
     const suffix = ` \u2014 ${config.name}`;
@@ -133,7 +131,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: `sync-pull-${configId}`,
       name: `Sync current note from ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
-        const cfg = this.settings.configs.find(c => c.id === configId);
+        const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'current');
@@ -145,7 +143,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: `sync-pull-all-${configId}`,
       name: `Sync all notes from ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
-        const cfg = this.settings.configs.find(c => c.id === configId);
+        const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'all');
         return true;
@@ -156,7 +154,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: `sync-push-current-${configId}`,
       name: `Sync current note to ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
-        const cfg = this.settings.configs.find(c => c.id === configId);
+        const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'current');
@@ -168,7 +166,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: `sync-push-modified-${configId}`,
       name: `Sync modified notes to ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
-        const cfg = this.settings.configs.find(c => c.id === configId);
+        const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'modified');
         return true;
@@ -179,7 +177,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: `sync-push-all-${configId}`,
       name: `Sync all notes to ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
-        const cfg = this.settings.configs.find(c => c.id === configId);
+        const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'all');
         return true;
@@ -190,7 +188,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: `bidirectional-sync-current-${configId}`,
       name: `Bidirectional sync current note with ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
-        const cfg = this.settings.configs.find(c => c.id === configId);
+        const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current');
@@ -202,7 +200,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: `bidirectional-sync-modified-${configId}`,
       name: `Bidirectional sync modified notes with ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
-        const cfg = this.settings.configs.find(c => c.id === configId);
+        const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'modified');
         return true;
@@ -213,7 +211,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       id: `bidirectional-sync-all-${configId}`,
       name: `Bidirectional sync all notes with ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
-        const cfg = this.settings.configs.find(c => c.id === configId);
+        const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'all');
         return true;
@@ -244,8 +242,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
       }
     }
 
+    const credIndex = buildCredentialIndex(this.settings);
     for (const config of this.settings.configs) {
-      const credential = findCredentialForConfig(this.settings, config);
+      const credential = credIndex.get(config.credentialId);
       if (credential) {
         this.configManager.updateConfig(config.id, config, credential);
       } else {
@@ -253,7 +252,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       }
     }
 
-    const newFingerprint = this.getCommandFingerprint();
+    const newFingerprint = this.getCommandFingerprint(credIndex);
     if (this.commandFingerprint !== newFingerprint) {
       this.commandFingerprint = newFingerprint;
       this.reregisterAllCommands();

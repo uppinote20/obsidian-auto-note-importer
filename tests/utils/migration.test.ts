@@ -151,5 +151,35 @@ describe('migrateSettings', () => {
       const result = migrateSettings(v2);
       expect(result!.configs[0].conflictResolution).toBe('manual');
     });
+
+    it('treats malformed configs/credentials arrays as empty', () => {
+      const v2 = {
+        version: 2,
+        credentials: null,
+        configs: 'not-an-array',
+        activeConfigId: '', debugMode: false,
+      };
+      const result = migrateSettings(v2);
+      expect(result!.version).toBe(3);
+      expect(result!.credentials).toEqual([]);
+      expect(result!.configs).toEqual([]);
+    });
+
+    it('defaults autoSyncComputedFields to false when both v2 and v3 fields are absent', () => {
+      const v2 = {
+        version: 2, credentials: [],
+        configs: [{ id: 'c', name: 'n', credentialId: '' }],
+        activeConfigId: '', debugMode: false,
+      };
+      const result = migrateSettings(v2);
+      expect(result!.configs[0].autoSyncComputedFields).toBe(false);
+    });
+  });
+
+  describe('future-version safety', () => {
+    it('returns null for version > current (refuses to downgrade)', () => {
+      const v99 = { version: 99, credentials: [], configs: [], activeConfigId: '', debugMode: false };
+      expect(migrateSettings(v99)).toBeNull();
+    });
   });
 });
