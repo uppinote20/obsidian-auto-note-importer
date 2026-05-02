@@ -152,6 +152,19 @@ describe('migrateSettings', () => {
       expect(result!.configs[0].conflictResolution).toBe('manual');
     });
 
+    it('drops null/non-object elements inside a valid configs array', () => {
+      const v2 = {
+        version: 2,
+        credentials: [],
+        configs: [null, 42, { id: 'c1', name: 'real', credentialId: '' }, undefined],
+        activeConfigId: '', debugMode: false,
+      };
+      const result = migrateSettings(v2);
+      expect(result!.configs).toHaveLength(1);
+      expect(result!.configs[0].id).toBe('c1');
+      expect(result!.configs[0].name).toBe('real');
+    });
+
     it('treats malformed configs/credentials arrays as empty', () => {
       const v2 = {
         version: 2,

@@ -23,7 +23,6 @@ function migrateConflictResolution(value: unknown): ConflictResolutionMode {
     return value as ConflictResolutionMode;
   }
   // v2 → v3 rename
-
   if (value === 'airtable-wins') {
     return 'remote-wins';
   }
@@ -106,9 +105,17 @@ function buildConfigFromRecord(
   };
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function migrateV2toV3(record: Record<string, unknown>): AutoNoteImporterSettings {
-  const credentials = Array.isArray(record['credentials']) ? record['credentials'] as Credential[] : [];
-  const rawConfigs = Array.isArray(record['configs']) ? record['configs'] as Record<string, unknown>[] : [];
+  const credentials = Array.isArray(record['credentials'])
+    ? (record['credentials'] as unknown[]).filter(isPlainRecord) as unknown as Credential[]
+    : [];
+  const rawConfigs = Array.isArray(record['configs'])
+    ? (record['configs'] as unknown[]).filter(isPlainRecord)
+    : [];
 
   const configs = rawConfigs.map(cfg => buildConfigFromRecord(cfg, generateId()));
 
