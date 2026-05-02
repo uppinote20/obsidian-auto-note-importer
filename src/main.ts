@@ -188,7 +188,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
     this.addCommand({
       id: `bidirectional-sync-current-${configId}`,
-      name: `Bidirectional sync current note${suffix}`,
+      name: `Bidirectional sync current note with ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
@@ -200,7 +200,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
     this.addCommand({
       id: `bidirectional-sync-modified-${configId}`,
-      name: `Bidirectional sync modified notes${suffix}`,
+      name: `Bidirectional sync modified notes with ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
@@ -211,7 +211,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
     this.addCommand({
       id: `bidirectional-sync-all-${configId}`,
-      name: `Bidirectional sync all notes${suffix}`,
+      name: `Bidirectional sync all notes with ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
