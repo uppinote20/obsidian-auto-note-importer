@@ -151,5 +151,89 @@ describe('migrateSettings', () => {
       const result = migrateSettings(v2);
       expect(result!.configs[0].conflictResolution).toBe('manual');
     });
+
+    it('drops malformed credentials and preserves valid variants', () => {
+      const v2 = {
+        version: 2,
+        credentials: [
+          // valid airtable
+          { id: 'c1', name: 'Air', type: 'airtable', apiKey: 'k' },
+          // valid notion (missing optional name → empty)
+          { id: 'c2', type: 'notion', integrationToken: 'tok' },
+          // valid seatable (missing serverUrl → empty fallback)
+          { id: 'c3', name: 'Sea', type: 'seatable', apiToken: 't' },
+          // valid supabase
+          { id: 'c4', name: 'Sup', type: 'supabase', projectUrl: 'https://x.supabase.co', apiKey: 'anon' },
+          // valid custom-api (missing authValue → empty fallback)
+          { id: 'c5', name: 'Custom', type: 'custom-api', baseUrl: 'https://api.test', authHeader: 'X-API-Key' },
+          // missing id → dropped
+          { name: 'no-id', type: 'airtable', apiKey: 'x' },
+          // unknown type → dropped
+          { id: 'c-bad', name: 'bad', type: 'unknown-provider' },
+          // numeric id → dropped (type narrowing rejects)
+          { id: 99, name: 'numeric', type: 'airtable', apiKey: 'x' },
+        ],
+        configs: [],
+        activeConfigId: '', debugMode: false,
+      };
+      const result = migrateSettings(v2);
+      expect(result!.credentials).toHaveLength(5);
+      const ids = result!.credentials.map(c => c.id);
+      expect(ids).toEqual(['c1', 'c2', 'c3', 'c4', 'c5']);
+      // Defaults applied for missing fields across all variants
+      const c2 = result!.credentials.find(c => c.id === 'c2')!;
+      expect(c2.name).toBe('');
+      const c3 = result!.credentials.find(c => c.id === 'c3') as { type: 'seatable'; serverUrl: string };
+      expect(c3.serverUrl).toBe('');
+      const c4 = result!.credentials.find(c => c.id === 'c4') as { type: 'supabase'; projectUrl: string; apiKey: string };
+      expect(c4.projectUrl).toBe('https://x.supabase.co');
+      expect(c4.apiKey).toBe('anon');
+      const c5 = result!.credentials.find(c => c.id === 'c5') as { type: 'custom-api'; baseUrl: string; authHeader: string; authValue: string };
+      expect(c5.authValue).toBe('');
+      expect(c5.authHeader).toBe('X-API-Key');
+    });
+
+    it('drops null/non-object elements inside a valid configs array', () => {
+      const v2 = {
+        version: 2,
+        credentials: [],
+        configs: [null, 42, { id: 'c1', name: 'real', credentialId: '' }, undefined],
+        activeConfigId: '', debugMode: false,
+      };
+      const result = migrateSettings(v2);
+      expect(result!.configs).toHaveLength(1);
+      expect(result!.configs[0].id).toBe('c1');
+      expect(result!.configs[0].name).toBe('real');
+    });
+
+    it('treats malformed configs/credentials arrays as empty', () => {
+      const v2 = {
+        version: 2,
+        credentials: null,
+        configs: 'not-an-array',
+        activeConfigId: '', debugMode: false,
+      };
+      const result = migrateSettings(v2);
+      expect(result!.version).toBe(3);
+      expect(result!.credentials).toEqual([]);
+      expect(result!.configs).toEqual([]);
+    });
+
+    it('defaults autoSyncComputedFields to false when both v2 and v3 fields are absent', () => {
+      const v2 = {
+        version: 2, credentials: [],
+        configs: [{ id: 'c', name: 'n', credentialId: '' }],
+        activeConfigId: '', debugMode: false,
+      };
+      const result = migrateSettings(v2);
+      expect(result!.configs[0].autoSyncComputedFields).toBe(false);
+    });
+  });
+
+  describe('future-version safety', () => {
+    it('returns null for version > current (refuses to downgrade)', () => {
+      const v99 = { version: 99, credentials: [], configs: [], activeConfigId: '', debugMode: false };
+      expect(migrateSettings(v99)).toBeNull();
+    });
   });
 });

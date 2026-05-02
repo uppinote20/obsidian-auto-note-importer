@@ -37,3 +37,23 @@ export function findCredentialForConfig(
 ): Credential | undefined {
   return settings.credentials.find(c => c.id === config.credentialId);
 }
+
+/**
+ * Looks up a config by id. Returns `undefined` if not found.
+ */
+export function findConfigById(
+  settings: AutoNoteImporterSettings,
+  configId: string,
+): ConfigEntry | undefined {
+  return settings.configs.find(c => c.id === configId);
+}
+
+/**
+ * Builds a `Map<credentialId, Credential>` for O(1) lookups when iterating configs.
+ * Call once at the top of a settings-traversing operation and reuse.
+ */
+export function buildCredentialIndex(
+  settings: AutoNoteImporterSettings,
+): Map<string, Credential> {
+  return new Map(settings.credentials.map(c => [c.id, c]));
+}
