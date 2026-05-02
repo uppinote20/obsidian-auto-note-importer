@@ -3,10 +3,10 @@
  */
 
 import { vi } from 'vitest';
-import type { DatabaseProvider, SyncResult, FieldTypeMapper } from '../../src/types';
+import type { DatabaseProvider, SyncResult, FieldTypeMapper, CredentialType } from '../../src/types';
 
 export type MockDatabaseProvider = {
-  providerType: 'airtable';
+  providerType: CredentialType;
   capabilities: DatabaseProvider['capabilities'];
   fieldTypeMapper: FieldTypeMapper;
   fetchNotes: ReturnType<typeof vi.fn>;

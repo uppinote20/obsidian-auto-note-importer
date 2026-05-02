@@ -73,7 +73,7 @@ export class ConfigInstance {
       this.app,
       this.settings,
       async (files) => {
-        const mode: SyncMode = this.settings.autoSyncFormulas ? 'bidirectional' : 'to-airtable';
+        const mode: SyncMode = this.settings.autoSyncFormulas ? 'bidirectional' : 'push';
         await this.syncQueue.enqueue(mode, 'modified', files.map(f => f.path));
       }
     );
@@ -190,7 +190,7 @@ export class ConfigInstance {
   private startScheduler(config: ConfigEntry): void {
     if (config.syncInterval > 0) {
       this.schedulerIntervalId = setInterval(
-        () => this.syncQueue.enqueue('from-airtable', 'all'),
+        () => this.syncQueue.enqueue('pull', 'all'),
         config.syncInterval * 60 * 1000,
       );
     }

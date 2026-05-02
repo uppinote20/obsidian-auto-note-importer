@@ -166,7 +166,7 @@ describe('ConfigInstance', () => {
       instance.destroy();
     });
 
-    it('should enqueue from-airtable sync on scheduler tick', () => {
+    it('should enqueue pull sync on scheduler tick', () => {
       const config = createConfig({ enabled: true, syncInterval: 1 });
       const credential = createCredential();
 
@@ -175,7 +175,7 @@ describe('ConfigInstance', () => {
 
       vi.advanceTimersByTime(60_000);
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('from-airtable', 'all');
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all');
 
       instance.destroy();
     });
@@ -312,9 +312,9 @@ describe('ConfigInstance', () => {
       const instance = new ConfigInstance(mockApp as unknown as App, config, credential, shared);
       const syncQueueInstance = vi.mocked(SyncQueue).mock.instances[0];
 
-      instance.enqueueSyncRequest('from-airtable', 'all');
+      instance.enqueueSyncRequest('pull', 'all');
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('from-airtable', 'all', undefined);
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined);
 
       instance.destroy();
     });
@@ -326,9 +326,9 @@ describe('ConfigInstance', () => {
       const instance = new ConfigInstance(mockApp as unknown as App, config, credential, shared);
       const syncQueueInstance = vi.mocked(SyncQueue).mock.instances[0];
 
-      instance.enqueueSyncRequest('to-airtable', 'modified', ['file1.md', 'file2.md']);
+      instance.enqueueSyncRequest('push', 'modified', ['file1.md', 'file2.md']);
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('to-airtable', 'modified', ['file1.md', 'file2.md']);
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('push', 'modified', ['file1.md', 'file2.md']);
 
       instance.destroy();
     });

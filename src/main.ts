@@ -1,7 +1,7 @@
 /**
  * Auto Note Importer - Main Plugin Entry Point
  *
- * Orchestrates Airtable <-> Obsidian sync via ConfigManager and per-config service stacks.
+ * Orchestrates remote DatabaseProvider <-> Obsidian sync via ConfigManager and per-config service stacks.
  *
  * @handbook 4.2-sync-architecture
  * @handbook 9.2-service-initialization-order
@@ -12,12 +12,13 @@
 
 import { Plugin, normalizePath } from "obsidian";
 import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
-import { DEFAULT_SETTINGS } from './types';
+import { DEFAULT_SETTINGS, CREDENTIAL_TYPE_LABELS } from './types';
 import { FieldCache } from './services';
 import { ConfigManager } from './core';
 import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
 import { migrateSettings } from './utils/migration';
+import { findCredentialForConfig } from './utils';
 
 /**
  * Main plugin class for Auto Note Importer.
@@ -69,7 +70,10 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   private getCommandFingerprint(): string {
     return this.settings.configs
-      .map(c => `${c.id}:${c.name}:${c.enabled}:${c.bidirectionalSync}`)
+      .map(c => {
+        const credType = findCredentialForConfig(this.settings, c)?.type ?? '';
+        return `${c.id}:${c.name}:${c.enabled}:${c.bidirectionalSync}:${credType}`;
+      })
       .join('|');
   }
 
@@ -113,71 +117,75 @@ export default class AutoNoteImporterPlugin extends Plugin {
   /**
    * Registers sync commands for a single config entry.
    * Uses checkCallback with dynamic lookup to avoid capturing stale references.
+   * Command names include the provider label derived from the linked credential type.
    */
   private registerCommandsForConfig(config: ConfigEntry): void {
     const configId = config.id;
+    const credential = findCredentialForConfig(this.settings, config);
+    // Configs with an orphaned credentialId register no commands. Recovery is automatic
+    // when a credential is (re-)linked: saveSettings() detects the fingerprint change
+    // and triggers reregisterAllCommands().
+    if (!credential) return;
+    const providerLabel = CREDENTIAL_TYPE_LABELS[credential.type];
     const suffix = ` \u2014 ${config.name}`;
 
-    // From Airtable commands
     this.addCommand({
-      id: `sync-from-airtable-${configId}`,
-      name: `Sync current note from Airtable${suffix}`,
+      id: `sync-pull-${configId}`,
+      name: `Sync current note from ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('from-airtable', 'current');
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'current');
         return true;
       },
     });
 
     this.addCommand({
-      id: `sync-all-from-airtable-${configId}`,
-      name: `Sync all notes from Airtable${suffix}`,
+      id: `sync-pull-all-${configId}`,
+      name: `Sync all notes from ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('from-airtable', 'all');
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'all');
         return true;
       },
     });
 
-    // To Airtable commands (gated by bidirectionalSync)
     this.addCommand({
-      id: `sync-current-to-airtable-${configId}`,
-      name: `Sync current note to Airtable${suffix}`,
+      id: `sync-push-current-${configId}`,
+      name: `Sync current note to ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('to-airtable', 'current');
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'current');
         return true;
       },
     });
 
     this.addCommand({
-      id: `sync-modified-to-airtable-${configId}`,
-      name: `Sync modified notes to Airtable${suffix}`,
+      id: `sync-push-modified-${configId}`,
+      name: `Sync modified notes to ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('to-airtable', 'modified');
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'modified');
         return true;
       },
     });
 
     this.addCommand({
-      id: `sync-all-to-airtable-${configId}`,
-      name: `Sync all notes to Airtable${suffix}`,
+      id: `sync-push-all-${configId}`,
+      name: `Sync all notes to ${providerLabel}${suffix}`,
       checkCallback: (checking) => {
         const cfg = this.settings.configs.find(c => c.id === configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('to-airtable', 'all');
+        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'all');
         return true;
       },
     });
 
-    // Bidirectional commands
     this.addCommand({
       id: `bidirectional-sync-current-${configId}`,
       name: `Bidirectional sync current note${suffix}`,
@@ -237,7 +245,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
     }
 
     for (const config of this.settings.configs) {
-      const credential = this.settings.credentials.find(c => c.id === config.credentialId);
+      const credential = findCredentialForConfig(this.settings, config);
       if (credential) {
         this.configManager.updateConfig(config.id, config, credential);
       } else {

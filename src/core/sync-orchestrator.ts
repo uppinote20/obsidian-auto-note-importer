@@ -1,9 +1,12 @@
 /**
- * Sync Orchestrator - Coordinates all sync operations between Airtable and Obsidian.
+ * Sync Orchestrator - Coordinates sync operations between a DatabaseProvider and Obsidian.
  *
  * Extracted from main.ts to separate sync orchestration from plugin lifecycle management.
+ * User-facing labels (status bar, Notice) derive the provider name from
+ * `provider.providerType` so the same orchestrator works for any provider.
  *
  * @handbook 4.2-sync-architecture
+ * @handbook 4.4-provider-abstraction
  * @handbook 5.3-statusbar-abstraction
  * @handbook 9.1-sync-flow
  * @tested tests/core/sync-orchestrator.test.ts
@@ -12,6 +15,7 @@
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
 import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseProvider } from '../types';
+import { CREDENTIAL_TYPE_LABELS } from '../types';
 import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from '../constants';
 import { FieldCache } from '../services';
 import { ConflictResolver } from './conflict-resolver';
@@ -62,22 +66,28 @@ export class SyncOrchestrator {
     this.settings = settings;
   }
 
+  /** Display name of the linked provider (Airtable / SeaTable / …) for user-facing strings. */
+  private get providerLabel(): string {
+    return CREDENTIAL_TYPE_LABELS[this.provider.providerType];
+  }
+
   async processSyncRequest(mode: SyncMode, scope: SyncScope, filePaths?: string[]): Promise<void> {
     const statusBarItem = this.statusBar.createItem();
+    const label = this.providerLabel;
 
     try {
       switch (mode) {
-        case 'from-airtable':
+        case 'pull':
           if (scope === 'current') {
-            statusBarItem.setText("Syncing current note from Airtable...");
+            statusBarItem.setText(`Syncing current note from ${label}...`);
             await this.syncCurrentFromAirtable();
           } else {
-            statusBarItem.setText("Syncing from Airtable...");
+            statusBarItem.setText(`Syncing from ${label}...`);
             await this.syncFromAirtable();
           }
           break;
 
-        case 'to-airtable':
+        case 'push':
         case 'bidirectional': {
           const files = filePaths
             ? filePaths.map(p => this.app.vault.getAbstractFileByPath(p)).filter((f): f is TFile => f instanceof TFile)
@@ -88,12 +98,12 @@ export class SyncOrchestrator {
             return;
           }
 
-          if (mode === 'to-airtable') {
-            statusBarItem.setText(`Syncing ${files.length} file(s) to Airtable...`);
+          if (mode === 'push') {
+            statusBarItem.setText(`Syncing ${files.length} file(s) to ${label}...`);
             await this.syncFilesToAirtable(files);
-            new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
+            new Notice(`Auto Note Importer: Synced ${files.length} file(s) to ${label}`);
           } else {
-            statusBarItem.setText(`Phase 1/2 - Syncing ${files.length} file(s) to Airtable...`);
+            statusBarItem.setText(`Phase 1/2 - Syncing ${files.length} file(s) to ${label}...`);
             await this.syncFilesToAirtable(files);
 
             if (this.settings.autoSyncFormulas) {
@@ -109,7 +119,7 @@ export class SyncOrchestrator {
             } else {
               // Bases file is not generated here because syncFromAirtable() is skipped,
               // so no remoteNotes are available to derive column definitions from.
-              new Notice(`Auto Note Importer: Synced ${files.length} file(s) to Airtable`);
+              new Notice(`Auto Note Importer: Synced ${files.length} file(s) to ${label}`);
             }
           }
           break;
@@ -189,17 +199,18 @@ export class SyncOrchestrator {
       return;
     }
 
+    const label = this.providerLabel;
     this.fileWatcher.setSyncing(true);
     try {
       const remoteNote = await this.provider.fetchRecord(recordId);
       if (!remoteNote) {
-        new Notice("Auto Note Importer: Record not found in Airtable");
+        new Notice(`Auto Note Importer: Record not found in ${label}`);
         return;
       }
 
       const result = await this.createNoteFromRemote(remoteNote);
       if (result === "updated") {
-        new Notice("Auto Note Importer: Current note updated from Airtable");
+        new Notice(`Auto Note Importer: Current note updated from ${label}`);
       } else if (result === "skipped") {
         new Notice("Auto Note Importer: No changes detected");
       }
