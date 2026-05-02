@@ -36,7 +36,7 @@ export interface ConfigEntry {
   conflictResolution: ConflictResolutionMode;
   watchForChanges: boolean;
   fileWatchDebounce: number;
-  autoSyncFormulas: boolean;
+  autoSyncComputedFields: boolean;
   formulaSyncDelay: number;
 
   generateBasesFile: boolean;
@@ -60,7 +60,7 @@ export const DEFAULT_CONFIG_ENTRY: Omit<ConfigEntry, 'id' | 'name' | 'credential
   conflictResolution: 'manual',
   watchForChanges: false,
   fileWatchDebounce: 2000,
-  autoSyncFormulas: false,
+  autoSyncComputedFields: false,
   formulaSyncDelay: 1500,
   generateBasesFile: false,
   basesFileLocation: 'vault-root',

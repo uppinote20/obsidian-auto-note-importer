@@ -106,7 +106,7 @@ export class SyncOrchestrator {
             statusBarItem.setText(`Phase 1/2 - Syncing ${files.length} file(s) to ${label}...`);
             await this.pushFiles(files);
 
-            if (this.settings.autoSyncFormulas) {
+            if (this.settings.autoSyncComputedFields) {
               const delay = this.settings.debugMode
                 ? this.settings.formulaSyncDelay * DEBUG_DELAY_MULTIPLIER
                 : this.settings.formulaSyncDelay;

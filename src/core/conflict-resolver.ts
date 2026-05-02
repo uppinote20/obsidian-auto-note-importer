@@ -74,8 +74,8 @@ export class ConflictResolver {
       case 'obsidian-wins':
         return this.provider.updateRecord(recordId, fieldsToSync);
 
-      case 'airtable-wins':
-        return this.resolveAirtableWins(conflicts, fieldsToSync, recordId);
+      case 'remote-wins':
+        return this.resolveRemoteWins(conflicts, fieldsToSync, recordId);
 
       case 'manual':
         return this.resolveManual(conflicts, recordId);
@@ -90,7 +90,7 @@ export class ConflictResolver {
   /**
    * Resolves conflicts with Airtable winning.
    */
-  private async resolveAirtableWins(
+  private async resolveRemoteWins(
     conflicts: ConflictInfo[],
     fieldsToSync: Record<string, unknown>,
     recordId: string

@@ -23,7 +23,7 @@ function makeConfig(overrides: Partial<ConfigEntry> & { id: string; name: string
     conflictResolution: 'manual',
     watchForChanges: false,
     fileWatchDebounce: 2000,
-    autoSyncFormulas: false,
+    autoSyncComputedFields: false,
     formulaSyncDelay: 3000,
     generateBasesFile: false,
     basesFileLocation: 'vault-root',

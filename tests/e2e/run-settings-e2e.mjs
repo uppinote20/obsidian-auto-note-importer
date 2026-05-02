@@ -503,10 +503,10 @@ async function setConfigAndQuery(overrides) {
     await test('summary / sync — shows conflictResolution only when not watching', async () => {
       const infos = await setConfigAndQuery({
         baseId: 'appTEST', tableId: 'tblTEST',
-        bidirectionalSync: true, conflictResolution: 'airtable-wins', watchForChanges: false,
+        bidirectionalSync: true, conflictResolution: 'remote-wins', watchForChanges: false,
       });
       const card = infos.find(c => c.title === 'Bidirectional Sync');
-      const pass = card && card.summary === 'airtable-wins';
+      const pass = card && card.summary === 'remote-wins';
       return { pass, detail: `summary="${card?.summary}"` };
     });
 

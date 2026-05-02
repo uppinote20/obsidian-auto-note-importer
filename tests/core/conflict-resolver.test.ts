@@ -19,7 +19,7 @@ describe('ConflictResolver', () => {
   let mockProvider: MockDatabaseProvider;
   let resolver: ConflictResolver;
 
-  const createSettings = (conflictResolution: 'obsidian-wins' | 'airtable-wins' | 'manual'): LegacySettings => ({
+  const createSettings = (conflictResolution: 'obsidian-wins' | 'remote-wins' | 'manual'): LegacySettings => ({
     ...DEFAULT_LEGACY_SETTINGS,
     apiKey: 'key',
     baseId: 'base123',
@@ -42,8 +42,8 @@ describe('ConflictResolver', () => {
       expect(resolver.shouldSkipConflictDetection()).toBe(true);
     });
 
-    it('should return false for airtable-wins mode (CR-2.2)', () => {
-      const settings = createSettings('airtable-wins');
+    it('should return false for remote-wins mode (CR-2.2)', () => {
+      const settings = createSettings('remote-wins');
       resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(false);
@@ -59,7 +59,7 @@ describe('ConflictResolver', () => {
 
   describe('detectConflicts', () => {
     it('should return empty array when record not found', async () => {
-      const settings = createSettings('airtable-wins');
+      const settings = createSettings('remote-wins');
       resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       mockProvider.fetchRecord.mockResolvedValue(null);
@@ -74,7 +74,7 @@ describe('ConflictResolver', () => {
     });
 
     it('should detect conflicting field values', async () => {
-      const settings = createSettings('airtable-wins');
+      const settings = createSettings('remote-wins');
       resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       mockProvider.fetchRecord.mockResolvedValue({
@@ -105,7 +105,7 @@ describe('ConflictResolver', () => {
     });
 
     it('should not detect conflict when values are equal', async () => {
-      const settings = createSettings('airtable-wins');
+      const settings = createSettings('remote-wins');
       resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       mockProvider.fetchRecord.mockResolvedValue({
@@ -123,7 +123,7 @@ describe('ConflictResolver', () => {
     });
 
     it('should not detect conflict for new fields in obsidian', async () => {
-      const settings = createSettings('airtable-wins');
+      const settings = createSettings('remote-wins');
       resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       mockProvider.fetchRecord.mockResolvedValue({
@@ -141,7 +141,7 @@ describe('ConflictResolver', () => {
     });
 
     it('should propagate fetch errors to caller', async () => {
-      const settings = createSettings('airtable-wins');
+      const settings = createSettings('remote-wins');
       resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
       mockProvider.fetchRecord.mockRejectedValue(new Error('Network error'));
@@ -185,9 +185,9 @@ describe('ConflictResolver', () => {
       });
     });
 
-    describe('airtable-wins mode (CR-1.2)', () => {
+    describe('remote-wins mode (CR-1.2)', () => {
       it('should skip conflicted fields and sync non-conflicted fields only', async () => {
-        const settings = createSettings('airtable-wins');
+        const settings = createSettings('remote-wins');
         resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
         const conflicts = [createConflict('field1')];
@@ -211,7 +211,7 @@ describe('ConflictResolver', () => {
       });
 
       it('should return success without calling updateRecord if all fields conflicted', async () => {
-        const settings = createSettings('airtable-wins');
+        const settings = createSettings('remote-wins');
         resolver = new ConflictResolver(settings, mockProvider as unknown as DatabaseProvider);
 
         const conflicts = [createConflict('field1')];
@@ -249,7 +249,7 @@ describe('ConflictResolver', () => {
 
       expect(resolver.shouldSkipConflictDetection()).toBe(true);
 
-      const newSettings = createSettings('airtable-wins');
+      const newSettings = createSettings('remote-wins');
       resolver.updateSettings(newSettings);
 
       expect(resolver.shouldSkipConflictDetection()).toBe(false);

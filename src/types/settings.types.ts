@@ -8,8 +8,9 @@ import type { ConfigEntry } from './config.types';
 
 /**
  * Conflict resolution modes for bidirectional sync.
+ * `remote-wins` was named `airtable-wins` in settings v2; v3 migration renames it.
  */
-export type ConflictResolutionMode = 'obsidian-wins' | 'airtable-wins' | 'manual';
+export type ConflictResolutionMode = 'obsidian-wins' | 'remote-wins' | 'manual';
 
 /**
  * Location options for the generated Bases database file.
@@ -41,7 +42,7 @@ export interface LegacySettings {
   conflictResolution: ConflictResolutionMode;
   watchForChanges: boolean;
   fileWatchDebounce: number;
-  autoSyncFormulas: boolean;
+  autoSyncComputedFields: boolean;
   formulaSyncDelay: number;
   generateBasesFile: boolean;
   basesFileLocation: BasesFileLocation;
@@ -51,10 +52,15 @@ export interface LegacySettings {
 }
 
 /**
- * Plugin settings interface (v2 multi-config).
+ * Plugin settings interface (v3 multi-config with provider-agnostic field names).
+ *
+ * Version history:
+ *   v1 (no version field): legacy single-config flat shape
+ *   v2: multi-config (`credentials[]` + `configs[]`)
+ *   v3: rename `autoSyncFormulas` → `autoSyncComputedFields`, `airtable-wins` → `remote-wins`
  */
 export interface AutoNoteImporterSettings {
-  version: 2;
+  version: 3;
   credentials: Credential[];
   configs: ConfigEntry[];
   activeConfigId: string;
@@ -80,7 +86,7 @@ export const DEFAULT_LEGACY_SETTINGS: LegacySettings = {
   conflictResolution: 'manual',
   watchForChanges: true,
   fileWatchDebounce: 2000,
-  autoSyncFormulas: true,
+  autoSyncComputedFields: true,
   formulaSyncDelay: 1500,
   generateBasesFile: false,
   basesFileLocation: 'vault-root',
@@ -93,7 +99,7 @@ export const DEFAULT_LEGACY_SETTINGS: LegacySettings = {
  * Default values for the plugin settings.
  */
 export const DEFAULT_SETTINGS: AutoNoteImporterSettings = {
-  version: 2,
+  version: 3,
   credentials: [],
   configs: [],
   activeConfigId: '',

@@ -147,8 +147,8 @@ describe('SyncOrchestrator', () => {
   });
 
   describe('processSyncRequest — bidirectional', () => {
-    it('should execute two phases when autoSyncFormulas is true', async () => {
-      settings.autoSyncFormulas = true;
+    it('should execute two phases when autoSyncComputedFields is true', async () => {
+      settings.autoSyncComputedFields = true;
       settings.formulaSyncDelay = 0;
       orchestrator.updateSettings(settings);
 
@@ -175,8 +175,8 @@ describe('SyncOrchestrator', () => {
       expect(mockProvider.fetchNotes).toHaveBeenCalled();
     });
 
-    it('should skip phase 2 when autoSyncFormulas is false', async () => {
-      settings.autoSyncFormulas = false;
+    it('should skip phase 2 when autoSyncComputedFields is false', async () => {
+      settings.autoSyncComputedFields = false;
       orchestrator.updateSettings(settings);
 
       const file = createMockTFile('Sync/note.md');
