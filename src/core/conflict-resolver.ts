@@ -88,7 +88,7 @@ export class ConflictResolver {
   }
 
   /**
-   * Resolves conflicts with Airtable winning.
+   * Resolves conflicts by letting the remote win.
    */
   private async resolveRemoteWins(
     conflicts: ConflictInfo[],
@@ -106,7 +106,7 @@ export class ConflictResolver {
 
     if (conflicts.length > 0) {
       const conflictFields = conflicts.map(c => c.field).join(', ');
-      new Notice(`Auto Note Importer: Conflicted fields ignored (Airtable wins): ${conflictFields}`);
+      new Notice(`Auto Note Importer: Conflicted fields ignored (remote wins): ${conflictFields}`);
     }
 
     if (Object.keys(nonConflictedFields).length > 0) {

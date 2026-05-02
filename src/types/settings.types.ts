@@ -25,7 +25,7 @@ export type SyncScope = 'current' | 'modified' | 'all';
 /**
  * Legacy single-config settings interface.
  * Used by services internally via ConfigInstance.buildSettingsFromConfig().
- * @deprecated Use AutoNoteImporterSettings (v2 multi-config) for plugin-level settings.
+ * @deprecated Use AutoNoteImporterSettings (v3 multi-config) for plugin-level settings.
  */
 export interface LegacySettings {
   apiKey: string;
