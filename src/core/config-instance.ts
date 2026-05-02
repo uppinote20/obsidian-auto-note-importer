@@ -73,7 +73,7 @@ export class ConfigInstance {
       this.app,
       this.settings,
       async (files) => {
-        const mode: SyncMode = this.settings.autoSyncFormulas ? 'bidirectional' : 'push';
+        const mode: SyncMode = this.settings.autoSyncComputedFields ? 'bidirectional' : 'push';
         await this.syncQueue.enqueue(mode, 'modified', files.map(f => f.path));
       }
     );

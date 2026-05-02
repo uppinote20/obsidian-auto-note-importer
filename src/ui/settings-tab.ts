@@ -984,8 +984,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .setDesc("How to handle conflicts when the same field is modified in both places.")
         .addDropdown(dropdown => dropdown
           .addOption('manual', 'Manual resolution (show conflicts)')
-          .addOption('obsidian-wins', 'Obsidian wins (overwrite Airtable)')
-          .addOption('airtable-wins', 'Airtable wins (overwrite Obsidian)')
+          .addOption('obsidian-wins', 'Obsidian wins (overwrite remote)')
+          .addOption('remote-wins', 'Remote wins (overwrite Obsidian)')
           .setValue(config.conflictResolution)
           .onChange(async (value) => {
             config.conflictResolution = value as ConflictResolutionMode;
@@ -1011,20 +1011,20 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       }
 
       new Setting(containerEl)
-        .setName("Auto-sync formulas and relations")
-        .setDesc("Automatically fetch computed formula and relation results after syncing.")
+        .setName("Auto-sync server-computed fields")
+        .setDesc("Automatically fetch fields the remote computes server-side (formulas, lookups, rollups, generated columns) after each sync.")
         .addToggle(toggle => toggle
-          .setValue(config.autoSyncFormulas)
+          .setValue(config.autoSyncComputedFields)
           .onChange(async (value) => {
-            config.autoSyncFormulas = value;
+            config.autoSyncComputedFields = value;
             await this.plugin.saveSettings();
             this.debounceDisplay();
           }));
 
-      if (config.autoSyncFormulas) {
-        this.renderNumberSetting(containerEl, "Formula sync delay (milliseconds)",
-          "How long to wait for Airtable to compute formulas before fetching.", "1500",
-          config.formulaSyncDelay, "Formula sync delay",
+      if (config.autoSyncComputedFields) {
+        this.renderNumberSetting(containerEl, "Computed-field sync delay (milliseconds)",
+          "How long to wait for the remote to compute fields before fetching.", "1500",
+          config.formulaSyncDelay, "Computed-field sync delay",
           (num) => { config.formulaSyncDelay = num; }, undefined, "100");
       }
     }

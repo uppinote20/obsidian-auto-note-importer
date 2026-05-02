@@ -95,7 +95,7 @@ const HELPERS = `
     const cfg = config || getConfig();
     const cred = getCredential(cfg);
     cfg.conflictResolution = mode;
-    if (autoFormula !== undefined) cfg.autoSyncFormulas = autoFormula;
+    if (autoFormula !== undefined) cfg.autoSyncComputedFields = autoFormula;
     getInstance(cfg).updateSettings(cfg, cred);
   }
 
@@ -459,11 +459,11 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `Count=${r.count}` };
     });
 
-    await test('push / all / airtable-wins', async () => {
+    await test('push / all / remote-wins', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
-        setMode('airtable-wins');
+        setMode('remote-wins');
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
         await modifyCount(file, 9999);
         await enqueueSync('push', 'all');
@@ -475,11 +475,11 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `Count=${r.count} (expected 100)` };
     });
 
-    await test('push / current / airtable-wins', async () => {
+    await test('push / current / remote-wins', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
-        setMode('airtable-wins');
+        setMode('remote-wins');
         const file = await openAndActivate(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 7777);
         await enqueueSync('push', 'current');
@@ -508,7 +508,7 @@ async function test(name, fn) {
 
     // -- Bidirectional tests --
 
-    await test('bidirectional / all / autoSyncFormulas=true', async () => {
+    await test('bidirectional / all / autoSyncComputedFields=true', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
@@ -527,7 +527,7 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `localCal=${r.localCal}, airtableCal=${r.airtableCal}` };
     });
 
-    await test('bidirectional / all / autoSyncFormulas=false', async () => {
+    await test('bidirectional / all / autoSyncComputedFields=false', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
@@ -547,7 +547,7 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `push=${r.airtableCount}, cal=${r.localCal}(unchanged from ${r.oldCal})` };
     });
 
-    await test('bidirectional / current / autoSyncFormulas=true', async () => {
+    await test('bidirectional / current / autoSyncComputedFields=true', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
@@ -564,7 +564,7 @@ async function test(name, fn) {
       return { pass: r.pass, detail: `Cal=${r.localCal} (expected 246)` };
     });
 
-    await test('bidirectional / current / autoSyncFormulas=false', async () => {
+    await test('bidirectional / current / autoSyncComputedFields=false', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
@@ -593,7 +593,7 @@ async function test(name, fn) {
         const cfg = getConfig();
         const cred = getCredential();
 
-        const hasVersion = p.settings.version === 2;
+        const hasVersion = p.settings.version === 3;
         const hasConfigs = p.settings.configs.length >= 1;
         const hasCreds = p.settings.credentials.length >= 1;
         const hasBaseId = cfg.baseId && cfg.baseId.length > 0;
@@ -644,7 +644,7 @@ async function test(name, fn) {
           conflictResolution: 'manual',
           watchForChanges: false,
           fileWatchDebounce: 2000,
-          autoSyncFormulas: false,
+          autoSyncComputedFields: false,
           formulaSyncDelay: 3000,
           generateBasesFile: false,
           basesFileLocation: 'vault-root',
