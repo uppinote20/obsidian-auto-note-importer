@@ -124,6 +124,11 @@ export class SyncOrchestrator {
           }
           break;
         }
+
+        default: {
+          const _exhaustive: never = mode;
+          throw new Error(`Unknown sync mode: ${_exhaustive}`);
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
