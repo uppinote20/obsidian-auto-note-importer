@@ -111,9 +111,12 @@ if [ -n "$TARGET_ID" ]; then
 fi
 
 # 3. Run E2E tests
+# Pick which suite to run via $E2E_RUNNER (default: Airtable suite). e.g.
+#   E2E_RUNNER=tests/e2e/run-seatable-e2e.mjs bash tests/e2e/start-e2e.sh
+RUNNER="${E2E_RUNNER:-tests/e2e/run-e2e.mjs}"
 echo ""
-echo "=== Running E2E Tests ==="
-node tests/e2e/run-e2e.mjs "$@"
+echo "=== Running E2E Tests: ${RUNNER} ==="
+node "${RUNNER}" "$@"
 EXIT_CODE=$?
 
 # 4. Restart Obsidian in normal mode if tests passed
