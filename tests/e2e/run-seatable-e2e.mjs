@@ -19,16 +19,23 @@
  *        SEATABLE_TABLE_ID=0000        (defaults to '0000')
  *        SEATABLE_SERVER_URL=https://cloud.seatable.io   (default)
  *      See tests/e2e/.env.example.
- *   4. The target base must have a `Name` (text) column. Optional columns
- *      `Count` (number) and `Status` (single-select) unlock more checks;
- *      missing columns are skipped gracefully.
+ *   4. The target table needs a `Name` (text) column — that's it. The
+ *      harness ensures the rest (Count number / Description long-text /
+ *      DueDate date / Done checkbox / Status single-select / Cal formula
+ *      computed from `{Count} * 2`) idempotently. Existing schema is
+ *      preserved; only missing columns are added.
  *
  * What the harness does:
  *   - Adds (or reuses) a dedicated SeaTable credential + ConfigEntry
  *     keyed by E2E_CRED_ID / E2E_CFG_ID so it never touches your
  *     existing configs.
- *   - Inserts a handful of test rows via POST /rows/, exercises pull /
- *     push / bidirectional / Bases-file flows, then cleans up.
+ *   - Ensures all required columns exist on the target table (POST
+ *     /columns/, idempotent). SeaTable's API Gateway v2 doesn't expose
+ *     a working DELETE /columns/ endpoint, so columns added by the
+ *     harness persist on your base after the run — that's intentional.
+ *   - Inserts 3 test rows via POST /rows/, exercises pull / push /
+ *     bidirectional / Bases-file / read-only protection flows across
+ *     every supported writable column type, then cleans up rows.
  *
  * Usage:
  *   node tests/e2e/run-seatable-e2e.mjs              # leaves rows in place
@@ -61,7 +68,25 @@ if (!ENV.apiToken) {
   process.exit(2);
 }
 
-const TEST_ROW_NAMES = ['E2E-ST-Pull', 'E2E-ST-Push', 'E2E-ST-Bidir'];
+// Schema the harness ensures exists on the target table. Order matters
+// only for human readability of the resulting SeaTable view.
+const REQUIRED_COLUMNS = [
+  { name: 'Count',       type: 'number'        },
+  { name: 'Description', type: 'long-text'     },
+  { name: 'DueDate',     type: 'date'          },
+  { name: 'Done',        type: 'checkbox'      },
+  { name: 'Status',      type: 'single-select' },
+  // Formula columns reference earlier columns by name, so Count must
+  // already be present before this is added.
+  { name: 'Cal',         type: 'formula', column_data: { formula: '{Count} * 2', result_type: 'number' } },
+];
+
+const TEST_ROWS = [
+  { Name: 'E2E-ST-Pull',  Count: 100, Description: 'pull row',  DueDate: '2026-12-01', Done: false, Status: 'Todo'        },
+  { Name: 'E2E-ST-Push',  Count: 200, Description: 'push row',  DueDate: '2026-12-02', Done: false, Status: 'In progress' },
+  { Name: 'E2E-ST-Bidir', Count: 300, Description: 'bidir row', DueDate: '2026-12-03', Done: true,  Status: 'Done'         },
+];
+
 let testRowIds = [];
 
 // ---------------------------------------------------------------------------
@@ -102,31 +127,63 @@ const HELPERS = `
     return await r.json();
   }
 
-  function buildRowsUrl(tok, suffix = '') {
+  function buildBaseUrl(tok, path) {
     const server = (tok.dtable_server || '').replace(/\\/+$/, '');
-    return server + '/api/v2/dtables/' + tok.dtable_uuid + '/rows/' + suffix;
+    return server + '/api/v2/dtables/' + tok.dtable_uuid + '/' + path;
   }
 
-  async function insertRows(names) {
+  async function fetchMetadata() {
+    const tok = await exchangeBaseToken();
+    const r = await fetch(buildBaseUrl(tok, 'metadata/'), {
+      headers: { 'Authorization': 'Bearer ' + tok.access_token },
+    });
+    if (!r.ok) throw new Error('metadata failed: HTTP ' + r.status);
+    return await r.json();
+  }
+
+  async function ensureColumns(required) {
+    const cfg = getSeaConfig();
+    const meta = await fetchMetadata();
+    const tbl = meta.metadata.tables.find(t => t._id === cfg.tableId);
+    if (!tbl) throw new Error('Target table ' + cfg.tableId + ' not found in metadata');
+    const existing = new Set(tbl.columns.map(c => c.name));
+
+    const tok = await exchangeBaseToken();
+    const headers = { 'Authorization': 'Bearer ' + tok.access_token, 'Content-Type': 'application/json' };
+    const url = buildBaseUrl(tok, 'columns/');
+
+    const added = [];
+    const skipped = [];
+    for (const col of required) {
+      if (existing.has(col.name)) { skipped.push(col.name); continue; }
+      const body = { table_id: cfg.tableId, column_name: col.name, column_type: col.type };
+      if (col.column_data) body.column_data = col.column_data;
+      const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        throw new Error('Failed to add column ' + col.name + ': HTTP ' + r.status + ' ' + (j?.error_msg || j?.error_message || ''));
+      }
+      added.push(col.name);
+    }
+    return { added, skipped };
+  }
+
+  async function insertRows(rows) {
     const cfg = getSeaConfig();
     const tok = await exchangeBaseToken();
-    const r = await fetch(buildRowsUrl(tok), {
+    const r = await fetch(buildBaseUrl(tok, 'rows/'), {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + tok.access_token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        table_id: cfg.tableId,
-        rows: names.map(n => ({ Name: n })),
-      }),
+      body: JSON.stringify({ table_id: cfg.tableId, rows }),
     });
     const j = await r.json();
-    const ids = (j.row_ids || []).map(x => x._id || x);
-    return ids;
+    return (j.row_ids || []).map(x => x._id || x);
   }
 
   async function fetchRowFromSeaTable(rowId) {
     const cfg = getSeaConfig();
     const tok = await exchangeBaseToken();
-    const url = buildRowsUrl(tok, rowId + '/?table_id=' + encodeURIComponent(cfg.tableId) + '&convert_keys=true');
+    const url = buildBaseUrl(tok, 'rows/' + rowId + '/?table_id=' + encodeURIComponent(cfg.tableId) + '&convert_keys=true');
     const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + tok.access_token } });
     if (r.status === 404) return null;
     if (!r.ok) throw new Error('fetchRow failed: HTTP ' + r.status);
@@ -137,10 +194,23 @@ const HELPERS = `
     if (!rowIds || rowIds.length === 0) return;
     const cfg = getSeaConfig();
     const tok = await exchangeBaseToken();
-    await fetch(buildRowsUrl(tok), {
+    await fetch(buildBaseUrl(tok, 'rows/'), {
       method: 'DELETE',
       headers: { 'Authorization': 'Bearer ' + tok.access_token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ table_id: cfg.tableId, row_ids: rowIds }),
+    });
+  }
+
+  async function resetRowsToInitial(rowIds, initial) {
+    const cfg = getSeaConfig();
+    const tok = await exchangeBaseToken();
+    await fetch(buildBaseUrl(tok, 'rows/'), {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + tok.access_token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        table_id: cfg.tableId,
+        updates: rowIds.map((rid, i) => ({ row_id: rid, row: initial[i] })),
+      }),
     });
   }
 
@@ -165,11 +235,23 @@ const HELPERS = `
     return file;
   }
 
-  async function modifyName(file, newName) {
+  /**
+   * Replace a frontmatter line in-place. Supports any scalar value (text,
+   * number, boolean, ISO date). For unsupported keys, falls back to
+   * appending a new line at the end of the frontmatter block.
+   */
+  async function modifyField(file, key, value) {
     let content = await app.vault.read(file);
-    content = content.replace(/Name:.*$/m, 'Name: ' + newName);
+    const re = new RegExp('^' + key + ':.*$', 'm');
+    const line = key + ': ' + (typeof value === 'string' && /[:#\\-]/.test(value) ? JSON.stringify(value) : value);
+    if (re.test(content)) {
+      content = content.replace(re, line);
+    } else {
+      // Append before the closing --- of frontmatter
+      content = content.replace(/^---\\n([\\s\\S]*?)\\n---/, (_, body) => '---\\n' + body + '\\n' + line + '\\n---');
+    }
     await app.vault.modify(file, content);
-    await waitForCache(file, 'Name', newName);
+    await waitForCache(file, key, value);
   }
 
   async function enqueueSync(mode, scope, config) {
@@ -220,7 +302,6 @@ async function setup() {
     const credId = '${E2E_CRED_ID}';
     const cfgId = '${E2E_CFG_ID}';
 
-    // Replace any prior e2e credential/config so we always start clean.
     p.settings.credentials = p.settings.credentials.filter(c => c.id !== credId);
     const oldCfgIdx = p.settings.configs.findIndex(c => c.id === cfgId);
     if (oldCfgIdx !== -1) {
@@ -273,14 +354,22 @@ async function setup() {
     return JSON.stringify({ ok: true });
   })()`, 15000);
 
+  log('=== Setup: Ensure required columns ===');
+  const ensured = await run(`(async () => {
+    ${HELPERS}
+    const r = await ensureColumns(${JSON.stringify(REQUIRED_COLUMNS)});
+    return JSON.stringify(r);
+  })()`, 30000);
+  log(`Columns added: [${ensured.added.join(', ') || 'none'}]; reused: [${ensured.skipped.join(', ')}]`);
+
   log('=== Setup: Insert test rows via POST /rows/ ===');
   const ids = await run(`(async () => {
     ${HELPERS}
-    const ids = await insertRows(${JSON.stringify(TEST_ROW_NAMES)});
+    const ids = await insertRows(${JSON.stringify(TEST_ROWS)});
     return JSON.stringify(ids);
   })()`, 20000);
 
-  if (!Array.isArray(ids) || ids.length !== TEST_ROW_NAMES.length) {
+  if (!Array.isArray(ids) || ids.length !== TEST_ROWS.length) {
     throw new Error(`Failed to insert test rows; got ${JSON.stringify(ids)}`);
   }
   testRowIds = ids;
@@ -290,20 +379,7 @@ async function setup() {
 function resetExpr() {
   return `(async () => {
     ${HELPERS}
-    const cfg = getSeaConfig();
-    const tok = await exchangeBaseToken();
-    await fetch(buildRowsUrl(tok), {
-      method: 'PUT',
-      headers: { 'Authorization': 'Bearer ' + tok.access_token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        table_id: cfg.tableId,
-        updates: [
-          { row_id: ${JSON.stringify(testRowIds[0])}, row: { Name: 'E2E-ST-Pull' } },
-          { row_id: ${JSON.stringify(testRowIds[1])}, row: { Name: 'E2E-ST-Push' } },
-          { row_id: ${JSON.stringify(testRowIds[2])}, row: { Name: 'E2E-ST-Bidir' } },
-        ],
-      }),
-    });
+    await resetRowsToInitial(${JSON.stringify(testRowIds)}, ${JSON.stringify(TEST_ROWS)});
     setMode('manual', false);
     await enqueueSync('pull', 'all');
     await new Promise(r => setTimeout(r, 6000));
@@ -320,10 +396,8 @@ async function cleanup() {
     const p = getPlugin();
     const cfg = getSeaConfig();
 
-    // Delete from SeaTable
     await deleteRows(${JSON.stringify(testRowIds)});
 
-    // Delete local .md files we created during pull
     if (cfg) {
       const folder = cfg.folderPath;
       const files = app.vault.getFiles().filter(f => f.path.startsWith(folder + '/'));
@@ -332,12 +406,10 @@ async function cleanup() {
       if (folderEntry) {
         try { await app.vault.delete(folderEntry, true); } catch {}
       }
-      // Delete .base files we may have created
       const basesFiles = app.vault.getFiles().filter(f => f.extension === 'base' && f.basename.toLowerCase().includes('e2e'));
       for (const f of basesFiles) await app.vault.delete(f);
     }
 
-    // Detach e2e credential + config (idempotent)
     const cfgIdx = p.settings.configs.findIndex(c => c.id === '${E2E_CFG_ID}');
     if (cfgIdx !== -1) {
       p.configManager.removeConfig('${E2E_CFG_ID}');
@@ -347,7 +419,7 @@ async function cleanup() {
     await p.saveSettings();
     return JSON.stringify({ ok: true });
   })()`, 20000);
-  log('Cleaned up SeaTable test data + local files + e2e config.');
+  log('Cleaned up SeaTable test data + local files + e2e config (columns kept on base).');
 }
 
 // ---------------------------------------------------------------------------
@@ -362,7 +434,7 @@ async function cleanup() {
     await setup();
     await doReset();
 
-    // -- Pull tests --
+    // ── Pull tests ──────────────────────────────────────────────────
 
     await test('pull / all creates one .md per row', async () => {
       const r = await run(`(async () => {
@@ -375,8 +447,8 @@ async function cleanup() {
         );
         return JSON.stringify({ count: files.length, names: files.map(f => f.basename) });
       })()`, 20000);
-      const pass = r.count >= TEST_ROW_NAMES.length &&
-        TEST_ROW_NAMES.every(n => r.names.some(b => b === n));
+      const expectedNames = TEST_ROWS.map(r => r.Name);
+      const pass = r.count >= expectedNames.length && expectedNames.every(n => r.names.includes(n));
       return { pass, detail: `count=${r.count} names=[${r.names.join(',')}]` };
     });
 
@@ -394,44 +466,130 @@ async function cleanup() {
         });
       })()`, 15000);
       const pass = r.name === 'E2E-ST-Pull' && r.primaryField === testRowIds[0];
-      return { pass, detail: `name="${r.name}" primaryField="${r.primaryField}" expected primary=${testRowIds[0]}` };
+      return { pass, detail: `name="${r.name}" primaryField="${r.primaryField}"` };
     });
 
-    // -- Push tests --
+    await test('pull / writes all column types into frontmatter', async () => {
+      // Verifies fetchNotes correctly normalizes every supported type
+      // (text / number / long-text / date / boolean / single-select /
+      // formula). System fields (_locked, _ctime, …) must be stripped.
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const cfg = getSeaConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Pull.md');
+        const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        const leakedSystemKey = Object.keys(fm).some(k => k.startsWith('_'));
+        return JSON.stringify({
+          Name: fm.Name,
+          Count: fm.Count,
+          Description: fm.Description,
+          DueDate: typeof fm.DueDate === 'string' ? fm.DueDate.slice(0, 10) : null,
+          Done: fm.Done,
+          Status: fm.Status,
+          Cal: fm.Cal,
+          leakedSystemKey,
+        });
+      })()`, 10000);
+      const pass = r.Name === 'E2E-ST-Pull'
+        && r.Count === 100
+        && r.Description === 'pull row'
+        && r.DueDate === '2026-12-01'
+        && r.Done === false
+        && r.Status === 'Todo'
+        && r.Cal === 200
+        && !r.leakedSystemKey;
+      return { pass, detail: `name=${r.Name} count=${r.Count} desc=${r.Description} date=${r.DueDate} done=${r.Done} status=${r.Status} cal=${r.Cal} leak=${r.leakedSystemKey}` };
+    });
 
-    await test('push / all / obsidian-wins propagates Name change', async () => {
+    // ── Push: per-column type ───────────────────────────────────────
+
+    await test('push / number column (Count)', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
         const cfg = getSeaConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
-        await modifyName(file, 'E2E-ST-Push-EDITED');
+        await modifyField(file, 'Count', 555);
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
         const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
         setMode('manual');
-        return JSON.stringify({ remoteName: row?.Name });
+        return JSON.stringify({ remoteCount: row?.Count });
       })()`, 25000);
-      return { pass: r.remoteName === 'E2E-ST-Push-EDITED', detail: `remoteName="${r.remoteName}"` };
+      return { pass: r.remoteCount === 555, detail: `Count=${r.remoteCount}` };
     });
 
-    await test('push / current / obsidian-wins', async () => {
+    await test('push / long-text column (Description)', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
         const cfg = getSeaConfig();
-        const file = await openAndActivate(cfg.folderPath + '/E2E-ST-Bidir.md');
-        await modifyName(file, 'E2E-ST-Bidir-CURRENT');
-        await enqueueSync('push', 'current');
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+        await modifyField(file, 'Description', 'updated long-text');
+        await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
-        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[2])});
+        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
         setMode('manual');
-        return JSON.stringify({ remoteName: row?.Name });
+        return JSON.stringify({ remoteDesc: row?.Description });
       })()`, 25000);
-      return { pass: r.remoteName === 'E2E-ST-Bidir-CURRENT', detail: `remoteName="${r.remoteName}"` };
+      return { pass: r.remoteDesc === 'updated long-text', detail: `Description="${r.remoteDesc}"` };
     });
+
+    await test('push / date column (DueDate)', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getSeaConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+        await modifyField(file, 'DueDate', '2027-01-15');
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
+        setMode('manual');
+        return JSON.stringify({ remoteDate: row?.DueDate });
+      })()`, 25000);
+      const pass = typeof r.remoteDate === 'string' && r.remoteDate.startsWith('2027-01-15');
+      return { pass, detail: `DueDate="${r.remoteDate}"` };
+    });
+
+    await test('push / checkbox column (Done)', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getSeaConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+        await modifyField(file, 'Done', true);
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
+        setMode('manual');
+        return JSON.stringify({ remoteDone: row?.Done });
+      })()`, 25000);
+      return { pass: r.remoteDone === true, detail: `Done=${r.remoteDone}` };
+    });
+
+    await test('push / single-select column (Status)', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getSeaConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+        await modifyField(file, 'Status', 'Done');
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
+        setMode('manual');
+        return JSON.stringify({ remoteStatus: row?.Status });
+      })()`, 25000);
+      return { pass: r.remoteStatus === 'Done', detail: `Status="${r.remoteStatus}"` };
+    });
+
+    // ── Push: conflict-resolution modes (using number column) ──────
 
     await test('push / all / remote-wins keeps remote value', async () => {
       await doReset();
@@ -440,14 +598,14 @@ async function cleanup() {
         setMode('remote-wins');
         const cfg = getSeaConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Pull.md');
-        await modifyName(file, 'E2E-ST-Pull-LOCAL-OVERRIDE');
+        await modifyField(file, 'Count', 9999);
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
         const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[0])});
         setMode('manual');
-        return JSON.stringify({ remoteName: row?.Name });
+        return JSON.stringify({ remoteCount: row?.Count });
       })()`, 25000);
-      return { pass: r.remoteName === 'E2E-ST-Pull', detail: `remoteName="${r.remoteName}" (expected E2E-ST-Pull)` };
+      return { pass: r.remoteCount === 100, detail: `Count=${r.remoteCount} (expected 100)` };
     });
 
     await test('push / all / manual blocks conflicting field', async () => {
@@ -457,42 +615,88 @@ async function cleanup() {
         setMode('manual');
         const cfg = getSeaConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
-        await modifyName(file, 'E2E-ST-Push-MANUAL-CONFLICT');
+        await modifyField(file, 'Count', 7777);
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
         const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
-        return JSON.stringify({ remoteName: row?.Name });
+        return JSON.stringify({ remoteCount: row?.Count });
       })()`, 25000);
-      return { pass: r.remoteName === 'E2E-ST-Push', detail: `remoteName="${r.remoteName}" (expected E2E-ST-Push)` };
+      return { pass: r.remoteCount === 200, detail: `Count=${r.remoteCount} (expected 200)` };
     });
 
-    // -- Bidirectional --
+    // ── Bidirectional with formula ──────────────────────────────────
 
-    await test('bidirectional / current pushes then re-reads', async () => {
+    await test('bidirectional / autoSyncComputedFields=true refreshes Cal', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins', true);
+        const cfg = getSeaConfig();
+        const file = await openAndActivate(cfg.folderPath + '/E2E-ST-Bidir.md');
+        await modifyField(file, 'Count', 450);
+        await enqueueSync('bidirectional', 'all');
+        await new Promise(r => setTimeout(r, 10000));
+        const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[2])});
+        setMode('manual', false);
+        return JSON.stringify({
+          localCount: fm.Count,
+          localCal: fm.Cal,
+          remoteCount: row?.Count,
+          remoteCal: row?.Cal,
+        });
+      })()`, 35000);
+      const pass = r.localCount === 450 && r.localCal === 900 && r.remoteCount === 450 && r.remoteCal === 900;
+      return { pass, detail: `localCount=${r.localCount} localCal=${r.localCal} remoteCount=${r.remoteCount} remoteCal=${r.remoteCal}` };
+    });
+
+    await test('bidirectional / autoSyncComputedFields=false leaves stale Cal', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', false);
         const cfg = getSeaConfig();
-        const file = await openAndActivate(cfg.folderPath + '/E2E-ST-Bidir.md');
-        await modifyName(file, 'E2E-ST-Bidir-BIDIR');
-        await enqueueSync('bidirectional', 'current');
-        await new Promise(r => setTimeout(r, 8000));
-        const updated = await app.vault.read(file);
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Bidir.md');
+        const beforeFm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        const oldCal = beforeFm.Cal;
+        await modifyField(file, 'Count', 333);
+        await enqueueSync('bidirectional', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        const afterFm = app.metadataCache.getFileCache(file)?.frontmatter || {};
         const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[2])});
         setMode('manual', false);
         return JSON.stringify({
-          remoteName: row?.Name,
-          localHasName: updated.includes('Name: E2E-ST-Bidir-BIDIR'),
+          localCount: afterFm.Count,
+          localCalUnchanged: afterFm.Cal === oldCal,
+          remoteCount: row?.Count,
         });
-      })()`, 30000);
-      return {
-        pass: r.remoteName === 'E2E-ST-Bidir-BIDIR' && r.localHasName,
-        detail: `remoteName="${r.remoteName}" localHasName=${r.localHasName}`,
-      };
+      })()`, 25000);
+      const pass = r.localCount === 333 && r.localCalUnchanged && r.remoteCount === 333;
+      return { pass, detail: `localCount=${r.localCount} calUnchanged=${r.localCalUnchanged} remoteCount=${r.remoteCount}` };
     });
 
-    // -- Bases file --
+    // ── Read-only field protection ──────────────────────────────────
+
+    await test('push / formula column edits are silently dropped (read-only)', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getSeaConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Pull.md');
+        // Local Cal value is a formula; the user might "edit" it manually.
+        await modifyField(file, 'Cal', 1);
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[0])});
+        setMode('manual');
+        // Cal is server-computed: Count(100) * 2 = 200, regardless of local.
+        return JSON.stringify({ remoteCal: row?.Cal, remoteCount: row?.Count });
+      })()`, 25000);
+      return { pass: r.remoteCal === 200, detail: `Cal=${r.remoteCal} Count=${r.remoteCount}` };
+    });
+
+    // ── Bases file generation ───────────────────────────────────────
 
     await test('bases file generation', async () => {
       const r = await run(`(async () => {
@@ -501,7 +705,6 @@ async function cleanup() {
         const cfg = getSeaConfig();
         const cred = getSeaCredential();
 
-        // Wipe any leftover .base files
         const before = app.vault.getFiles().filter(f => f.extension === 'base');
         for (const f of before) await app.vault.delete(f);
 
@@ -519,7 +722,6 @@ async function cleanup() {
         const inFolderOk = content.includes('file.inFolder("' + cfg.folderPath + '")');
         const tableViewOk = content.includes('type: table');
 
-        // Cleanup
         for (const f of basesFiles) await app.vault.delete(f);
         cfg.generateBasesFile = false;
         getInstance().updateSettings(cfg, cred);
@@ -529,7 +731,7 @@ async function cleanup() {
       return { pass: r.found && r.inFolderOk && r.tableViewOk, detail: `found=${r.found} folder=${r.inFolderOk} view=${r.tableViewOk}` };
     });
 
-    // ── Summary ──────────────────────────────────────────────────
+    // ── Summary ─────────────────────────────────────────────────────
 
     log('\n========================================');
     log('     SeaTable E2E TEST SUMMARY');
@@ -543,7 +745,6 @@ async function cleanup() {
     }
     log(`\nTotal: ${passCount}/${results.length} passed`);
 
-    // ── Cleanup ──────────────────────────────────────────────────
     if (process.argv.includes('--cleanup')) {
       await cleanup();
     } else {
