@@ -1,11 +1,32 @@
 /**
  * SeaTable API client service.
  *
- * Speaks the SeaTable dtable-server REST API. SeaTable's API-Token is
+ * Speaks the SeaTable API Gateway v2 REST API. SeaTable's API-Token is
  * base-specific and is exchanged for a short-lived Base-Token (TTL 3d)
- * via /api/v2.1/dtable/app-access-token/. The Base-Token response also
- * carries the `dtable_uuid` and `dtable_server` URL needed for every
- * subsequent row request, so callers never configure those manually.
+ * via /api/v2.1/dtable/app-access-token/. The response carries the
+ * `dtable_uuid` and the `dtable_server` URL (e.g. https://cloud.seatable.io/api-gateway/)
+ * which is the prefix for every subsequent dtable request.
+ *
+ * Authorization headers:
+ *  - Token-exchange call: `Authorization: Token <api-token>`
+ *  - Subsequent dtable calls: `Authorization: Bearer <access_token>`
+ *
+ * Response shape (list-rows): rows include both the user columns and a
+ * fixed set of underscore-prefixed system fields (`_id`, `_locked`,
+ * `_locked_by`, `_archived`, `_creator`, `_ctime`, `_last_modifier`,
+ * `_mtime`). Only `_id` is preserved (as the record identifier); the
+ * rest are stripped so they don't pollute Obsidian frontmatter.
+ *
+ * Update body shape: SeaTable's API-Gateway accepts only the batch
+ * `{ table_id, updates: [{ row_id, row }] }` form on `PUT /rows/`. The
+ * single-row `{ table_id, row_id, row }` form returns `{ success: true }`
+ * but is a silent no-op, so even `updateRecord` wraps the single update
+ * in a 1-element `updates` array.
+ *
+ * Field naming: rows must reference columns by their **name** (e.g. "Name"),
+ * not by the internal column key ("0000"). `?convert_keys=true` on list
+ * requests echoes the same name-based shape, so what we read back matches
+ * what we write.
  *
  * @handbook 4.4-provider-abstraction
  * @handbook 6.1-error-handling
@@ -61,6 +82,21 @@ interface SeaTableRow {
 }
 
 const MAX_PAGINATION_ITERATIONS = 1000;
+
+/**
+ * Strips SeaTable system fields (anything prefixed with `_`) from a row,
+ * returning the user-supplied columns plus the extracted `_id`. Returning
+ * `null` signals the row was missing `_id` and should be skipped.
+ */
+function stripRowMetadata(row: SeaTableRow): { id: string; fields: Record<string, unknown> } | null {
+  if (!row._id) return null;
+  const fields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key.startsWith('_')) continue;
+    fields[key] = value;
+  }
+  return { id: row._id, fields };
+}
 
 export class SeaTableClient implements DatabaseProvider {
   readonly providerType: CredentialType = 'seatable';
@@ -146,7 +182,7 @@ export class SeaTableClient implements DatabaseProvider {
       throw new Error('SeaTable Base-Token response missing access_token or dtable_uuid.');
     }
 
-    const dtableServer = (json.dtable_server || `${this.getServerUrl()}/dtable-server/`)
+    const dtableServer = (json.dtable_server || `${this.getServerUrl()}/api-gateway/`)
       .replace(/\/+$/, '');
 
     this.cachedToken = {
@@ -159,12 +195,12 @@ export class SeaTableClient implements DatabaseProvider {
   }
 
   private buildDtableUrl(token: CachedBaseToken, path: string): string {
-    return `${token.dtableServer}/api/v1/dtables/${token.dtableUuid}/${path}`;
+    return `${token.dtableServer}/api/v2/dtables/${token.dtableUuid}/${path}`;
   }
 
   private buildHeaders(token: CachedBaseToken): Record<string, string> {
     return {
-      'Authorization': `Token ${token.accessToken}`,
+      'Authorization': `Bearer ${token.accessToken}`,
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
@@ -185,10 +221,11 @@ export class SeaTableClient implements DatabaseProvider {
     let details = `HTTP ${response.status}`;
     try {
       const body = response.json as
-        | { error_msg?: string; error?: string | { message?: string } }
+        | { error_msg?: string; error_message?: string; error?: string | { message?: string } }
         | undefined;
       const message =
         body?.error_msg ||
+        body?.error_message ||
         (typeof body?.error === 'string'
           ? body.error
           : body?.error && typeof body.error === 'object'
@@ -221,6 +258,9 @@ export class SeaTableClient implements DatabaseProvider {
       if (this.config.viewId) params.set('view_id', this.config.viewId);
       params.set('start', String(start));
       params.set('limit', String(SEATABLE_PAGE_SIZE));
+      // convert_keys=true makes responses use column names instead of column
+      // keys (e.g. "Name" vs "0000"), matching the request body shape.
+      params.set('convert_keys', 'true');
 
       const url = this.buildDtableUrl(token, `rows/?${params.toString()}`);
       const response = await this.rateLimiter.execute(() =>
@@ -235,9 +275,9 @@ export class SeaTableClient implements DatabaseProvider {
       const rows = json?.rows ?? [];
 
       for (const row of rows) {
-        if (!row._id) continue;
-        const { _id, ...fields } = row;
-        allNotes.push({ id: _id, primaryField: _id, fields });
+        const stripped = stripRowMetadata(row);
+        if (!stripped) continue;
+        allNotes.push({ id: stripped.id, primaryField: stripped.id, fields: stripped.fields });
       }
 
       if (rows.length < SEATABLE_PAGE_SIZE) {
@@ -262,6 +302,7 @@ export class SeaTableClient implements DatabaseProvider {
 
     const params = new URLSearchParams();
     params.set('table_id', this.config.tableId);
+    params.set('convert_keys', 'true');
 
     const url = this.buildDtableUrl(token, `rows/${encodeURIComponent(recordId)}/?${params.toString()}`);
     const response = await this.rateLimiter.execute(() =>
@@ -275,9 +316,10 @@ export class SeaTableClient implements DatabaseProvider {
     }
 
     const json = response.json as SeaTableRow | undefined;
-    if (!json || !json._id) return null;
-    const { _id, ...fields } = json;
-    return { id: _id, primaryField: _id, fields };
+    if (!json) return null;
+    const stripped = stripRowMetadata(json);
+    if (!stripped) return null;
+    return { id: stripped.id, primaryField: stripped.id, fields: stripped.fields };
   }
 
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult> {
@@ -286,34 +328,13 @@ export class SeaTableClient implements DatabaseProvider {
       return { success: false, recordId, error: 'SeaTable row ID cannot be empty.' };
     }
 
-    try {
-      const token = await this.getBaseToken();
-      const headers = this.buildHeaders(token);
-      const url = this.buildDtableUrl(token, 'rows/');
-      const body = JSON.stringify({
-        table_id: this.config.tableId,
-        row_id: recordId,
-        row: fields,
-      });
-      const response = await this.rateLimiter.execute(() =>
-        requestUrl({ url, method: 'PUT', headers, body }),
-      );
-
-      if (response.status !== 200) {
-        return {
-          success: false,
-          recordId,
-          error: `Failed to update SeaTable row: ${this.extractErrorDetails(response)}`,
-        };
-      }
-      return { success: true, recordId, updatedFields: fields };
-    } catch (error) {
-      return {
-        success: false,
-        recordId,
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      };
-    }
+    // SeaTable's API Gateway treats `{table_id, row_id, row}` as a silent
+    // no-op (returns 200 + `{success:true}` but doesn't apply changes), so
+    // we always use the batch shape `{table_id, updates: [...]}` even for
+    // a single record. delegating to batchUpdate keeps the path & body
+    // schema canonical in one place.
+    const [result] = await this.batchUpdate([{ recordId, fields }]);
+    return result;
   }
 
   async batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]> {
@@ -328,7 +349,7 @@ export class SeaTableClient implements DatabaseProvider {
     try {
       const token = await this.getBaseToken();
       const headers = this.buildHeaders(token);
-      const url = this.buildDtableUrl(token, 'batch-update-rows/');
+      const url = this.buildDtableUrl(token, 'rows/');
       const body = JSON.stringify({
         table_id: this.config.tableId,
         updates: updates.map(u => ({ row_id: u.recordId, row: u.fields })),
@@ -346,9 +367,9 @@ export class SeaTableClient implements DatabaseProvider {
         }));
       }
 
-      // SeaTable batch-update-rows returns `{ success: true }` without
-      // echoing the updated fields, so we mirror back the requested fields
-      // as confirmed updates — matching the SyncResult contract.
+      // SeaTable's PUT /rows/ returns `{success: true}` without echoing
+      // the updated fields, so we mirror back the requested fields as
+      // confirmed updates — matching the SyncResult contract.
       return updates.map(u => ({
         success: true as const,
         recordId: u.recordId,

@@ -805,9 +805,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const safeTypesList = mapper.getFilenameSafeTypes().join(', ') || 'text';
     new Setting(containerEl)
       .setName('Filename field')
-      .setDesc(`Column key whose value becomes the note filename. Recommended types: ${safeTypesList}.`)
+      .setDesc(`Column name whose value becomes the note filename. Recommended types: ${safeTypesList}.`)
       .addText(text => text
-        .setPlaceholder('column key (e.g. 0000 or "Title")')
+        .setPlaceholder('column name (e.g. Name)')
         .setValue(config.filenameFieldName)
         .onChange(async (value) => {
           config.filenameFieldName = value.trim();
@@ -816,9 +816,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Subfolder field (optional)')
-      .setDesc('Column key used for subfolder organization.')
+      .setDesc('Column name used for subfolder organization.')
       .addText(text => text
-        .setPlaceholder('column key')
+        .setPlaceholder('column name')
         .setValue(config.subfolderFieldName)
         .onChange(async (value) => {
           config.subfolderFieldName = value.trim();

@@ -43,10 +43,28 @@ function mockResponse(json: unknown, status = 200, text = '') {
   return { status, json, headers: {}, text, arrayBuffer: new ArrayBuffer(0) };
 }
 
+// Real-world Cloud SeaTable response shape captured via direct API
+// inspection — note `dtable_server` ends with `/api-gateway/`.
 const BASE_TOKEN_RESPONSE = {
-  access_token: 'bt-xxx',
+  app_name: 'obsidian-auto-note-importer',
+  access_token: 'eyJhbGc.bt-xxx',
   dtable_uuid: 'uuid-xxx',
-  dtable_server: 'https://cloud.seatable.io/dtable-server/',
+  workspace_id: 105074,
+  dtable_name: 'demo',
+  use_api_gateway: true,
+  dtable_server: 'https://cloud.seatable.io/api-gateway/',
+};
+
+// SeaTable rows always carry these system fields alongside user columns.
+// They must be stripped before reaching Obsidian frontmatter.
+const SYSTEM_FIELDS = {
+  _locked: null,
+  _locked_by: null,
+  _archived: false,
+  _creator: 'someone@auth.local',
+  _ctime: '2026-01-01T00:00:00.000+00:00',
+  _last_modifier: 'someone@auth.local',
+  _mtime: '2026-01-02T00:00:00.000+00:00',
 };
 
 describe('SeaTableClient', () => {
@@ -105,6 +123,7 @@ describe('SeaTableClient', () => {
       const tokenCall = mockRequestUrl.mock.calls[0][0];
       expect(tokenCall.url).toBe('https://cloud.seatable.io/api/v2.1/dtable/app-access-token/');
       const tokenHeaders = tokenCall.headers as Record<string, string>;
+      // Token-exchange call uses the API-Token verbatim with `Token` prefix.
       expect(tokenHeaders['Authorization']).toBe('Token st-token-abc');
     });
 
@@ -143,7 +162,10 @@ describe('SeaTableClient', () => {
         rateLimiter,
       );
       mockRequestUrl
-        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          ...BASE_TOKEN_RESPONSE,
+          dtable_server: 'https://seatable.example.com/api-gateway/',
+        }))
         .mockResolvedValueOnce(mockResponse({ rows: [] }));
 
       await client.fetchNotes();
@@ -154,6 +176,20 @@ describe('SeaTableClient', () => {
   });
 
   describe('fetchNotes', () => {
+    it('should call the api-gateway v2 rows endpoint with Bearer auth and convert_keys=true', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ rows: [] }));
+
+      await client.fetchNotes();
+
+      const rowsCall = mockRequestUrl.mock.calls[1][0];
+      expect(rowsCall.url).toContain('/api-gateway/api/v2/dtables/uuid-xxx/rows/');
+      expect(rowsCall.url).toContain('convert_keys=true');
+      const headers = rowsCall.headers as Record<string, string>;
+      expect(headers['Authorization']).toBe('Bearer eyJhbGc.bt-xxx');
+    });
+
     it('should fetch rows in a single page when result is smaller than page size', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
@@ -171,6 +207,25 @@ describe('SeaTableClient', () => {
         primaryField: 'r1',
         fields: { Name: 'Note 1' },
       });
+    });
+
+    it('should strip SeaTable system metadata fields from row payloads', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          rows: [
+            { _id: 'r1', Name: 'Note 1', Status: 'Done', ...SYSTEM_FIELDS },
+          ],
+        }));
+
+      const notes = await client.fetchNotes();
+
+      expect(notes).toHaveLength(1);
+      expect(notes[0].fields).toEqual({ Name: 'Note 1', Status: 'Done' });
+      // Spot-check that nothing underscore-prefixed leaked into fields.
+      for (const key of Object.keys(notes[0].fields)) {
+        expect(key.startsWith('_')).toBe(false);
+      }
     });
 
     it('should pass viewId as view_id query param when set', async () => {
@@ -212,13 +267,24 @@ describe('SeaTableClient', () => {
   });
 
   describe('fetchRecord', () => {
-    it('should fetch a single row', async () => {
+    it('should fetch a single row and strip system fields', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ _id: 'r1', Name: 'Test', ...SYSTEM_FIELDS }));
+
+      const note = await client.fetchRecord('r1');
+      expect(note).toEqual({ id: 'r1', primaryField: 'r1', fields: { Name: 'Test' } });
+    });
+
+    it('should request convert_keys=true on single-row fetch', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockResponse({ _id: 'r1', Name: 'Test' }));
 
-      const note = await client.fetchRecord('r1');
-      expect(note).toEqual({ id: 'r1', primaryField: 'r1', fields: { Name: 'Test' } });
+      await client.fetchRecord('r1');
+      const url = mockRequestUrl.mock.calls[1][0].url;
+      expect(url).toContain('/api/v2/dtables/uuid-xxx/rows/r1/');
+      expect(url).toContain('convert_keys=true');
     });
 
     it('should return null for 404', async () => {
@@ -236,16 +302,30 @@ describe('SeaTableClient', () => {
   });
 
   describe('updateRecord', () => {
-    it('should return success result on 200', async () => {
+    it('should send batch-shaped body to PUT /rows/ for a single update', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockResponse({ success: true }));
 
       const result = await client.updateRecord('r1', { Name: 'Updated' });
+
       expect(result).toEqual({
         success: true,
         recordId: 'r1',
         updatedFields: { Name: 'Updated' },
+      });
+
+      const writeCall = mockRequestUrl.mock.calls[1][0];
+      expect(writeCall.method).toBe('PUT');
+      expect(writeCall.url).toContain('/api/v2/dtables/uuid-xxx/rows/');
+      const headers = writeCall.headers as Record<string, string>;
+      expect(headers['Authorization']).toBe('Bearer eyJhbGc.bt-xxx');
+      // Single update is wrapped in a 1-element `updates` array — the
+      // single-row form is a silent no-op on the API Gateway.
+      const body = JSON.parse(writeCall.body as string);
+      expect(body).toEqual({
+        table_id: '0000',
+        updates: [{ row_id: 'r1', row: { Name: 'Updated' } }],
       });
     });
 
@@ -257,7 +337,7 @@ describe('SeaTableClient', () => {
       const result = await client.updateRecord('r1', { Bad: 'x' });
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toContain('Failed to update');
+        expect(result.error).toContain('Failed to batch update');
       }
     });
 
@@ -287,7 +367,7 @@ describe('SeaTableClient', () => {
       expect(mockRequestUrl).not.toHaveBeenCalled();
     });
 
-    it('should batch update rows', async () => {
+    it('should batch update rows via PUT /rows/ with updates array', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockResponse({ success: true }));
@@ -300,7 +380,14 @@ describe('SeaTableClient', () => {
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({ success: true, recordId: 'r1', updatedFields: { Name: 'A' } });
 
-      const body = JSON.parse((mockRequestUrl.mock.calls[1][0].body as string) ?? '{}');
+      const writeCall = mockRequestUrl.mock.calls[1][0];
+      expect(writeCall.method).toBe('PUT');
+      // Path is `/rows/` (single endpoint handles both single + batch),
+      // not the deprecated `/batch-update-rows/` path.
+      expect(writeCall.url).toContain('/api/v2/dtables/uuid-xxx/rows/');
+      expect(writeCall.url).not.toContain('batch-update-rows');
+
+      const body = JSON.parse(writeCall.body as string);
       expect(body.table_id).toBe('0000');
       expect(body.updates).toEqual([
         { row_id: 'r1', row: { Name: 'A' } },
