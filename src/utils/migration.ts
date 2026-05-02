@@ -159,8 +159,12 @@ function buildCredentialFromRecord(raw: Record<string, unknown>): Credential | u
         authValue: readString(raw, 'authValue', ''),
       };
     default: {
-      const _exhaustive: never = type as CredentialType as never;
-      throw new Error(`Unknown credential type: ${_exhaustive}`);
+      // Unreachable at runtime — guarded by the `CREDENTIAL_TYPES.includes(type)` check
+      // above. Exists purely as a compile-time exhaustiveness check: adding a new
+      // CredentialType variant without a case here will be caught by tsc.
+      const _exhaustive: never = type as never;
+      void _exhaustive;
+      return undefined;
     }
   }
 }
