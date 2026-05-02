@@ -5,7 +5,8 @@
  * @tested tests/utils/migration.test.ts
  */
 
-import type { Credential } from '../types/credential.types';
+import type { Credential, CredentialType } from '../types/credential.types';
+import { CREDENTIAL_TYPES } from '../types/credential.types';
 import type { ConfigEntry } from '../types/config.types';
 import type { AutoNoteImporterSettings, ConflictResolutionMode } from '../types/settings.types';
 import { generateId } from './object-utils';
@@ -109,9 +110,67 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function readString(record: Record<string, unknown>, key: string, fallback: string): string {
+  const v = record[key];
+  return typeof v === 'string' ? v : fallback;
+}
+
+/**
+ * Builds a typed `Credential` from a raw record. Returns `undefined` if the
+ * record cannot be safely interpreted as one of the discriminated-union variants
+ * (e.g., missing/unknown `type`, missing `id`). The caller filters undefined out.
+ *
+ * Mirrors `buildConfigFromRecord`'s per-field fallback discipline so a
+ * malformed credential like `{ id: 123, name: null }` cannot reach runtime
+ * with wrong types.
+ */
+function buildCredentialFromRecord(raw: Record<string, unknown>): Credential | undefined {
+  const id = raw['id'];
+  if (typeof id !== 'string' || id.length === 0) return undefined;
+
+  const type = raw['type'];
+  if (typeof type !== 'string' || !(CREDENTIAL_TYPES as readonly string[]).includes(type)) {
+    return undefined;
+  }
+
+  const base = { id, name: readString(raw, 'name', '') };
+  switch (type as CredentialType) {
+    case 'airtable':
+      return { ...base, type: 'airtable', apiKey: readString(raw, 'apiKey', '') };
+    case 'seatable':
+      return {
+        ...base, type: 'seatable',
+        apiToken: readString(raw, 'apiToken', ''),
+        serverUrl: readString(raw, 'serverUrl', ''),
+      };
+    case 'supabase':
+      return {
+        ...base, type: 'supabase',
+        projectUrl: readString(raw, 'projectUrl', ''),
+        apiKey: readString(raw, 'apiKey', ''),
+      };
+    case 'notion':
+      return { ...base, type: 'notion', integrationToken: readString(raw, 'integrationToken', '') };
+    case 'custom-api':
+      return {
+        ...base, type: 'custom-api',
+        baseUrl: readString(raw, 'baseUrl', ''),
+        authHeader: readString(raw, 'authHeader', ''),
+        authValue: readString(raw, 'authValue', ''),
+      };
+    default: {
+      const _exhaustive: never = type as CredentialType as never;
+      throw new Error(`Unknown credential type: ${_exhaustive}`);
+    }
+  }
+}
+
 function migrateV2toV3(record: Record<string, unknown>): AutoNoteImporterSettings {
   const credentials = Array.isArray(record['credentials'])
-    ? (record['credentials'] as unknown[]).filter(isPlainRecord) as unknown as Credential[]
+    ? (record['credentials'] as unknown[])
+        .filter(isPlainRecord)
+        .map(buildCredentialFromRecord)
+        .filter((c): c is Credential => c !== undefined)
     : [];
   const rawConfigs = Array.isArray(record['configs'])
     ? (record['configs'] as unknown[]).filter(isPlainRecord)

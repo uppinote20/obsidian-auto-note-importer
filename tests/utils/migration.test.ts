@@ -152,6 +152,37 @@ describe('migrateSettings', () => {
       expect(result!.configs[0].conflictResolution).toBe('manual');
     });
 
+    it('drops malformed credentials and preserves valid variants', () => {
+      const v2 = {
+        version: 2,
+        credentials: [
+          // valid airtable
+          { id: 'c1', name: 'Air', type: 'airtable', apiKey: 'k' },
+          // valid notion (missing optional name → empty)
+          { id: 'c2', type: 'notion', integrationToken: 'tok' },
+          // valid seatable (missing serverUrl → empty fallback)
+          { id: 'c3', name: 'Sea', type: 'seatable', apiToken: 't' },
+          // missing id → dropped
+          { name: 'no-id', type: 'airtable', apiKey: 'x' },
+          // unknown type → dropped
+          { id: 'c5', name: 'bad', type: 'unknown-provider' },
+          // numeric id → dropped (type narrowing rejects)
+          { id: 99, name: 'numeric', type: 'airtable', apiKey: 'x' },
+        ],
+        configs: [],
+        activeConfigId: '', debugMode: false,
+      };
+      const result = migrateSettings(v2);
+      expect(result!.credentials).toHaveLength(3);
+      const ids = result!.credentials.map(c => c.id);
+      expect(ids).toEqual(['c1', 'c2', 'c3']);
+      // Defaults applied for missing fields
+      const c2 = result!.credentials.find(c => c.id === 'c2')!;
+      expect(c2.name).toBe('');
+      const c3 = result!.credentials.find(c => c.id === 'c3') as { type: 'seatable'; serverUrl: string };
+      expect(c3.serverUrl).toBe('');
+    });
+
     it('drops null/non-object elements inside a valid configs array', () => {
       const v2 = {
         version: 2,
