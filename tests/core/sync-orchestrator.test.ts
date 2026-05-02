@@ -130,7 +130,7 @@ describe('SyncOrchestrator', () => {
       await orchestrator.processSyncRequest('pull', 'all');
 
       expect(statusBar.lastItem.remove).toHaveBeenCalledTimes(1);
-      // setSyncing(false) must be called even on error (via finally block in syncFromAirtable)
+      // setSyncing(false) must be called even on error (via finally block in pullAll)
       expect(setSyncingSpy).toHaveBeenCalledWith(false);
     });
   });

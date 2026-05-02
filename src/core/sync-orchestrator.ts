@@ -16,7 +16,7 @@
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
 import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseProvider } from '../types';
 import { CREDENTIAL_TYPE_LABELS } from '../types';
-import { AIRTABLE_BATCH_SIZE, DEBUG_DELAY_MULTIPLIER } from '../constants';
+import { DEBUG_DELAY_MULTIPLIER } from '../constants';
 import { FieldCache } from '../services';
 import { ConflictResolver } from './conflict-resolver';
 import { FrontmatterParser, FileWatcher } from '../file-operations';
@@ -80,10 +80,10 @@ export class SyncOrchestrator {
         case 'pull':
           if (scope === 'current') {
             statusBarItem.setText(`Syncing current note from ${label}...`);
-            await this.syncCurrentFromAirtable();
+            await this.pullCurrent();
           } else {
             statusBarItem.setText(`Syncing from ${label}...`);
-            await this.syncFromAirtable();
+            await this.pullAll();
           }
           break;
 
@@ -100,11 +100,11 @@ export class SyncOrchestrator {
 
           if (mode === 'push') {
             statusBarItem.setText(`Syncing ${files.length} file(s) to ${label}...`);
-            await this.syncFilesToAirtable(files);
+            await this.pushFiles(files);
             new Notice(`Auto Note Importer: Synced ${files.length} file(s) to ${label}`);
           } else {
             statusBarItem.setText(`Phase 1/2 - Syncing ${files.length} file(s) to ${label}...`);
-            await this.syncFilesToAirtable(files);
+            await this.pushFiles(files);
 
             if (this.settings.autoSyncFormulas) {
               const delay = this.settings.debugMode
@@ -114,10 +114,10 @@ export class SyncOrchestrator {
               await this.sleep(delay);
 
               statusBarItem.setText("Phase 2/2 - Fetching computed results...");
-              await this.syncFromAirtable();
+              await this.pullAll();
               new Notice("Auto Note Importer: Bidirectional sync complete!");
             } else {
-              // Bases file is not generated here because syncFromAirtable() is skipped,
+              // Bases file is not generated here because pullAll() is skipped,
               // so no remoteNotes are available to derive column definitions from.
               new Notice(`Auto Note Importer: Synced ${files.length} file(s) to ${label}`);
             }
@@ -184,7 +184,7 @@ export class SyncOrchestrator {
     return files;
   }
 
-  private async syncCurrentFromAirtable(): Promise<void> {
+  private async pullCurrent(): Promise<void> {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!activeView?.file) {
       new Notice("Auto Note Importer: No active markdown file");
@@ -225,7 +225,7 @@ export class SyncOrchestrator {
     }
   }
 
-  private async syncFromAirtable(): Promise<void> {
+  private async pullAll(): Promise<void> {
     const folderPath = normalizePath(this.settings.folderPath);
     if (!await this.app.vault.adapter.exists(folderPath)) {
       await this.app.vault.createFolder(folderPath);
@@ -373,7 +373,7 @@ export class SyncOrchestrator {
     return buildMarkdownContent(note);
   }
 
-  private async syncFilesToAirtable(files: TFile[]): Promise<void> {
+  private async pushFiles(files: TFile[]): Promise<void> {
     const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
 
     let cachedFields = this.fieldCache.getFields(cacheKey);
@@ -434,9 +434,11 @@ export class SyncOrchestrator {
     }
 
     let syncedCount = 0;
+    // Guard against a misimplemented provider reporting 0 — would otherwise infinite-loop below.
+    const batchSize = Math.max(1, this.provider.capabilities.batchUpdateMaxSize);
 
-    for (let i = 0; i < batchUpdates.length; i += AIRTABLE_BATCH_SIZE) {
-      const batch = batchUpdates.slice(i, i + AIRTABLE_BATCH_SIZE);
+    for (let i = 0; i < batchUpdates.length; i += batchSize) {
+      const batch = batchUpdates.slice(i, i + batchSize);
 
       try {
         const results = await this.provider.batchUpdate(batch);
