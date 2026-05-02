@@ -434,7 +434,8 @@ export class SyncOrchestrator {
     }
 
     let syncedCount = 0;
-    const batchSize = this.provider.capabilities.batchUpdateMaxSize;
+    // Guard against a misimplemented provider reporting 0 — would otherwise infinite-loop below.
+    const batchSize = Math.max(1, this.provider.capabilities.batchUpdateMaxSize);
 
     for (let i = 0; i < batchUpdates.length; i += batchSize) {
       const batch = batchUpdates.slice(i, i + batchSize);
