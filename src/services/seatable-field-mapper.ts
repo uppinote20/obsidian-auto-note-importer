@@ -13,6 +13,10 @@
 
 import type { FieldTypeMapper, StandardFieldType } from '../types';
 
+// Filename-safe types only need to produce a stable, human-readable
+// string — writability isn't required. That's why `auto-number` and
+// `formula` appear here AND in READ_ONLY_TYPES below: they're great
+// stable identifiers but the sync pipeline must not push to them.
 const FILENAME_SAFE_TYPES = [
   'text',
   'single-select',
