@@ -251,17 +251,7 @@ const HELPERS = `
   async function enqueueSync(mode, scope, config) {
     const cfg = config || getConfig();
     const inst = getInstance(cfg);
-    // SyncQueue.enqueue returns immediately when another request is
-    // already processing (so it can merge), which means awaiting the
-    // returned promise alone is not enough. Poll until the queue drains
-    // and isProcessing flips back to false.
-    inst.enqueueSyncRequest(mode, scope);
-    const sq = inst.syncQueue;
-    for (let i = 0; i < 600; i++) {
-      if (!sq.isProcessing && sq.queue.length === 0) return;
-      await new Promise(r => setTimeout(r, 50));
-    }
-    throw new Error('SyncQueue did not drain within 30s');
+    return inst.enqueueSyncRequest(mode, scope);
   }
 `;
 
@@ -948,6 +938,8 @@ async function test(name, fn) {
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Bidir-Test.md');
         await modifyField(file, ${JSON.stringify(CALCULATION_SOURCE)}, 'bidir-450');
         await enqueueSync('bidirectional', 'all');
+        // metadataCache catches up to the pull-phase write asynchronously
+        await new Promise(r => setTimeout(r, 1500));
         const fmAfter = app.metadataCache.getFileCache(file)?.frontmatter || {};
         const fields = await fetchRecord('${testRecordIds[2]}');
         setMode('manual', false);

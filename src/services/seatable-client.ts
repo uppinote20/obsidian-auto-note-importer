@@ -1,32 +1,14 @@
 /**
- * SeaTable API client service.
+ * SeaTable API client. Exchanges the base-specific API-Token for a
+ * short-lived Base-Token (3d TTL) via /api/v2.1/dtable/app-access-token/,
+ * then talks to the API Gateway v2 endpoints returned in `dtable_server`.
  *
- * Speaks the SeaTable API Gateway v2 REST API. SeaTable's API-Token is
- * base-specific and is exchanged for a short-lived Base-Token (TTL 3d)
- * via /api/v2.1/dtable/app-access-token/. The response carries the
- * `dtable_uuid` and the `dtable_server` URL (e.g. https://cloud.seatable.io/api-gateway/)
- * which is the prefix for every subsequent dtable request.
- *
- * Authorization headers:
- *  - Token-exchange call: `Authorization: Token <api-token>`
- *  - Subsequent dtable calls: `Authorization: Bearer <access_token>`
- *
- * Response shape (list-rows): rows include both the user columns and a
- * fixed set of underscore-prefixed system fields (`_id`, `_locked`,
- * `_locked_by`, `_archived`, `_creator`, `_ctime`, `_last_modifier`,
- * `_mtime`). Only `_id` is preserved (as the record identifier); the
- * rest are stripped so they don't pollute Obsidian frontmatter.
- *
- * Update body shape: SeaTable's API-Gateway accepts only the batch
- * `{ table_id, updates: [{ row_id, row }] }` form on `PUT /rows/`. The
- * single-row `{ table_id, row_id, row }` form returns `{ success: true }`
- * but is a silent no-op, so even `updateRecord` wraps the single update
- * in a 1-element `updates` array.
- *
- * Field naming: rows must reference columns by their **name** (e.g. "Name"),
- * not by the internal column key ("0000"). `?convert_keys=true` on list
- * requests echoes the same name-based shape, so what we read back matches
- * what we write.
+ * Subtleties worth knowing:
+ * - PUT /rows/ accepts only the batch `{table_id, updates: [...]}` shape.
+ *   The single-row `{table_id, row_id, row}` form returns success but is
+ *   a silent no-op, so updateRecord delegates to batchUpdate.
+ * - Bodies must reference columns by name; column-key form is silently
+ *   ignored. `?convert_keys=true` makes responses match.
  *
  * @handbook 4.4-provider-abstraction
  * @handbook 6.1-error-handling
@@ -54,6 +36,7 @@ import type {
   SeaTableCredential,
   SyncResult,
 } from '../types';
+import { extractApiErrorDetails, normalizeServerUrl } from '../utils';
 import { seatableFieldMapper } from './seatable-field-mapper';
 import { RateLimiter } from './rate-limiter';
 
@@ -81,21 +64,17 @@ interface SeaTableRow {
   [key: string]: unknown;
 }
 
-const MAX_PAGINATION_ITERATIONS = 1000;
+// Hard cap on rows fetched per call. SeaTable returns at most 1000 per
+// page, so this caps a single fetchNotes at 1M rows — a defensive limit,
+// not an expected one.
+const MAX_FETCH_ROWS = 1_000_000;
 
-/**
- * Strips SeaTable system fields (anything prefixed with `_`) from a row,
- * returning the user-supplied columns plus the extracted `_id`. Returning
- * `null` signals the row was missing `_id` and should be skipped.
- */
-function stripRowMetadata(row: SeaTableRow): { id: string; fields: Record<string, unknown> } | null {
-  if (!row._id) return null;
+function stripSystemFields(row: SeaTableRow): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
-    if (key.startsWith('_')) continue;
-    fields[key] = value;
+    if (!key.startsWith('_')) fields[key] = value;
   }
-  return { id: row._id, fields };
+  return fields;
 }
 
 export class SeaTableClient implements DatabaseProvider {
@@ -141,8 +120,7 @@ export class SeaTableClient implements DatabaseProvider {
   // ─── Token management ───────────────────────────────────────────────
 
   private getServerUrl(): string {
-    const url = (this.credential.serverUrl || SEATABLE_DEFAULT_SERVER_URL).trim();
-    return url.replace(/\/+$/, '');
+    return normalizeServerUrl(this.credential.serverUrl, SEATABLE_DEFAULT_SERVER_URL);
   }
 
   private async getBaseToken(): Promise<CachedBaseToken> {
@@ -182,8 +160,7 @@ export class SeaTableClient implements DatabaseProvider {
       throw new Error('SeaTable Base-Token response missing access_token or dtable_uuid.');
     }
 
-    const dtableServer = (json.dtable_server || `${this.getServerUrl()}/api-gateway/`)
-      .replace(/\/+$/, '');
+    const dtableServer = normalizeServerUrl(json.dtable_server, `${this.getServerUrl()}/api-gateway/`);
 
     this.cachedToken = {
       accessToken: json.access_token,
@@ -218,28 +195,7 @@ export class SeaTableClient implements DatabaseProvider {
   }
 
   private extractErrorDetails(response: { status: number; json?: unknown; text?: string }): string {
-    let details = `HTTP ${response.status}`;
-    try {
-      const body = response.json as
-        | { error_msg?: string; error_message?: string; error?: string | { message?: string } }
-        | undefined;
-      const message =
-        body?.error_msg ||
-        body?.error_message ||
-        (typeof body?.error === 'string'
-          ? body.error
-          : body?.error && typeof body.error === 'object'
-            ? body.error.message
-            : undefined);
-      if (message) {
-        details += `: ${message}`;
-      } else if (response.text) {
-        details += `: ${response.text}`;
-      }
-    } catch {
-      // Response body isn't JSON-parsable
-    }
-    return details;
+    return extractApiErrorDetails(response);
   }
 
   // ─── DatabaseProvider implementation ───────────────────────────────
@@ -252,7 +208,7 @@ export class SeaTableClient implements DatabaseProvider {
     const allNotes: RemoteNote[] = [];
 
     let start = 0;
-    for (let iter = 0; iter < MAX_PAGINATION_ITERATIONS; iter++) {
+    while (allNotes.length < MAX_FETCH_ROWS) {
       const params = new URLSearchParams();
       params.set('table_id', this.config.tableId);
       if (this.config.viewId) params.set('view_id', this.config.viewId);
@@ -271,24 +227,16 @@ export class SeaTableClient implements DatabaseProvider {
         throw new Error(`Failed to fetch SeaTable rows: ${this.extractErrorDetails(response)}`);
       }
 
-      const json = response.json as { rows?: SeaTableRow[] } | undefined;
-      const rows = json?.rows ?? [];
-
+      const rows = (response.json as { rows?: SeaTableRow[] } | undefined)?.rows ?? [];
       for (const row of rows) {
-        const stripped = stripRowMetadata(row);
-        if (!stripped) continue;
-        allNotes.push({ id: stripped.id, primaryField: stripped.id, fields: stripped.fields });
+        if (!row._id) continue;
+        allNotes.push({ id: row._id, primaryField: row._id, fields: stripSystemFields(row) });
       }
-
-      if (rows.length < SEATABLE_PAGE_SIZE) {
-        return allNotes;
-      }
+      if (rows.length < SEATABLE_PAGE_SIZE) return allNotes;
       start += rows.length;
     }
 
-    throw new Error(
-      `SeaTable pagination exceeded ${MAX_PAGINATION_ITERATIONS} iterations; aborting to avoid infinite loop.`,
-    );
+    throw new Error(`SeaTable fetchNotes hit MAX_FETCH_ROWS=${MAX_FETCH_ROWS} guard.`);
   }
 
   async fetchRecord(recordId: string): Promise<RemoteNote | null> {
@@ -316,10 +264,8 @@ export class SeaTableClient implements DatabaseProvider {
     }
 
     const json = response.json as SeaTableRow | undefined;
-    if (!json) return null;
-    const stripped = stripRowMetadata(json);
-    if (!stripped) return null;
-    return { id: stripped.id, primaryField: stripped.id, fields: stripped.fields };
+    if (!json?._id) return null;
+    return { id: json._id, primaryField: json._id, fields: stripSystemFields(json) };
   }
 
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult> {

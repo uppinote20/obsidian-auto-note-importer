@@ -43,6 +43,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private editingCredentialId: string | null = null;
   private addingCredential = false;
   private addingCredentialType: CredentialType = 'airtable';
+  // Both connection-card ids are seeded so whichever provider's card
+  // renders for the active credential starts expanded; the inactive one
+  // is harmless (no card = no element to apply the class to).
   private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection']);
   private pendingDeleteConfigId: string | null = null;
   private pendingDeleteCredentialId: string | null = null;

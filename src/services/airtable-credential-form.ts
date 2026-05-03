@@ -19,6 +19,7 @@ import type {
   ConnectionTestResult,
   Credential,
 } from '../types';
+import { extractApiErrorMessage } from '../utils';
 
 const STATE_KEY = 'apiKey';
 
@@ -99,12 +100,7 @@ class AirtableCredentialFormRendererImpl implements CredentialFormRenderer {
   }
 
   private extractErrorMessage(response: { json?: unknown }): string {
-    const json = response.json as { error?: { message?: string } | string } | undefined;
-    if (typeof json?.error === 'string') return json.error;
-    if (json?.error && typeof json.error === 'object' && json.error.message) {
-      return json.error.message;
-    }
-    return 'Unknown error';
+    return extractApiErrorMessage(response);
   }
 }
 

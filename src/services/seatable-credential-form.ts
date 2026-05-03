@@ -20,6 +20,7 @@ import type {
   CredentialFormRenderer,
   CredentialFormState,
 } from '../types';
+import { extractApiErrorMessage, normalizeServerUrl } from '../utils';
 
 const TOKEN_KEY = 'apiToken';
 const SERVER_KEY = 'serverUrl';
@@ -89,7 +90,7 @@ class SeaTableCredentialFormRendererImpl implements CredentialFormRenderer {
     if (credential.type !== 'seatable') {
       return { success: false, error: `Expected seatable credential, got ${credential.type}` };
     }
-    const serverUrl = (credential.serverUrl || SEATABLE_DEFAULT_SERVER_URL).replace(/\/+$/, '');
+    const serverUrl = normalizeServerUrl(credential.serverUrl, SEATABLE_DEFAULT_SERVER_URL);
     try {
       const response = await requestUrl({
         url: `${serverUrl}/api/v2.1/dtable/app-access-token/`,
@@ -120,15 +121,7 @@ class SeaTableCredentialFormRendererImpl implements CredentialFormRenderer {
   }
 
   private extractErrorMessage(response: { json?: unknown; text?: string }): string {
-    const json = response.json as
-      | { error_msg?: string; error?: string | { message?: string } }
-      | undefined;
-    if (json?.error_msg) return json.error_msg;
-    if (typeof json?.error === 'string') return json.error;
-    if (json?.error && typeof json.error === 'object' && json.error.message) {
-      return json.error.message;
-    }
-    return response.text || 'Unknown error';
+    return extractApiErrorMessage(response);
   }
 }
 

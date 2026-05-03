@@ -23,7 +23,7 @@ import type {
   ConfigEntry,
   CredentialType,
 } from '../types';
-import { buildLegacySettings } from '../utils';
+import { buildLegacySettings, extractApiErrorDetails } from '../utils';
 import { airtableFieldMapper } from './airtable-field-mapper';
 import { RateLimiter } from './rate-limiter';
 
@@ -102,18 +102,8 @@ export class AirtableClient implements DatabaseProvider {
     };
   }
 
-  /**
-   * Extracts a human-readable error message from an API response.
-   */
-  private extractErrorDetails(response: { status: number; json?: unknown }): string {
-    let details = `HTTP ${response.status}`;
-    try {
-      const errorJson = response.json as { error?: { message?: string } } | undefined;
-      details += `: ${errorJson?.error?.message || JSON.stringify(errorJson)}`;
-    } catch {
-      // Response body isn't valid JSON
-    }
-    return details;
+  private extractErrorDetails(response: { status: number; json?: unknown; text?: string }): string {
+    return extractApiErrorDetails(response);
   }
 
   /**
