@@ -15,7 +15,13 @@
  *   1. Obsidian running with --remote-debugging-port=9222
  *      /Applications/Obsidian.app/Contents/MacOS/Obsidian --remote-debugging-port=9222
  *   2. A vault with the plugin installed and configured (Airtable PAT, base, table)
- *   3. The Airtable table must have: Name (text), Count (number), Status (select), Cal (formula: Count*2)
+ *   3. The Airtable table must have at minimum: Name (text), E2ECount (number),
+ *      Status (singleSelect with Todo/In progress/Done), Cal (formula:
+ *      `{E2ECount}*2`). Description (multilineText), DueDate (date, ISO),
+ *      Done (checkbox) are added automatically by ensureFields if the PAT
+ *      has the schema.bases:write scope. Without that scope the harness
+ *      surfaces a clear error so you can either grant the scope or pre-add
+ *      the fields manually.
  *   4. For multi-config tests: a second table 'E2E-MultiConfig' (tblZO35AeSdSmI3rr)
  *      with fields: Name (text), Value (number), Tag (singleSelect)
  *
@@ -26,6 +32,9 @@
  */
 
 import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
+import { loadEnv } from './load-env.mjs';
+
+loadEnv();
 
 // ---------------------------------------------------------------------------
 // Config
@@ -36,9 +45,51 @@ const MULTI_CONFIG_TABLE_ID = 'tblZO35AeSdSmI3rr';
 const MULTI_CONFIG_FOLDER = 'E2E-Multi';
 const MULTI_CONFIG_ID = 'e2e-cfg-2';
 
+// Dedicated e2e credential + config so the harness never touches the
+// user's active production config. The credentialId reuses whatever PAT
+// the user already has registered in plugin settings (it must have
+// schema.bases:write to allow ensureFields).
+const E2E_AT_CRED_ID = 'e2e-airtable-cred';
+const E2E_AT_CFG_ID = 'e2e-airtable-cfg';
+
+const ENV = {
+  baseId: process.env.AIRTABLE_E2E_BASE_ID || '',
+  tableId: process.env.AIRTABLE_E2E_TABLE_ID || '',
+  folderPath: process.env.AIRTABLE_E2E_FOLDER_PATH || 'Airtable-E2E',
+};
+
+if (!ENV.baseId || !ENV.tableId) {
+  console.error('AIRTABLE_E2E_BASE_ID and AIRTABLE_E2E_TABLE_ID must be set in .env (see tests/e2e/.env.example).');
+  process.exit(2);
+}
+
+// Fields the harness auto-adds (idempotent). All seven are needed for
+// the per-column-type assertion suite. Existing columns with the same
+// name are reused — the 422 DUPLICATE_OR_EMPTY_FIELD_NAME response is
+// treated as "already present".
+const ENSURED_FIELDS = [
+  { name: 'Name',        type: 'singleLineText' },
+  { name: 'E2ECount',       type: 'number', options: { precision: 0 } },
+  {
+    name: 'Status',
+    type: 'singleSelect',
+    options: { choices: [{ name: 'Todo' }, { name: 'In progress' }, { name: 'Done' }] },
+  },
+  // Cal references {E2ECount} — E2ECount must be ensured first, which is the
+  // case here since this list is processed in order.
+  { name: 'Cal',         type: 'formula', options: { formula: '{E2ECount} * 2' } },
+  { name: 'Description', type: 'multilineText' },
+  { name: 'DueDate',     type: 'date', options: { dateFormat: { name: 'iso', format: 'YYYY-MM-DD' } } },
+  { name: 'Done',        type: 'checkbox', options: { icon: 'check', color: 'greenBright' } },
+];
+
 // Test records created during setup — deleted during cleanup
 let testRecordIds = [];
 let multiConfigRecordIds = [];
+// Whether the formula 'Cal' field exists on the target table — set in
+// setup() so per-test cases can skip cleanly if the user hasn't added
+// it manually yet (Airtable's Meta API can't create formula fields).
+let hasCalField = false;
 
 // ---------------------------------------------------------------------------
 // Obsidian-side helpers (injected into eval expressions)
@@ -67,15 +118,97 @@ const HELPERS = `
 
   async function modifyCount(file, newCount) {
     let content = await app.vault.read(file);
-    content = content.replace(/Count: \\d+/, 'Count: ' + newCount);
+    content = content.replace(/E2ECount: \\d+/, 'E2ECount: ' + newCount);
     await app.vault.modify(file, content);
-    await waitForCache(file, 'Count', newCount);
+    await waitForCache(file, 'E2ECount', newCount);
+  }
+
+  /**
+   * Generic frontmatter field editor. Replaces an existing 'key: value'
+   * line in-place, or appends one before the closing --- if absent.
+   * Strings containing colon/hash/hyphen are JSON.stringify-quoted to
+   * keep YAML happy.
+   */
+  async function modifyField(file, key, value) {
+    let content = await app.vault.read(file);
+    const re = new RegExp('^' + key + ':.*$', 'm');
+    const line = key + ': ' + (typeof value === 'string' && /[:#\\-]/.test(value) ? JSON.stringify(value) : value);
+    if (re.test(content)) {
+      content = content.replace(re, line);
+    } else {
+      content = content.replace(/^---\\n([\\s\\S]*?)\\n---/, (_, body) => '---\\n' + body + '\\n' + line + '\\n---');
+    }
+    await app.vault.modify(file, content);
+    await waitForCache(file, key, value);
+  }
+
+  async function ensureFields(required) {
+    const cfg = getConfig();
+    const cred = getCredential();
+    const metaRes = await fetch(
+      'https://api.airtable.com/v0/meta/bases/' + cfg.baseId + '/tables',
+      { headers: { 'Authorization': 'Bearer ' + cred.apiKey } }
+    );
+    if (!metaRes.ok) throw new Error('meta/tables failed: HTTP ' + metaRes.status);
+    const metaJson = await metaRes.json();
+    const table = (metaJson.tables || []).find(t => t.id === cfg.tableId);
+    if (!table) throw new Error('Target table ' + cfg.tableId + ' not found in metadata');
+    const existing = new Set(table.fields.map(f => f.name));
+
+    const added = [];
+    const skipped = [];
+    const unsupported = [];
+    for (const f of required) {
+      if (existing.has(f.name)) { skipped.push(f.name); continue; }
+      const body = { name: f.name, type: f.type };
+      if (f.options) body.options = f.options;
+      const r = await fetch(
+        'https://api.airtable.com/v0/meta/bases/' + cfg.baseId + '/tables/' + cfg.tableId + '/fields',
+        {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      );
+      if (!r.ok) {
+        const err = await r.json().catch(() => null);
+        // /meta/tables sometimes lags behind base edits, so POST against
+        // an existing field name returns 422 even when our snapshot didn't
+        // list it. Treat as "already present".
+        if (r.status === 422 && err?.error?.type === 'DUPLICATE_OR_EMPTY_FIELD_NAME') {
+          skipped.push(f.name);
+          continue;
+        }
+        // Airtable's Meta API rejects formula/rollup/lookup creation —
+        // those types can only be defined in the web UI. Surface as a
+        // skip so dependent tests can downgrade gracefully instead of
+        // crashing setup.
+        if (r.status === 422 && err?.error?.type === 'UNSUPPORTED_FIELD_TYPE_FOR_CREATE') {
+          unsupported.push(f.name);
+          continue;
+        }
+        const msg = err?.error?.message
+          || (typeof err?.error === 'string' ? err.error : null)
+          || (err ? JSON.stringify(err) : null)
+          || 'HTTP ' + r.status;
+        throw new Error('Failed to add field ' + f.name + ' (HTTP ' + r.status + '): ' + msg
+          + (r.status === 403 ? ' (does the PAT have schema.bases:write?)' : ''));
+      }
+      added.push(f.name);
+    }
+    return { added, skipped, unsupported };
   }
 
   function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
 
-  function getConfig(idx = 0) {
+  // Default getConfig() returns the dedicated e2e config (added during
+  // setup). Pass an explicit numeric index only if you really need the
+  // user's first non-e2e config — none of our suites do.
+  function getConfig(idx) {
     const p = getPlugin();
+    if (idx === undefined) {
+      return p.settings.configs.find(c => c.id === '${E2E_AT_CFG_ID}') || p.settings.configs[0];
+    }
     return p.settings.configs[idx];
   }
 
@@ -112,7 +245,17 @@ const HELPERS = `
   async function enqueueSync(mode, scope, config) {
     const cfg = config || getConfig();
     const inst = getInstance(cfg);
-    await inst.enqueueSyncRequest(mode, scope);
+    // SyncQueue.enqueue returns immediately when another request is
+    // already processing (so it can merge), which means awaiting the
+    // returned promise alone is not enough. Poll until the queue drains
+    // and isProcessing flips back to false.
+    inst.enqueueSyncRequest(mode, scope);
+    const sq = inst.syncQueue;
+    for (let i = 0; i < 600; i++) {
+      if (!sq.isProcessing && sq.queue.length === 0) return;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    throw new Error('SyncQueue did not drain within 30s');
   }
 `;
 
@@ -126,7 +269,9 @@ let targetId;
 function log(msg) { console.log(msg); }
 
 async function run(expr, timeout) {
-  return evalInObsidian(targetId, expr, timeout);
+  const r = await evalInObsidian(targetId, expr, timeout);
+  if (r && typeof r === 'object' && r.__error) throw new Error(r.__error);
+  return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,12 +279,86 @@ async function run(expr, timeout) {
 // ---------------------------------------------------------------------------
 
 async function setup() {
+  log('=== Setup: Add Airtable e2e credential + config (idempotent) ===');
+  await run(`(async () => {
+    const p = app.plugins.plugins['${PLUGIN_ID}'];
+    const credId = '${E2E_AT_CRED_ID}';
+    const cfgId = '${E2E_AT_CFG_ID}';
+
+    // Reuse the user's first existing Airtable credential's PAT — that
+    // way the user doesn't need to copy their token into .env. The
+    // selected PAT must have schema.bases:write so ensureFields can
+    // auto-add columns.
+    const sourceCred = p.settings.credentials.find(c => c.type === 'airtable');
+    if (!sourceCred) {
+      throw new Error('No Airtable credential found in plugin settings to reuse for e2e.');
+    }
+
+    // Reset prior runs so we always start clean.
+    p.settings.credentials = p.settings.credentials.filter(c => c.id !== credId);
+    const oldCfgIdx = p.settings.configs.findIndex(c => c.id === cfgId);
+    if (oldCfgIdx !== -1) {
+      p.configManager.removeConfig(cfgId);
+      p.settings.configs.splice(oldCfgIdx, 1);
+    }
+
+    p.settings.credentials.push({
+      id: credId,
+      name: 'E2E Airtable',
+      type: 'airtable',
+      apiKey: sourceCred.apiKey,
+    });
+
+    p.settings.configs.push({
+      id: cfgId,
+      name: 'E2E Airtable Cfg',
+      enabled: true,
+      credentialId: credId,
+      baseId: ${JSON.stringify(ENV.baseId)},
+      tableId: ${JSON.stringify(ENV.tableId)},
+      viewId: '',
+      folderPath: ${JSON.stringify(ENV.folderPath)},
+      templatePath: '',
+      filenameFieldName: 'Name',
+      subfolderFieldName: '',
+      syncInterval: 0,
+      allowOverwrite: true,
+      bidirectionalSync: true,
+      conflictResolution: 'manual',
+      watchForChanges: false,
+      fileWatchDebounce: 2000,
+      autoSyncComputedFields: false,
+      formulaSyncDelay: 1500,
+      generateBasesFile: false,
+      basesFileLocation: 'vault-root',
+      basesCustomPath: '',
+      basesRegenerateOnSync: false,
+    });
+
+    await p.saveSettings();
+    return JSON.stringify({ ok: true });
+  })()`, 15000);
+
   log('=== Setup: Reload plugin ===');
   await run(`(async () => {
     await app.plugins.disablePlugin('${PLUGIN_ID}');
     await app.plugins.enablePlugin('${PLUGIN_ID}');
     return '"ok"';
   })()`, 10000);
+
+  log('=== Setup: Ensure optional per-column-type fields ===');
+  const ensured = await run(`(async () => {
+    ${HELPERS}
+    const r = await ensureFields(${JSON.stringify(ENSURED_FIELDS)});
+    return JSON.stringify(r);
+  })()`, 30000);
+  log(`Fields added: [${ensured.added.join(', ') || 'none'}]; reused: [${ensured.skipped.join(', ') || 'none'}]; unsupported: [${(ensured.unsupported || []).join(', ') || 'none'}]`);
+  hasCalField = !(ensured.unsupported || []).includes('Cal');
+  if (!hasCalField) {
+    log('  ⚠️  Airtable\'s Meta API cannot create formula fields. Add "Cal" manually:');
+    log('       Demo table → + → Formula → name "Cal" → formula `{E2ECount} * 2`');
+    log('     Cal-dependent test cases will be skipped until then.');
+  }
 
   log('=== Setup: Create test records ===');
   const r = await run(`(async () => {
@@ -149,13 +368,22 @@ async function setup() {
     const resp = await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId, {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ records: [
-        { fields: { Name: 'E2E-Pull-Test', Count: 100, Status: 'Todo' } },
-        { fields: { Name: 'E2E-Push-Test', Count: 200, Status: 'In progress' } },
-        { fields: { Name: 'E2E-Bidir-Test', Count: 300, Status: 'Done' } }
-      ]})
+      body: JSON.stringify({
+        // typecast: true lets Airtable coerce ISO date strings, boolean
+        // checkbox values, etc. Without it a freshly-added field can
+        // reject our payload with TYPECAST_ERROR.
+        typecast: true,
+        records: [
+          { fields: { Name: 'E2E-Pull-Test',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: false } },
+          { fields: { Name: 'E2E-Push-Test',  E2ECount: 200, Status: 'In progress', Description: 'push desc',  DueDate: '2026-12-02', Done: false } },
+          { fields: { Name: 'E2E-Bidir-Test', E2ECount: 300, Status: 'Done',        Description: 'bidir desc', DueDate: '2026-12-03', Done: true  } },
+        ],
+      }),
     });
     const data = await resp.json();
+    if (!resp.ok || !Array.isArray(data?.records)) {
+      throw new Error('Create test records failed (HTTP ' + resp.status + '): ' + JSON.stringify(data));
+    }
     return JSON.stringify(data.records.map(r => ({ id: r.id, name: r.fields.Name })));
   })()`, 15000);
 
@@ -173,9 +401,9 @@ function resetExpr() {
       method: 'PATCH',
       headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ records: [
-        { id: '${testRecordIds[0]}', fields: { Name: 'E2E-Pull-Test', Count: 100, Status: 'Todo' } },
-        { id: '${testRecordIds[1]}', fields: { Name: 'E2E-Push-Test', Count: 200, Status: 'In progress' } },
-        { id: '${testRecordIds[2]}', fields: { Name: 'E2E-Bidir-Test', Count: 300, Status: 'Done' } }
+        { id: '${testRecordIds[0]}', fields: { Name: 'E2E-Pull-Test',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: false } },
+        { id: '${testRecordIds[1]}', fields: { Name: 'E2E-Push-Test',  E2ECount: 200, Status: 'In progress', Description: 'push desc',  DueDate: '2026-12-02', Done: false } },
+        { id: '${testRecordIds[2]}', fields: { Name: 'E2E-Bidir-Test', E2ECount: 300, Status: 'Done',        Description: 'bidir desc', DueDate: '2026-12-03', Done: true  } }
       ]})
     });
     setMode('manual', false);
@@ -190,32 +418,53 @@ async function doReset() {
 }
 
 async function cleanup() {
-  log('\n=== Cleanup: Delete test records ===');
+  log('\n=== Cleanup: Delete test records + e2e config ===');
   await run(`(async () => {
     ${HELPERS}
+    const p = getPlugin();
     const cfg = getConfig();
     const cred = getCredential();
     const ids = ${JSON.stringify(testRecordIds)};
 
     // Delete from Airtable
-    const params = ids.map(id => 'records[]=' + id).join('&');
-    await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '?' + params, {
-      method: 'DELETE',
-      headers: { 'Authorization': 'Bearer ' + cred.apiKey }
-    });
+    if (cfg && cred && ids.length > 0) {
+      const params = ids.map(id => 'records[]=' + id).join('&');
+      await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '?' + params, {
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer ' + cred.apiKey }
+      });
+    }
 
     // Delete local files
-    for (const name of ['E2E-Pull-Test.md', 'E2E-Push-Test.md', 'E2E-Bidir-Test.md']) {
-      const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/' + name);
-      if (file) await app.vault.delete(file);
+    if (cfg) {
+      for (const name of ['E2E-Pull-Test.md', 'E2E-Push-Test.md', 'E2E-Bidir-Test.md']) {
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/' + name);
+        if (file) await app.vault.delete(file);
+      }
+      // Folder cleanup
+      const folder = app.vault.getAbstractFileByPath(cfg.folderPath);
+      if (folder) {
+        try { await app.vault.delete(folder, true); } catch {}
+      }
     }
 
     // Delete any .base files created during tests
     const basesFiles = app.vault.getFiles().filter(f => f.extension === 'base' && f.basename.includes('E2E'));
     for (const f of basesFiles) await app.vault.delete(f);
+
+    // Detach the e2e credential + config (idempotent). Schema columns
+    // added by ensureFields stay on the base — DELETE field is not used.
+    const cfgIdx = p.settings.configs.findIndex(c => c.id === '${E2E_AT_CFG_ID}');
+    if (cfgIdx !== -1) {
+      p.configManager.removeConfig('${E2E_AT_CFG_ID}');
+      p.settings.configs.splice(cfgIdx, 1);
+    }
+    p.settings.credentials = p.settings.credentials.filter(c => c.id !== '${E2E_AT_CRED_ID}');
+    await p.saveSettings();
+
     return '"cleaned"';
-  })()`, 15000);
-  log('Test records and files cleaned up');
+  })()`, 20000);
+  log('Test records, files, and e2e config cleaned up (columns kept on base).');
 }
 
 async function cleanupMultiConfig() {
@@ -263,7 +512,13 @@ async function cleanupMultiConfig() {
 async function test(name, fn) {
   log(`\n=== ${name} ===`);
   try {
-    const { pass, detail } = await fn();
+    const result = await fn();
+    if (result?.skip) {
+      results.push({ test: name, pass: true, skip: true, detail: result.detail || 'skipped' });
+      log(`SKIP - ${result.detail || 'skipped'}`);
+      return;
+    }
+    const { pass, detail } = result;
     results.push({ test: name, pass, detail });
     log(pass ? 'PASS' : `FAIL - ${detail}`);
   } catch (e) {
@@ -425,6 +680,35 @@ async function test(name, fn) {
       return { pass: r.pass, detail: r.detail || 'ok' };
     });
 
+    await test('pull / writes all column types into frontmatter', async () => {
+      // Verifies fetchNotes correctly normalizes every supported writable
+      // type (text / number / singleSelect / multilineText / date /
+      // checkbox / formula).
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
+        const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        return JSON.stringify({
+          Name: fm.Name,
+          E2ECount: fm.E2ECount,
+          Status: fm.Status,
+          Description: fm.Description,
+          DueDate: typeof fm.DueDate === 'string' ? fm.DueDate.slice(0, 10) : null,
+          Done: fm.Done,
+          Cal: fm.Cal,
+        });
+      })()`, 10000);
+      const calOk = !hasCalField || r.Cal === 200;
+      const pass = r.Name === 'E2E-Pull-Test'
+        && r.E2ECount === 100
+        && r.Status === 'Todo'
+        && r.Description === 'pull desc'
+        && r.DueDate === '2026-12-01'
+        && r.Done === false
+        && calOk;
+      return { pass, detail: `name=${r.Name} count=${r.E2ECount} status=${r.Status} desc=${r.Description} date=${r.DueDate} done=${r.Done} cal=${r.Cal}${hasCalField ? '' : ' [Cal not present]'}` };
+    });
+
     // -- Push tests --
 
     await test('push / all / obsidian-wins', async () => {
@@ -435,12 +719,11 @@ async function test(name, fn) {
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 555);
         await enqueueSync('push', 'all');
-        await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         setMode('manual');
-        return JSON.stringify({ pass: fields.Count === 555, count: fields.Count });
-      })()`, 25000);
-      return { pass: r.pass, detail: `Count=${r.count}` };
+        return JSON.stringify({ pass: fields.E2ECount === 555, count: fields.E2ECount });
+      })()`, 30000);
+      return { pass: r.pass, detail: `E2ECount=${r.count}` };
     });
 
     await test('push / current / obsidian-wins', async () => {
@@ -454,9 +737,9 @@ async function test(name, fn) {
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[2]}');
         setMode('manual');
-        return JSON.stringify({ pass: fields.Count === 888, count: fields.Count });
+        return JSON.stringify({ pass: fields.E2ECount === 888, count: fields.E2ECount });
       })()`, 25000);
-      return { pass: r.pass, detail: `Count=${r.count}` };
+      return { pass: r.pass, detail: `E2ECount=${r.count}` };
     });
 
     await test('push / all / remote-wins', async () => {
@@ -470,9 +753,9 @@ async function test(name, fn) {
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[0]}');
         setMode('manual');
-        return JSON.stringify({ pass: fields.Count === 100, count: fields.Count });
+        return JSON.stringify({ pass: fields.E2ECount === 100, count: fields.E2ECount });
       })()`, 25000);
-      return { pass: r.pass, detail: `Count=${r.count} (expected 100)` };
+      return { pass: r.pass, detail: `E2ECount=${r.count} (expected 100)` };
     });
 
     await test('push / current / remote-wins', async () => {
@@ -486,9 +769,9 @@ async function test(name, fn) {
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         setMode('manual');
-        return JSON.stringify({ pass: fields.Count === 200, count: fields.Count });
+        return JSON.stringify({ pass: fields.E2ECount === 200, count: fields.E2ECount });
       })()`, 25000);
-      return { pass: r.pass, detail: `Count=${r.count} (expected 200)` };
+      return { pass: r.pass, detail: `E2ECount=${r.count} (expected 200)` };
     });
 
     await test('push / all / manual (conflict blocks)', async () => {
@@ -501,14 +784,101 @@ async function test(name, fn) {
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
-        return JSON.stringify({ pass: fields.Count === 200, count: fields.Count });
+        return JSON.stringify({ pass: fields.E2ECount === 200, count: fields.E2ECount });
       })()`, 25000);
-      return { pass: r.pass, detail: `Count=${r.count} (expected 200)` };
+      return { pass: r.pass, detail: `E2ECount=${r.count} (expected 200)` };
+    });
+
+    // -- Per-column-type push tests --
+
+    await test('push / multilineText column (Description)', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
+        await modifyField(file, 'Description', 'updated long-text');
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const fields = await fetchRecord('${testRecordIds[1]}');
+        setMode('manual');
+        return JSON.stringify({ remoteDesc: fields.Description });
+      })()`, 25000);
+      return { pass: r.remoteDesc === 'updated long-text', detail: `Description="${r.remoteDesc}"` };
+    });
+
+    await test('push / date column (DueDate)', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
+        await modifyField(file, 'DueDate', '2027-01-15');
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const fields = await fetchRecord('${testRecordIds[1]}');
+        setMode('manual');
+        return JSON.stringify({ remoteDate: fields.DueDate });
+      })()`, 25000);
+      const pass = typeof r.remoteDate === 'string' && r.remoteDate.startsWith('2027-01-15');
+      return { pass, detail: `DueDate="${r.remoteDate}"` };
+    });
+
+    await test('push / checkbox column (Done)', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
+        await modifyField(file, 'Done', true);
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const fields = await fetchRecord('${testRecordIds[1]}');
+        setMode('manual');
+        return JSON.stringify({ remoteDone: fields.Done });
+      })()`, 25000);
+      return { pass: r.remoteDone === true, detail: `Done=${r.remoteDone}` };
+    });
+
+    await test('push / singleSelect column (Status)', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
+        await modifyField(file, 'Status', 'Done');
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const fields = await fetchRecord('${testRecordIds[1]}');
+        setMode('manual');
+        return JSON.stringify({ remoteStatus: fields.Status });
+      })()`, 25000);
+      return { pass: r.remoteStatus === 'Done', detail: `Status="${r.remoteStatus}"` };
+    });
+
+    await test('push / formula column edits are silently dropped (read-only)', async () => {
+      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
+        // User manually edits the local Cal value; frontmatter-parser must
+        // skip computed fields so Airtable still computes E2ECount*2.
+        await modifyField(file, 'Cal', 1);
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const fields = await fetchRecord('${testRecordIds[0]}');
+        setMode('manual');
+        return JSON.stringify({ remoteCal: fields.Cal });
+      })()`, 25000);
+      return { pass: r.remoteCal === 200, detail: `Cal=${r.remoteCal} (expected 200)` };
     });
 
     // -- Bidirectional tests --
 
     await test('bidirectional / all / autoSyncComputedFields=true', async () => {
+      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
@@ -528,6 +898,7 @@ async function test(name, fn) {
     });
 
     await test('bidirectional / all / autoSyncComputedFields=false', async () => {
+      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
@@ -542,12 +913,13 @@ async function test(name, fn) {
         const localCal = parseInt(updated.match(/Cal: (\\d+)/)?.[1] || '0');
         const fields = await fetchRecord('${testRecordIds[2]}');
         setMode('manual', false);
-        return JSON.stringify({ pass: fields.Count === 333 && localCal === oldCal, localCal, oldCal, airtableCount: fields.Count });
+        return JSON.stringify({ pass: fields.E2ECount === 333 && localCal === oldCal, localCal, oldCal, airtableCount: fields.E2ECount });
       })()`, 25000);
       return { pass: r.pass, detail: `push=${r.airtableCount}, cal=${r.localCal}(unchanged from ${r.oldCal})` };
     });
 
     await test('bidirectional / current / autoSyncComputedFields=true', async () => {
+      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
@@ -565,6 +937,7 @@ async function test(name, fn) {
     });
 
     await test('bidirectional / current / autoSyncComputedFields=false', async () => {
+      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
@@ -579,7 +952,7 @@ async function test(name, fn) {
         const localCal = parseInt(updated.match(/Cal: (\\d+)/)?.[1] || '0');
         const fields = await fetchRecord('${testRecordIds[1]}');
         setMode('manual', false);
-        return JSON.stringify({ pass: fields.Count === 777 && localCal === oldCal, localCal, oldCal, airtableCount: fields.Count });
+        return JSON.stringify({ pass: fields.E2ECount === 777 && localCal === oldCal, localCal, oldCal, airtableCount: fields.E2ECount });
       })()`, 25000);
       return { pass: r.pass, detail: `push=${r.airtableCount}, cal=${r.localCal}(unchanged)` };
     });
@@ -762,13 +1135,15 @@ async function test(name, fn) {
     log('         E2E TEST SUMMARY');
     log('========================================');
     let passCount = 0;
+    let skipCount = 0;
     for (const r of results) {
-      const icon = r.pass ? 'PASS' : 'FAIL';
+      const icon = r.skip ? 'SKIP' : (r.pass ? 'PASS' : 'FAIL');
       log(`${icon} | ${r.test}`);
+      if (r.skip) { log(`       ${r.detail}`); skipCount++; continue; }
       if (!r.pass) log(`       ${r.detail}`);
       if (r.pass) passCount++;
     }
-    log(`\nTotal: ${passCount}/${results.length} passed`);
+    log(`\nTotal: ${passCount} passed, ${skipCount} skipped, ${results.length - passCount - skipCount} failed`);
 
     // -- Cleanup --
     if (process.argv.includes('--cleanup')) {
