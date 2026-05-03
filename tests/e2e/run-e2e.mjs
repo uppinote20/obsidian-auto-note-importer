@@ -346,6 +346,44 @@ async function setup() {
     return '"ok"';
   })()`, 10000);
 
+  log('=== Setup: Wipe Airtable records + vault folder (e2e-owned table) ===');
+  await run(`(async () => {
+    ${HELPERS}
+    const p = getPlugin();
+    const cfg = getConfig();
+    const cred = getCredential();
+
+    // Drain every record from the e2e table. Airtable's PATCH is atomic
+    // per batch, so any leftover record with an invalid value (from prior
+    // runs or the Demo sample row) would silently reject the whole batch.
+    let offset;
+    do {
+      const listUrl = 'https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId
+        + (offset ? '?offset=' + encodeURIComponent(offset) : '');
+      const r = await fetch(listUrl, { headers: { Authorization: 'Bearer ' + cred.apiKey } });
+      const j = await r.json();
+      const ids = (j.records || []).map(rec => rec.id);
+      while (ids.length > 0) {
+        const chunk = ids.splice(0, 10);
+        const params = chunk.map(id => 'records[]=' + id).join('&');
+        await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '?' + params, {
+          method: 'DELETE',
+          headers: { Authorization: 'Bearer ' + cred.apiKey },
+        });
+      }
+      offset = j.offset;
+    } while (offset);
+
+    // Wipe local folder so leftover files don't get pushed.
+    const folder = app.vault.getAbstractFileByPath(cfg.folderPath);
+    if (folder?.children) {
+      for (const child of [...folder.children]) {
+        try { await app.vault.delete(child); } catch {}
+      }
+    }
+    return JSON.stringify({ ok: true });
+  })()`, 30000);
+
   log('=== Setup: Ensure optional per-column-type fields ===');
   const ensured = await run(`(async () => {
     ${HELPERS}
@@ -374,7 +412,7 @@ async function setup() {
         // reject our payload with TYPECAST_ERROR.
         typecast: true,
         records: [
-          { fields: { Name: 'E2E-Pull-Test',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: false } },
+          { fields: { Name: 'E2E-Pull-Test',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: true  } },
           { fields: { Name: 'E2E-Push-Test',  E2ECount: 200, Status: 'In progress', Description: 'push desc',  DueDate: '2026-12-02', Done: false } },
           { fields: { Name: 'E2E-Bidir-Test', E2ECount: 300, Status: 'Done',        Description: 'bidir desc', DueDate: '2026-12-03', Done: true  } },
         ],
@@ -401,7 +439,7 @@ function resetExpr() {
       method: 'PATCH',
       headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ records: [
-        { id: '${testRecordIds[0]}', fields: { Name: 'E2E-Pull-Test',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: false } },
+        { id: '${testRecordIds[0]}', fields: { Name: 'E2E-Pull-Test',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: true  } },
         { id: '${testRecordIds[1]}', fields: { Name: 'E2E-Push-Test',  E2ECount: 200, Status: 'In progress', Description: 'push desc',  DueDate: '2026-12-02', Done: false } },
         { id: '${testRecordIds[2]}', fields: { Name: 'E2E-Bidir-Test', E2ECount: 300, Status: 'Done',        Description: 'bidir desc', DueDate: '2026-12-03', Done: true  } }
       ]})
@@ -545,11 +583,12 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         await enqueueSync('pull', 'all');
-        await new Promise(r => setTimeout(r, 5000));
-        const files = app.vault.getFiles().filter(f => f.path.startsWith(getConfig().folderPath + '/'));
-        return JSON.stringify({ fileCount: files.length });
-      })()`, 15000);
-      return { pass: r.fileCount >= 8, detail: `${r.fileCount} files` };
+        const files = app.vault.getFiles().filter(f => f.path.startsWith(getConfig().folderPath + '/') && f.extension === 'md');
+        return JSON.stringify({ count: files.length, names: files.map(f => f.basename) });
+      })()`, 30000);
+      const expected = ['E2E-Pull-Test', 'E2E-Push-Test', 'E2E-Bidir-Test'];
+      const pass = expected.every(n => (r.names || []).includes(n));
+      return { pass, detail: `count=${r.count} names=[${(r.names || []).join(',')}]` };
     });
 
     await test('pull / bases file generation', async () => {
@@ -704,7 +743,7 @@ async function test(name, fn) {
         && r.Status === 'Todo'
         && r.Description === 'pull desc'
         && r.DueDate === '2026-12-01'
-        && r.Done === false
+        && r.Done === true
         && calOk;
       return { pass, detail: `name=${r.Name} count=${r.E2ECount} status=${r.Status} desc=${r.Description} date=${r.DueDate} done=${r.Done} cal=${r.Cal}${hasCalField ? '' : ' [Cal not present]'}` };
     });
