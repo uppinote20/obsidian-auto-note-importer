@@ -63,32 +63,38 @@ if (!ENV.baseId || !ENV.tableId) {
   process.exit(2);
 }
 
-// Fields the harness auto-adds (idempotent). All seven are needed for
-// the per-column-type assertion suite. Existing columns with the same
-// name are reused — the 422 DUPLICATE_OR_EMPTY_FIELD_NAME response is
-// treated as "already present".
+// Fields the harness auto-adds to the target table (idempotent). Six
+// writable types — formula is intentionally NOT here because Airtable's
+// Meta API rejects formula creation (UNSUPPORTED_FIELD_TYPE_FOR_CREATE).
+//
+// For the formula path we reuse Demo's stock 'Calculation' column
+// (auto-seeded with `IF({Single line text}, {Single line text} & " - added text", "")`).
+// The harness pushes 'Single line text' values so 'Calculation' becomes
+// deterministic for assertions.
 const ENSURED_FIELDS = [
   { name: 'Name',        type: 'singleLineText' },
-  { name: 'E2ECount',       type: 'number', options: { precision: 0 } },
+  { name: 'E2ECount',    type: 'number', options: { precision: 0 } },
   {
     name: 'Status',
     type: 'singleSelect',
     options: { choices: [{ name: 'Todo' }, { name: 'In progress' }, { name: 'Done' }] },
   },
-  // Cal references {E2ECount} — E2ECount must be ensured first, which is the
-  // case here since this list is processed in order.
-  { name: 'Cal',         type: 'formula', options: { formula: '{E2ECount} * 2' } },
   { name: 'Description', type: 'multilineText' },
   { name: 'DueDate',     type: 'date', options: { dateFormat: { name: 'iso', format: 'YYYY-MM-DD' } } },
   { name: 'Done',        type: 'checkbox', options: { icon: 'check', color: 'greenBright' } },
 ];
 
+const CALCULATION_FIELD = 'Calculation';
+const CALCULATION_SOURCE = 'Single line text';
+const CALCULATION_SUFFIX = ' - added text';
+const expectedCalc = (src) => src ? src + CALCULATION_SUFFIX : '';
+
 // Test records created during setup — deleted during cleanup
 let testRecordIds = [];
 let multiConfigRecordIds = [];
-// Whether the formula 'Cal' field exists on the target table — set in
-// setup() so per-test cases can skip cleanly if the user hasn't added
-// it manually yet (Airtable's Meta API can't create formula fields).
+// Whether Demo's stock 'Calculation' formula field is detectable on the
+// target table — set in setup() so formula-dependent cases skip cleanly
+// if the column was renamed/removed.
 let hasCalField = false;
 
 // ---------------------------------------------------------------------------
@@ -391,11 +397,26 @@ async function setup() {
     return JSON.stringify(r);
   })()`, 30000);
   log(`Fields added: [${ensured.added.join(', ') || 'none'}]; reused: [${ensured.skipped.join(', ') || 'none'}]; unsupported: [${(ensured.unsupported || []).join(', ') || 'none'}]`);
-  hasCalField = !(ensured.unsupported || []).includes('Cal');
+
+  // Detect Demo's stock 'Calculation' formula field. Airtable's Meta
+  // API can't create formula fields, so we rely on the seeded one.
+  const calcCheck = await run(`(async () => {
+    ${HELPERS}
+    const cfg = getConfig();
+    const cred = getCredential();
+    const meta = await fetch('https://api.airtable.com/v0/meta/bases/' + cfg.baseId + '/tables', {
+      headers: { 'Authorization': 'Bearer ' + cred.apiKey },
+    }).then(r => r.json());
+    const tbl = (meta.tables || []).find(t => t.id === cfg.tableId);
+    const calc = tbl?.fields?.find(f => f.name === ${JSON.stringify(CALCULATION_FIELD)} && f.type === 'formula');
+    return JSON.stringify({ found: !!calc });
+  })()`, 15000);
+  hasCalField = calcCheck.found;
   if (!hasCalField) {
-    log('  ⚠️  Airtable\'s Meta API cannot create formula fields. Add "Cal" manually:');
-    log('       Demo table → + → Formula → name "Cal" → formula `{E2ECount} * 2`');
-    log('     Cal-dependent test cases will be skipped until then.');
+    log(`  ⚠️  Demo's stock "${CALCULATION_FIELD}" formula field not detected on the target table.`);
+    log('     Add a formula column with the seeded formula:');
+    log(`       IF({${CALCULATION_SOURCE}}, {${CALCULATION_SOURCE}} & "${CALCULATION_SUFFIX}", "")`);
+    log('     Calculation-dependent test cases will be skipped until then.');
   }
 
   log('=== Setup: Create test records ===');
@@ -412,9 +433,9 @@ async function setup() {
         // reject our payload with TYPECAST_ERROR.
         typecast: true,
         records: [
-          { fields: { Name: 'E2E-Pull-Test',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: true  } },
-          { fields: { Name: 'E2E-Push-Test',  E2ECount: 200, Status: 'In progress', Description: 'push desc',  DueDate: '2026-12-02', Done: false } },
-          { fields: { Name: 'E2E-Bidir-Test', E2ECount: 300, Status: 'Done',        Description: 'bidir desc', DueDate: '2026-12-03', Done: true  } },
+          { fields: { Name: 'E2E-Pull-Test',  'Single line text': 'pull-src',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: true  } },
+          { fields: { Name: 'E2E-Push-Test',  'Single line text': 'push-src',  E2ECount: 200, Status: 'In progress', Description: 'push desc',  DueDate: '2026-12-02', Done: false } },
+          { fields: { Name: 'E2E-Bidir-Test', 'Single line text': 'bidir-src', E2ECount: 300, Status: 'Done',        Description: 'bidir desc', DueDate: '2026-12-03', Done: true  } },
         ],
       }),
     });
@@ -439,9 +460,9 @@ function resetExpr() {
       method: 'PATCH',
       headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ records: [
-        { id: '${testRecordIds[0]}', fields: { Name: 'E2E-Pull-Test',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: true  } },
-        { id: '${testRecordIds[1]}', fields: { Name: 'E2E-Push-Test',  E2ECount: 200, Status: 'In progress', Description: 'push desc',  DueDate: '2026-12-02', Done: false } },
-        { id: '${testRecordIds[2]}', fields: { Name: 'E2E-Bidir-Test', E2ECount: 300, Status: 'Done',        Description: 'bidir desc', DueDate: '2026-12-03', Done: true  } }
+        { id: '${testRecordIds[0]}', fields: { Name: 'E2E-Pull-Test',  'Single line text': 'pull-src',  E2ECount: 100, Status: 'Todo',        Description: 'pull desc',  DueDate: '2026-12-01', Done: true  } },
+        { id: '${testRecordIds[1]}', fields: { Name: 'E2E-Push-Test',  'Single line text': 'push-src',  E2ECount: 200, Status: 'In progress', Description: 'push desc',  DueDate: '2026-12-02', Done: false } },
+        { id: '${testRecordIds[2]}', fields: { Name: 'E2E-Bidir-Test', 'Single line text': 'bidir-src', E2ECount: 300, Status: 'Done',        Description: 'bidir desc', DueDate: '2026-12-03', Done: true  } }
       ]})
     });
     setMode('manual', false);
@@ -729,23 +750,26 @@ async function test(name, fn) {
         const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
         return JSON.stringify({
           Name: fm.Name,
+          Source: fm[${JSON.stringify(CALCULATION_SOURCE)}],
           E2ECount: fm.E2ECount,
           Status: fm.Status,
           Description: fm.Description,
           DueDate: typeof fm.DueDate === 'string' ? fm.DueDate.slice(0, 10) : null,
           Done: fm.Done,
-          Cal: fm.Cal,
+          Calculation: fm[${JSON.stringify(CALCULATION_FIELD)}],
         });
       })()`, 10000);
-      const calOk = !hasCalField || r.Cal === 200;
+      const expectedCalcVal = expectedCalc('pull-src');
+      const calcOk = !hasCalField || r.Calculation === expectedCalcVal;
       const pass = r.Name === 'E2E-Pull-Test'
+        && r.Source === 'pull-src'
         && r.E2ECount === 100
         && r.Status === 'Todo'
         && r.Description === 'pull desc'
         && r.DueDate === '2026-12-01'
         && r.Done === true
-        && calOk;
-      return { pass, detail: `name=${r.Name} count=${r.E2ECount} status=${r.Status} desc=${r.Description} date=${r.DueDate} done=${r.Done} cal=${r.Cal}${hasCalField ? '' : ' [Cal not present]'}` };
+        && calcOk;
+      return { pass, detail: `name=${r.Name} src=${r.Source} count=${r.E2ECount} status=${r.Status} done=${r.Done} calc="${r.Calculation}"${hasCalField ? '' : ' [no formula field]'}` };
     });
 
     // -- Push tests --
@@ -821,10 +845,9 @@ async function test(name, fn) {
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 7777);
         await enqueueSync('push', 'all');
-        await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[1]}');
         return JSON.stringify({ pass: fields.E2ECount === 200, count: fields.E2ECount });
-      })()`, 25000);
+      })()`, 60000);
       return { pass: r.pass, detail: `E2ECount=${r.count} (expected 200)` };
     });
 
@@ -896,104 +919,118 @@ async function test(name, fn) {
     });
 
     await test('push / formula column edits are silently dropped (read-only)', async () => {
-      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
+      if (!hasCalField) return { skip: true, detail: 'Calculation formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
-        // User manually edits the local Cal value; frontmatter-parser must
-        // skip computed fields so Airtable still computes E2ECount*2.
-        await modifyField(file, 'Cal', 1);
+        // User manually edits the local formula value; frontmatter-parser
+        // must skip computed fields so Airtable keeps recomputing it.
+        await modifyField(file, ${JSON.stringify(CALCULATION_FIELD)}, 'spoofed');
         await enqueueSync('push', 'all');
-        await new Promise(r => setTimeout(r, 5000));
         const fields = await fetchRecord('${testRecordIds[0]}');
         setMode('manual');
-        return JSON.stringify({ remoteCal: fields.Cal });
-      })()`, 25000);
-      return { pass: r.remoteCal === 200, detail: `Cal=${r.remoteCal} (expected 200)` };
+        return JSON.stringify({ remoteCalc: fields[${JSON.stringify(CALCULATION_FIELD)}] });
+      })()`, 30000);
+      const expected = expectedCalc('pull-src');
+      return { pass: r.remoteCalc === expected, detail: `Calc="${r.remoteCalc}" (expected "${expected}")` };
     });
 
     // -- Bidirectional tests --
 
     await test('bidirectional / all / autoSyncComputedFields=true', async () => {
-      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
+      if (!hasCalField) return { skip: true, detail: 'Calculation formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', true);
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Bidir-Test.md');
-        await modifyCount(file, 450);
+        await modifyField(file, ${JSON.stringify(CALCULATION_SOURCE)}, 'bidir-450');
         await enqueueSync('bidirectional', 'all');
-        await new Promise(r => setTimeout(r, 10000));
-        const updated = await app.vault.read(file);
-        const calMatch = updated.match(/Cal: (\\d+)/);
-        const localCal = calMatch ? parseInt(calMatch[1]) : 0;
+        const fmAfter = app.metadataCache.getFileCache(file)?.frontmatter || {};
         const fields = await fetchRecord('${testRecordIds[2]}');
         setMode('manual', false);
-        return JSON.stringify({ pass: localCal === 900 && fields.Cal === 900, localCal, airtableCal: fields.Cal });
-      })()`, 30000);
-      return { pass: r.pass, detail: `localCal=${r.localCal}, airtableCal=${r.airtableCal}` };
+        return JSON.stringify({
+          localSource: fmAfter[${JSON.stringify(CALCULATION_SOURCE)}],
+          localCalc: fmAfter[${JSON.stringify(CALCULATION_FIELD)}],
+          remoteSource: fields[${JSON.stringify(CALCULATION_SOURCE)}],
+          remoteCalc: fields[${JSON.stringify(CALCULATION_FIELD)}],
+        });
+      })()`, 60000);
+      const expected = expectedCalc('bidir-450');
+      const pass = r.localSource === 'bidir-450'
+        && r.localCalc === expected
+        && r.remoteSource === 'bidir-450'
+        && r.remoteCalc === expected;
+      return { pass, detail: `localCalc="${r.localCalc}" remoteCalc="${r.remoteCalc}" (expected "${expected}")` };
     });
 
     await test('bidirectional / all / autoSyncComputedFields=false', async () => {
-      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
+      if (!hasCalField) return { skip: true, detail: 'Calculation formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', false);
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Bidir-Test.md');
-        const before = await app.vault.read(file);
-        const oldCal = parseInt(before.match(/Cal: (\\d+)/)?.[1] || '0');
-        await modifyCount(file, 333);
+        const fmBefore = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        const oldCalc = fmBefore[${JSON.stringify(CALCULATION_FIELD)}];
+        await modifyField(file, ${JSON.stringify(CALCULATION_SOURCE)}, 'bidir-stale');
         await enqueueSync('bidirectional', 'all');
-        await new Promise(r => setTimeout(r, 5000));
-        const updated = await app.vault.read(file);
-        const localCal = parseInt(updated.match(/Cal: (\\d+)/)?.[1] || '0');
+        const fmAfter = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        const localCalc = fmAfter[${JSON.stringify(CALCULATION_FIELD)}];
         const fields = await fetchRecord('${testRecordIds[2]}');
         setMode('manual', false);
-        return JSON.stringify({ pass: fields.E2ECount === 333 && localCal === oldCal, localCal, oldCal, airtableCount: fields.E2ECount });
-      })()`, 25000);
-      return { pass: r.pass, detail: `push=${r.airtableCount}, cal=${r.localCal}(unchanged from ${r.oldCal})` };
+        return JSON.stringify({
+          oldCalc, localCalc,
+          calcUnchanged: localCalc === oldCalc,
+          remoteSource: fields[${JSON.stringify(CALCULATION_SOURCE)}],
+        });
+      })()`, 30000);
+      const pass = r.calcUnchanged && r.remoteSource === 'bidir-stale';
+      return { pass, detail: `remoteSrc=${r.remoteSource}, calc=${r.localCalc} (oldCalc=${r.oldCalc})` };
     });
 
     await test('bidirectional / current / autoSyncComputedFields=true', async () => {
-      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
+      if (!hasCalField) return { skip: true, detail: 'Calculation formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', true);
         const file = await openAndActivate(getConfig().folderPath + '/E2E-Push-Test.md');
-        await modifyCount(file, 123);
+        await modifyField(file, ${JSON.stringify(CALCULATION_SOURCE)}, 'cur-123');
         await enqueueSync('bidirectional', 'current');
-        await new Promise(r => setTimeout(r, 10000));
-        const updated = await app.vault.read(file);
-        const localCal = parseInt(updated.match(/Cal: (\\d+)/)?.[1] || '0');
+        const fmAfter = app.metadataCache.getFileCache(file)?.frontmatter || {};
         setMode('manual', false);
-        return JSON.stringify({ pass: localCal === 246, localCal });
-      })()`, 30000);
-      return { pass: r.pass, detail: `Cal=${r.localCal} (expected 246)` };
+        return JSON.stringify({ localCalc: fmAfter[${JSON.stringify(CALCULATION_FIELD)}] });
+      })()`, 60000);
+      const expected = expectedCalc('cur-123');
+      return { pass: r.localCalc === expected, detail: `Calc="${r.localCalc}" (expected "${expected}")` };
     });
 
     await test('bidirectional / current / autoSyncComputedFields=false', async () => {
-      if (!hasCalField) return { skip: true, detail: 'Cal formula field not present — see setup notes' };
+      if (!hasCalField) return { skip: true, detail: 'Calculation formula field not present — see setup notes' };
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', false);
         const file = await openAndActivate(getConfig().folderPath + '/E2E-Push-Test.md');
-        const before = await app.vault.read(file);
-        const oldCal = parseInt(before.match(/Cal: (\\d+)/)?.[1] || '0');
-        await modifyCount(file, 777);
+        const fmBefore = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        const oldCalc = fmBefore[${JSON.stringify(CALCULATION_FIELD)}];
+        await modifyField(file, ${JSON.stringify(CALCULATION_SOURCE)}, 'cur-stale');
         await enqueueSync('bidirectional', 'current');
-        await new Promise(r => setTimeout(r, 5000));
-        const updated = await app.vault.read(file);
-        const localCal = parseInt(updated.match(/Cal: (\\d+)/)?.[1] || '0');
+        const fmAfter = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        const localCalc = fmAfter[${JSON.stringify(CALCULATION_FIELD)}];
         const fields = await fetchRecord('${testRecordIds[1]}');
         setMode('manual', false);
-        return JSON.stringify({ pass: fields.E2ECount === 777 && localCal === oldCal, localCal, oldCal, airtableCount: fields.E2ECount });
-      })()`, 25000);
-      return { pass: r.pass, detail: `push=${r.airtableCount}, cal=${r.localCal}(unchanged)` };
+        return JSON.stringify({
+          oldCalc, localCalc,
+          calcUnchanged: localCalc === oldCalc,
+          remoteSource: fields[${JSON.stringify(CALCULATION_SOURCE)}],
+        });
+      })()`, 30000);
+      const pass = r.calcUnchanged && r.remoteSource === 'cur-stale';
+      return { pass, detail: `remoteSrc=${r.remoteSource}, calc=${r.localCalc} (oldCalc=${r.oldCalc})` };
     });
 
     // -- Multi-Config tests --
