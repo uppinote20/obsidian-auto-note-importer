@@ -286,7 +286,11 @@ export class SeaTableClient implements DatabaseProvider {
     if (updates.length === 0) return [];
 
     if (updates.length > SEATABLE_BATCH_SIZE) {
-      throw new Error(`Maximum ${SEATABLE_BATCH_SIZE} records allowed per batch update`);
+      return updates.map(u => ({
+        success: false as const,
+        recordId: u.recordId,
+        error: `Maximum ${SEATABLE_BATCH_SIZE} records allowed per batch update`,
+      }));
     }
 
     try {

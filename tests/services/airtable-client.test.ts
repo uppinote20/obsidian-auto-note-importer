@@ -186,14 +186,22 @@ describe('AirtableClient', () => {
       expect(results[0]).toEqual({ success: true, recordId: 'rec1', updatedFields: { Name: 'A' } });
     });
 
-    it('should throw when exceeding batch size', async () => {
+    it('should return per-record failures when exceeding batch size', async () => {
       const updates = Array.from({ length: AIRTABLE_BATCH_SIZE + 1 }, (_, i) => ({
         recordId: `rec${i}`,
         fields: {},
       }));
 
-      await expect(client.batchUpdate(updates))
-        .rejects.toThrow(`Maximum ${AIRTABLE_BATCH_SIZE} records allowed`);
+      const results = await client.batchUpdate(updates);
+
+      expect(results).toHaveLength(updates.length);
+      expect(results.every(r => !r.success)).toBe(true);
+      expect(results[0]).toMatchObject({
+        success: false,
+        recordId: 'rec0',
+        error: `Maximum ${AIRTABLE_BATCH_SIZE} records allowed per batch update`,
+      });
+      expect(mockRequestUrl).not.toHaveBeenCalled();
     });
 
     it('should return failure for all records on non-200', async () => {

@@ -235,7 +235,11 @@ export class AirtableClient implements DatabaseProvider {
     }
 
     if (updates.length > AIRTABLE_BATCH_SIZE) {
-      throw new Error(`Maximum ${AIRTABLE_BATCH_SIZE} records allowed per batch update`);
+      return updates.map(update => ({
+        success: false as const,
+        recordId: update.recordId,
+        error: `Maximum ${AIRTABLE_BATCH_SIZE} records allowed per batch update`,
+      }));
     }
 
     try {
