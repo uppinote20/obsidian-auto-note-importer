@@ -102,10 +102,6 @@ export class AirtableClient implements DatabaseProvider {
     };
   }
 
-  private extractErrorDetails(response: { status: number; json?: unknown; text?: string }): string {
-    return extractApiErrorDetails(response);
-  }
-
   /**
    * Fetches all notes from Airtable with pagination.
    */
@@ -131,7 +127,7 @@ export class AirtableClient implements DatabaseProvider {
       );
 
       if (response.status !== 200) {
-        throw new Error(`Failed to fetch remote notes: ${this.extractErrorDetails(response)}`);
+        throw new Error(`Failed to fetch remote notes: ${extractApiErrorDetails(response)}`);
       }
 
       const json = response.json;
@@ -174,7 +170,7 @@ export class AirtableClient implements DatabaseProvider {
     }
 
     if (response.status !== 200) {
-      const errorDetails = this.extractErrorDetails(response);
+      const errorDetails = extractApiErrorDetails(response);
       throw new Error(`Failed to fetch record ${recordId}: ${errorDetails}`);
     }
 
@@ -208,7 +204,7 @@ export class AirtableClient implements DatabaseProvider {
         return {
           success: false,
           recordId,
-          error: `Failed to update Airtable record: ${this.extractErrorDetails(response)}`
+          error: `Failed to update Airtable record: ${extractApiErrorDetails(response)}`
         };
       }
 
@@ -259,7 +255,7 @@ export class AirtableClient implements DatabaseProvider {
       );
 
       if (response.status !== 200) {
-        const errorDetails = this.extractErrorDetails(response);
+        const errorDetails = extractApiErrorDetails(response);
         return updates.map(update => ({
           success: false as const,
           recordId: update.recordId,

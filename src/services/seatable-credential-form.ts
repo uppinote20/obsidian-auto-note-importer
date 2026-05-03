@@ -72,7 +72,7 @@ class SeaTableCredentialFormRendererImpl implements CredentialFormRenderer {
     if (!apiToken) {
       return { ok: false, error: 'API token cannot be empty.' };
     }
-    const serverUrl = (state[SERVER_KEY] ?? '').trim() || SEATABLE_DEFAULT_SERVER_URL;
+    const serverUrl = normalizeServerUrl(state[SERVER_KEY], SEATABLE_DEFAULT_SERVER_URL);
     if (!/^https?:\/\//.test(serverUrl)) {
       return { ok: false, error: 'Server URL must start with http:// or https://' };
     }
@@ -105,7 +105,7 @@ class SeaTableCredentialFormRendererImpl implements CredentialFormRenderer {
       if (response.status !== 200) {
         return {
           success: false,
-          error: `HTTP ${response.status}: ${this.extractErrorMessage(response)}`,
+          error: `HTTP ${response.status}: ${extractApiErrorMessage(response)}`,
         };
       }
       const json = response.json as { dtable_uuid?: string; access_token?: string } | undefined;
@@ -122,9 +122,6 @@ class SeaTableCredentialFormRendererImpl implements CredentialFormRenderer {
     }
   }
 
-  private extractErrorMessage(response: { json?: unknown; text?: string }): string {
-    return extractApiErrorMessage(response);
-  }
 }
 
 export const seatableCredentialFormRenderer: CredentialFormRenderer =

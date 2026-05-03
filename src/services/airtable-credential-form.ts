@@ -85,7 +85,7 @@ class AirtableCredentialFormRendererImpl implements CredentialFormRenderer {
       if (response.status !== 200) {
         return {
           success: false,
-          error: `HTTP ${response.status}: ${this.extractErrorMessage(response)}`,
+          error: `HTTP ${response.status}: ${extractApiErrorMessage(response)}`,
         };
       }
       const baseCount = Array.isArray(response.json?.bases) ? response.json.bases.length : 0;
@@ -99,9 +99,6 @@ class AirtableCredentialFormRendererImpl implements CredentialFormRenderer {
     }
   }
 
-  private extractErrorMessage(response: { json?: unknown }): string {
-    return extractApiErrorMessage(response);
-  }
 }
 
 export const airtableCredentialFormRenderer: CredentialFormRenderer = new AirtableCredentialFormRendererImpl();

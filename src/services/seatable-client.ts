@@ -152,7 +152,7 @@ export class SeaTableClient implements DatabaseProvider {
 
     if (response.status !== 200) {
       throw new Error(
-        `Failed to obtain SeaTable Base-Token: ${this.extractErrorDetails(response)}`,
+        `Failed to obtain SeaTable Base-Token: ${extractApiErrorDetails(response)}`,
       );
     }
 
@@ -195,10 +195,6 @@ export class SeaTableClient implements DatabaseProvider {
     }
   }
 
-  private extractErrorDetails(response: { status: number; json?: unknown; text?: string }): string {
-    return extractApiErrorDetails(response);
-  }
-
   // ─── DatabaseProvider implementation ───────────────────────────────
 
   async fetchNotes(): Promise<RemoteNote[]> {
@@ -225,7 +221,7 @@ export class SeaTableClient implements DatabaseProvider {
       );
 
       if (response.status !== 200) {
-        throw new Error(`Failed to fetch SeaTable rows: ${this.extractErrorDetails(response)}`);
+        throw new Error(`Failed to fetch SeaTable rows: ${extractApiErrorDetails(response)}`);
       }
 
       const rows = (response.json as { rows?: SeaTableRow[] } | undefined)?.rows ?? [];
@@ -261,7 +257,7 @@ export class SeaTableClient implements DatabaseProvider {
     if (response.status === 404) return null;
 
     if (response.status !== 200) {
-      throw new Error(`Failed to fetch SeaTable row ${recordId}: ${this.extractErrorDetails(response)}`);
+      throw new Error(`Failed to fetch SeaTable row ${recordId}: ${extractApiErrorDetails(response)}`);
     }
 
     const json = response.json as SeaTableRow | undefined;
@@ -306,7 +302,7 @@ export class SeaTableClient implements DatabaseProvider {
       );
 
       if (response.status !== 200) {
-        const errorDetails = this.extractErrorDetails(response);
+        const errorDetails = extractApiErrorDetails(response);
         return updates.map(u => ({
           success: false as const,
           recordId: u.recordId,
