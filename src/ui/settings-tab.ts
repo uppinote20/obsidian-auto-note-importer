@@ -7,6 +7,7 @@
  *
  * @handbook 5.1-ui-components
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
+ * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  */
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";

@@ -14,6 +14,7 @@
  * @handbook 6.1-error-handling
  * @handbook 9.6-api-patterns
  * @tested tests/services/seatable-client.test.ts
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
 import { requestUrl } from "obsidian";

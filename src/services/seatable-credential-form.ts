@@ -9,6 +9,8 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 5.1-ui-components
  * @tested tests/services/seatable-credential-form.test.ts
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
+ * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  */
 
 import { Setting, requestUrl } from "obsidian";

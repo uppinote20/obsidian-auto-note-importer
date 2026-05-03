@@ -8,6 +8,7 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 7.3-read-only-field-protection
  * @tested tests/services/seatable-field-mapper.test.ts
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
 import type { FieldTypeMapper, StandardFieldType } from '../types';

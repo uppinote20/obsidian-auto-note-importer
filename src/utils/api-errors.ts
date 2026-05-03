@@ -8,6 +8,7 @@
  * response text or the HTTP status as a last resort.
  *
  * @handbook 6.1-error-handling
+ * @tested tests/utils/api-errors.test.ts
  */
 
 interface ApiErrorBody {

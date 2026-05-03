@@ -1,0 +1,111 @@
+/**
+ * Tests for shared API error / URL helpers.
+ * @covers src/utils/api-errors.ts
+ */
+
+import { describe, it, expect } from 'vitest';
+import {
+  extractApiErrorMessage,
+  extractApiErrorDetails,
+  normalizeServerUrl,
+} from '../../src/utils/api-errors';
+
+describe('extractApiErrorMessage', () => {
+  it('returns body.error_msg first (SeaTable shape)', () => {
+    expect(extractApiErrorMessage({ json: { error_msg: 'forbidden' } })).toBe('forbidden');
+  });
+
+  it('returns body.error_message before falling through (SeaTable v2 shape)', () => {
+    expect(extractApiErrorMessage({ json: { error_message: 'invalid' } })).toBe('invalid');
+  });
+
+  it('returns body.error.message (Airtable shape)', () => {
+    expect(extractApiErrorMessage({ json: { error: { message: 'auth required' } } })).toBe('auth required');
+  });
+
+  it('returns body.error when it is a plain string', () => {
+    expect(extractApiErrorMessage({ json: { error: 'rate limited' } })).toBe('rate limited');
+  });
+
+  it('prefers error_msg over error_message over error.message when several are present', () => {
+    expect(extractApiErrorMessage({
+      json: { error_msg: 'first', error_message: 'second', error: { message: 'third' } },
+    })).toBe('first');
+  });
+
+  it('falls back to response.text when JSON has no recognizable error shape', () => {
+    expect(extractApiErrorMessage({ json: { something: 'else' }, text: 'Bad gateway' })).toBe('Bad gateway');
+  });
+
+  it('falls back to HTTP status when nothing else is available', () => {
+    expect(extractApiErrorMessage({ status: 500 })).toBe('HTTP 500');
+  });
+
+  it('returns "Unknown error" when status is missing too', () => {
+    expect(extractApiErrorMessage({})).toBe('Unknown error');
+  });
+
+  it('ignores empty strings in the error fields', () => {
+    expect(extractApiErrorMessage({
+      json: { error_msg: '', error_message: '', error: '' },
+      text: 'fallback',
+    })).toBe('fallback');
+  });
+
+  it('treats body.error as object only when it has message', () => {
+    expect(extractApiErrorMessage({ json: { error: { code: 42 } as { message?: string }, error_msg: 'x' } })).toBe('x');
+  });
+});
+
+describe('extractApiErrorDetails', () => {
+  it('combines HTTP status with error message', () => {
+    expect(extractApiErrorDetails({ status: 422, json: { error_msg: 'invalid field' } }))
+      .toBe('HTTP 422: invalid field');
+  });
+
+  it('returns just HTTP status when no message is recoverable', () => {
+    expect(extractApiErrorDetails({ status: 500 })).toBe('HTTP 500');
+  });
+
+  it('uses response.text when json is empty', () => {
+    expect(extractApiErrorDetails({ status: 502, text: 'gateway timeout' }))
+      .toBe('HTTP 502: gateway timeout');
+  });
+});
+
+describe('normalizeServerUrl', () => {
+  it('strips trailing slashes', () => {
+    expect(normalizeServerUrl('https://cloud.seatable.io/', 'fallback'))
+      .toBe('https://cloud.seatable.io');
+  });
+
+  it('strips multiple trailing slashes', () => {
+    expect(normalizeServerUrl('https://example.com///', 'fallback'))
+      .toBe('https://example.com');
+  });
+
+  it('trims whitespace', () => {
+    expect(normalizeServerUrl('  https://example.com  ', 'fallback'))
+      .toBe('https://example.com');
+  });
+
+  it('uses fallback when url is undefined', () => {
+    expect(normalizeServerUrl(undefined, 'https://cloud.seatable.io'))
+      .toBe('https://cloud.seatable.io');
+  });
+
+  it('uses fallback when url is empty string', () => {
+    expect(normalizeServerUrl('', 'https://cloud.seatable.io'))
+      .toBe('https://cloud.seatable.io');
+  });
+
+  it('returns the url itself when it has no trailing slash already', () => {
+    expect(normalizeServerUrl('https://api.airtable.com/v0', 'fallback'))
+      .toBe('https://api.airtable.com/v0');
+  });
+
+  it('also strips a trailing slash from the fallback when url is missing', () => {
+    expect(normalizeServerUrl(undefined, 'https://example.com/'))
+      .toBe('https://example.com');
+  });
+});
