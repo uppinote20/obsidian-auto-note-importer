@@ -87,6 +87,23 @@ describe('seatableCredentialFormRenderer', () => {
         .toBe('https://seatable.example.com');
     });
 
+    it('should strip trailing slashes from serverUrl on save', () => {
+      // The runtime call sites all run normalizeServerUrl, but storing the
+      // canonical form makes the persisted credential match the runtime
+      // value — guards against drift if a future caller skips the runtime
+      // normalization step.
+      const state: CredentialFormState = {
+        apiToken: 'st-valid',
+        serverUrl: 'https://seatable.example.com///',
+      };
+      const result = seatableCredentialFormRenderer.build('Trail', state, 'cred-new');
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.credential.type === 'seatable' && result.credential.serverUrl)
+        .toBe('https://seatable.example.com');
+    });
+
     it('should reject empty name', () => {
       const state: CredentialFormState = { apiToken: 'st-valid' };
       const result = seatableCredentialFormRenderer.build('', state, 'cred-new');
