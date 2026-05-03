@@ -4,161 +4,173 @@
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/uppinote20/obsidian-auto-note-importer?sort=semver)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/uppinote20/obsidian-auto-note-importer/total)
 
-Import and sync notes bidirectionally between Airtable and your Obsidian vault with smart field mapping and organization features.
+Import and sync notes bidirectionally between **Airtable**, **SeaTable**, and your Obsidian vault with smart field mapping and organization features. Built on a provider-agnostic core; more databases (Supabase, Notion, Custom API) tracked in [#11](https://github.com/uppinote20/obsidian-auto-note-importer/issues/11).
 
 ## ✨ Key Features
 
-- **Bidirectional Sync**: Sync notes from Airtable to Obsidian and back
-- **Formula & Relation Support**: Auto-fetch computed values after syncing to Airtable
-- **Conflict Resolution**: Choose how to handle concurrent edits (Obsidian wins, Airtable wins, or manual)
-- **Smart Field Selection**: Dropdown-based field selection with type validation
-- **Subfolder Organization**: Automatically organize notes into subfolders based on field values
-- **Safe File Naming**: Compatible field types (Text, Select, Number, Formula) for filenames
-- **Template Support**: Customize note format with powerful template system
-- **Obsidian Bases Compatible**: Optimized YAML properties for table/card views
-- **Automated Syncing**: Manual sync, scheduled intervals, or automatic on file change
+- **Multiple Databases**: Airtable and SeaTable supported today; pluggable provider architecture for more
+- **Bidirectional Sync**: Sync notes from your remote database to Obsidian and back
+- **Multi-Config**: Run several sync configurations (different bases / tables / folders) side-by-side
+- **Computed-Field Support**: Auto-fetch formula / rollup / lookup / link-formula values after pushing
+- **Conflict Resolution**: `Manual`, `Obsidian wins`, `Remote wins` modes
+- **Smart Field Selection**: Type-aware dropdowns; provider-specific safe-for-filename whitelist
+- **Subfolder Organization**: Auto-organize notes into subfolders based on a field value
+- **Safe File Naming**: Per-provider validation (text / select / number / formula / auto-number)
+- **Template Support**: `{{fieldName}}` placeholders with nested-property access
+- **Obsidian Bases Compatible**: YAML output tuned for table/card views
+- **Automated Syncing**: Manual sync, scheduled intervals, or auto on file change
 - **Zero Coding Required**: Point-and-click setup with intuitive UI
 
 ## 📦 Installation
 
 1. Open Obsidian
-2. Go to **Settings > Community plugins > Browse**
+2. Go to **Settings → Community plugins → Browse**
 3. Search for "**Auto Note Importer**" and install it
 4. Enable the plugin
-5. Configure your Airtable settings
+5. Add a credential for your provider (Airtable PAT or SeaTable API Token), then configure a sync configuration
 
 ## 🚀 Quick Start
 
-### 1. Get Airtable Personal Access Token
+### 1. Get Your Provider Credentials
 
-1. Go to [Airtable Tokens page](https://airtable.com/create/tokens)
+#### Airtable
+
+1. Visit the [Airtable Tokens page](https://airtable.com/create/tokens)
 2. Click **Create new token**
 3. Select scopes:
-   - `data.records:read` - Required for importing notes
-   - `data.records:write` - Required for bidirectional sync
-   - `schema.bases:read` - Required for field selection
-4. Select your bases and click **Create token**
-5. Copy the token and paste it in plugin settings
+   - `data.records:read` — required for importing
+   - `data.records:write` — required for bidirectional sync
+   - `schema.bases:read` — required for field selection
+4. Choose your bases and click **Create token**
+5. Copy the Personal Access Token
 
-### 2. Configure Plugin
+#### SeaTable
 
-1. **Airtable PAT**: Enter your Personal Access Token
-2. **Select Base**: Choose from your available bases
-3. **Select Table**: Pick the table to sync
-4. **Filename Field**: Choose field for note names (Text/Select/Number only)
-5. **Subfolder Field**: Optional - organize notes by field value
-6. **Destination**: Set folder location for imported notes
-7. **Template**: Optional - customize note format
+1. Open your SeaTable Base → **More options (⋯) → Advanced settings → API Tokens → Add API Token**
+2. Pick **Read and write** permission
+3. Copy the API Token (it is base-specific)
+4. Note your server URL (default: `https://cloud.seatable.io`; self-hosted users use their own host)
+
+### 2. Configure the Plugin
+
+1. Open **Settings → Auto Note Importer**
+2. **Add credential** — pick the provider type (Airtable / SeaTable) and paste your token
+3. The connection card adapts to your selected credential. Fill in:
+   - **Airtable**: Base → Table → View (optional) → Filename / Subfolder fields
+   - **SeaTable**: Table ID → View ID (optional) → Filename / Subfolder column names
+4. **Destination folder** in your vault
+5. **Template** — optional `{{fieldName}}` template
+6. **Bidirectional sync** — toggle if you want changes flowing both ways
+
+You can have multiple configurations (e.g. one for Airtable, one for SeaTable, or two SeaTable bases) — switch between them with the tab bar at the top of the settings panel.
 
 ### 3. Sync Notes
 
-Use Command Palette (Ctrl/Cmd + P) to access sync commands:
+Use Command Palette (Ctrl/Cmd + P). Each command is labeled with the active config's provider:
 
 | Command | Description |
 |:---|:---|
-| **Sync current note from Airtable** | Refresh current note from Airtable |
-| **Sync all notes from Airtable** | Import/update all notes from Airtable |
-| **Sync current note to Airtable** | Push current note changes to Airtable* |
-| **Sync modified notes to Airtable** | Push all pending changes to Airtable* |
-| **Sync all notes to Airtable** | Push all notes to Airtable* |
-| **Bidirectional sync current note** | Sync to Airtable, then fetch formula results* |
-| **Bidirectional sync modified notes** | Sync modified notes with formula refresh* |
-| **Bidirectional sync all notes** | Full bidirectional sync with formulas* |
+| **Sync current note from {provider}** | Refresh current note from the remote database |
+| **Sync all notes from {provider}** | Import / update all notes |
+| **Sync current note to {provider}** \* | Push current note changes |
+| **Sync modified notes to {provider}** \* | Push pending changes |
+| **Sync all notes to {provider}** \* | Push every note |
+| **Bidirectional sync current note** \* | Push, wait for formulas, then pull |
+| **Bidirectional sync modified notes** \* | Same for modified notes |
+| **Bidirectional sync all notes** \* | Same for all notes |
 
-*Commands marked with * require **Enable bidirectional sync** to be turned on. They are hidden from Command Palette when disabled.
+\* Commands marked with \* require **Enable bidirectional sync** to be turned on. They are hidden from Command Palette when disabled.
 
-- **Auto**: Set sync interval in minutes (0 = manual only)
-- **Watch**: Enable file change detection for automatic sync
+You can also schedule syncs:
+
+- **Sync interval**: minutes (0 = manual only)
+- **Watch for changes**: detect file edits and queue automatic sync
 
 ## ⚙️ Settings Guide
 
-### Basic Settings
+### Per-Configuration Basics
 
 | Setting | Description |
 |:---|:---|
-| **Airtable Personal Access Token** | Your Airtable PAT for API access |
-| **Select Base** | Choose Airtable base (auto-populated from PAT) |
-| **Select Table** | Choose table within base |
-| **Filename Field** | Field to use for note filenames (safe types only) |
-| **Subfolder Field** | Field to organize notes into subfolders (optional) |
+| **Credential** | Pick a registered credential (Airtable / SeaTable) |
+| **Base / Table / View** (Airtable) | Selectable from your base via the Meta API |
+| **Table / View ID** (SeaTable) | Identifiers from your SeaTable base — auto-derived dropdowns are tracked in [#73](https://github.com/uppinote20/obsidian-auto-note-importer/issues/73) |
+| **Filename Field** | Field used for note filenames (safe types only) |
+| **Subfolder Field** | Optional — organize notes into subfolders |
 | **New File Location** | Destination folder in your vault |
-| **Template File** | Custom template for note format (optional) |
+| **Template File** | Custom template (optional) |
 | **Sync Interval** | Auto-sync frequency in minutes (0 = disabled) |
 | **Allow Overwrite** | Update existing notes vs skip duplicates |
 
-### Bidirectional Sync Settings
+### Bidirectional Sync
 
 | Setting | Description |
 |:---|:---|
-| **Enable bidirectional sync** | Allow syncing changes from Obsidian back to Airtable |
-| **Conflict resolution** | How to handle conflicts: Manual, Obsidian wins, or Airtable wins |
-| **Watch for file changes** | Automatically detect and queue changes for sync |
-| **Auto-sync formulas** | Fetch computed formula/relation results after syncing |
-| **Formula sync delay** | Wait time (ms) for Airtable to compute formulas (default: 1500) |
+| **Enable bidirectional sync** | Allow Obsidian → remote pushes |
+| **Conflict resolution** | `Manual`, `Obsidian wins`, `Remote wins` |
+| **Watch for file changes** | Auto-detect Obsidian edits and queue sync |
+| **Auto-sync computed fields** | After push, fetch formulas / rollups / lookups |
+| **Computed-field sync delay** | ms to wait for the remote to recompute (default: 1500) |
 
 ### Supported Field Types
 
-**✅ Safe for Filenames & Subfolders:**
-- Single line text
-- Single select
-- Number
-- Formula (validated for filename compatibility)
+The plugin maps each provider's native types to a normalized taxonomy (`text` / `number` / `date` / `boolean` / `single-select` / `multi-select` / `attachment` / `link` / `computed` / `system`). Each provider's `FieldTypeMapper` decides which types are filename-safe and which are read-only (excluded from push) — fail-closed for unknown types.
 
-**❌ Not Supported for Filenames:**
-- Email, URL, Phone (special characters)
-- Date, Time (formatting issues)
-- Multiple select (unpredictable results)
-- Attachment, User (complex data types)
+#### Airtable
 
-**🔒 Read-only Fields (synced from Airtable only):**
-- Formula, Rollup, Count, Lookup
-- Created time, Last modified time
-- Created by, Last modified by
-- Auto number
+**✅ Safe for Filenames & Subfolders:** `singleLineText`, `singleSelect`, `number`, `formula`
 
-*Unsupported fields are automatically hidden in dropdowns to prevent errors.*
+**🔒 Read-only (synced from Airtable only):** `formula`, `rollup`, `count`, `lookup`, `externalSyncSource`, `aiText`, `button`, `createdTime`, `lastModifiedTime`, `createdBy`, `lastModifiedBy`, `autoNumber`
 
-**📋 [Complete Field Type Reference →](examples/airtable-field-types.md)**
+**📋 [Complete Airtable Field Type Reference →](examples/airtable-field-types.md)**
+
+#### SeaTable
+
+**✅ Safe for Filenames & Subfolders:** `text`, `single-select`, `number`, `auto-number`, `formula`
+
+**🔒 Read-only (synced from SeaTable only):** `formula`, `link-formula`, `button`, `ctime`, `mtime`, `creator`, `last-modifier`, `auto-number`
+
+Unsupported / read-only fields are automatically hidden in dropdowns to prevent push errors.
 
 ## 🔄 How It Works
 
 ### Unique Identification
-Each note gets a unique `primaryField` (Airtable record ID) in frontmatter to prevent duplicates and enable proper sync tracking.
+Each note carries the remote record id in the `primaryField` frontmatter key — the immutable handle the sync pipeline uses to match notes back to their remote row.
 
 ### File Naming Logic
-1. Use selected **Filename Field** if available and non-empty
-2. Fallback to **Airtable record ID** for guaranteed unique, safe filename
+1. Use the selected **Filename Field** if present and non-empty
+2. Fallback to the **remote record id**
 3. All filenames are sanitized for cross-platform compatibility
 
 ### Subfolder Organization
 - **With Subfolder Field**: `destination/field-value/note.md`
 - **Without Subfolder Field**: `destination/note.md`
-- Supports nested folders (e.g., "Category/Subcategory")
+- Supports nested folders (e.g. "Category/Subcategory")
 - Recursive duplicate detection across all subfolders
 
 ### Bidirectional Sync Flow
 
 ```
-┌─────────────┐     Push      ┌─────────────┐
-│   Obsidian  │ ───────────▶  │   Airtable  │
-│   (Notes)   │               │  (Database) │
-│             │  ◀───────────  │             │
-└─────────────┘     Pull      └─────────────┘
+┌─────────────┐     Push      ┌──────────────┐
+│   Obsidian  │ ───────────▶  │   Remote DB  │
+│   (Notes)   │               │  (Airtable / │
+│             │  ◀───────────  │   SeaTable)  │
+└─────────────┘     Pull      └──────────────┘
 ```
 
-1. **Obsidian → Airtable**: Edit frontmatter fields in Obsidian, sync pushes changes
-2. **Formula Computation**: Airtable computes formulas, rollups, and relations
-3. **Airtable → Obsidian**: Pull back computed values to update notes
+1. **Obsidian → Remote**: edit frontmatter, sync pushes writable fields
+2. **Server-side computation**: the remote computes formulas / rollups / link-formulas
+3. **Remote → Obsidian**: pull back computed values to update notes
 
 ### Conflict Resolution
 
-When the same field is modified in both Obsidian and Airtable:
+When the same field is modified in both Obsidian and the remote:
 
 | Mode | Behavior |
 |:---|:---|
-| **Manual** | Show notification, skip conflicted fields |
-| **Obsidian wins** | Overwrite Airtable with Obsidian values |
-| **Airtable wins** | Keep Airtable values, ignore Obsidian changes |
+| **Manual** | Show notification, skip conflicting fields |
+| **Obsidian wins** | Overwrite the remote with Obsidian values |
+| **Remote wins** | Keep remote values, ignore Obsidian changes |
 
 ## 📝 Template Usage
 
@@ -186,51 +198,45 @@ created: "{{Created time}}"
 
 **Advanced Features:**
 - **Nested Access**: `{{Attachment.0.url}}`, `{{User.name}}`
-- **Multi-line Support**: Automatic YAML block scalar formatting
+- **Multi-line Support**: Automatic YAML block-scalar formatting
 - **Bases Optimization**: Proper YAML types for table/card views
 
 **📝 [Template Examples & Best Practices →](examples/template-examples.md)**
 
 ## 🔗 Obsidian Bases Integration
 
-This plugin creates Bases-compatible YAML frontmatter with proper data types for seamless table/card view editing. Import your notes, enable the Bases plugin, and create a database from your imported folder for powerful data management workflows.
+This plugin emits Bases-compatible YAML frontmatter with proper data types for seamless table/card view editing. Import your notes, enable the Bases plugin, and create a database from the imported folder for powerful data management workflows.
 
 ## 📊 Example Workflows
 
 ### One-way Import
-1. **Collect Data**: Use automation tools (n8n, Zapier) to gather content
-2. **Store in Airtable**: Organize and process your data
-3. **Import to Obsidian**: Use this plugin to create structured notes
-4. **Organize Automatically**: Subfolder structure based on your data
-5. **Manage in Bases**: View and edit in table/card format
+1. **Collect data** with automation tools (n8n, Zapier, Apps Script)
+2. **Store** in Airtable or SeaTable
+3. **Import** to Obsidian via this plugin
+4. **Organize** automatically using Subfolder Field
+5. **Manage** in Obsidian Bases (table/card view)
 
 ### Bidirectional Workflow
-1. **Import from Airtable**: Pull records as Obsidian notes
-2. **Edit in Obsidian**: Modify frontmatter fields (status, tags, notes)
-3. **Sync to Airtable**: Push changes back to update the database
-4. **Formula Updates**: Airtable computes formulas and relations
-5. **Pull Results**: Fetch computed values back to Obsidian
+1. **Import** records as Obsidian notes
+2. **Edit** frontmatter fields in Obsidian (status, tags, notes)
+3. **Push** changes back to the remote
+4. **Compute** formulas / rollups / link-formulas server-side
+5. **Pull** computed values back into Obsidian
 
 ## 🛠️ Troubleshooting
 
 **Common Issues:**
-- **No fields showing**: Check PAT permissions and base/table selection
-- **Sync fails**: Verify network connection and Airtable credentials
-- **File naming errors**: Ensure selected field type is supported
-- **Missing subfolders**: Check subfolder field value isn't empty
-- **Bidirectional sync not working**: Ensure PAT has `data.records:write` permission
-- **Formulas not updating**: Increase formula sync delay in settings
-- **Conflicts detected**: Check conflict resolution mode in settings
+- **No fields showing**: re-check token permissions and base/table selection
+- **Sync fails**: verify network connection and credentials
+- **File naming errors**: confirm the selected field type is supported (per-provider whitelist)
+- **Missing subfolders**: check the subfolder field value isn't empty
+- **Bidirectional sync not working**: ensure write permissions (Airtable PAT `data.records:write`; SeaTable token "Read and write")
+- **Formulas not updating**: increase the computed-field sync delay
+- **Conflicts detected**: check conflict resolution mode
 
-**Field Selection Tips:**
-- Use descriptive text fields for filenames
-- Choose categorical fields for subfolder organization
-- Formula fields work for filenames but are validated for compatibility
-
-**Bidirectional Sync Tips:**
-- Read-only fields (formulas, rollups) are automatically excluded from push
-- Use "Obsidian wins" mode for faster sync (skips conflict detection)
-- Increase formula sync delay for complex Airtable formulas
+**Provider-specific Tips:**
+- **Airtable**: read-only fields (formulas, rollups) are auto-excluded from push. Use **Obsidian wins** for faster sync (skips conflict detection).
+- **SeaTable**: API tokens are base-specific. Each token grants access to exactly one base — get a separate token per base. Self-hosted users override `Server URL` per credential.
 
 ## ☕ Support
 
