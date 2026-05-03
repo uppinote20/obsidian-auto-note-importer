@@ -233,16 +233,17 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     row.createEl('td', { cls: 'ani-cred-type', text: CREDENTIAL_TYPE_LABELS[cred.type] });
 
     const keyCell = row.createEl('td');
-    if (cred.type === 'airtable') {
-      if (cred.apiKey) {
-        keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(cred.apiKey) });
-      } else {
-        const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set API key' });
-        setLink.addEventListener('click', () => {
-          this.editingCredentialId = cred.id;
-          this.display();
-        });
-      }
+    const authValue = cred.type === 'airtable' ? cred.apiKey
+      : cred.type === 'seatable' ? cred.apiToken
+      : null;
+    if (authValue) {
+      keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(authValue) });
+    } else if (authValue === '') {
+      const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set credential' });
+      setLink.addEventListener('click', () => {
+        this.editingCredentialId = cred.id;
+        this.display();
+      });
     } else {
       keyCell.createSpan({ cls: 'ani-cred-key-na', text: '\u2014' });
     }
@@ -1049,9 +1050,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderBidirectionalSyncSettings(containerEl: HTMLElement, config: ConfigEntry): void {
+    const cred = this.plugin.settings.credentials.find(c => c.id === config.credentialId);
+    const providerLabel = cred ? CREDENTIAL_TYPE_LABELS[cred.type] : 'the remote database';
     new Setting(containerEl)
       .setName("Enable bidirectional sync")
-      .setDesc("When enabled, changes made in Obsidian will be synced back to Airtable.")
+      .setDesc(`When enabled, changes made in Obsidian will be synced back to ${providerLabel}.`)
       .addToggle(toggle => toggle
         .setValue(config.bidirectionalSync)
         .onChange(async (value) => {
