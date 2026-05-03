@@ -7,6 +7,7 @@
  * @handbook 9.2-service-initialization-order
  * @tested tests/core/config-instance.test.ts
  * @tested e2e:tests/e2e/run-e2e.mjs
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
 import type { App } from "obsidian";
@@ -124,10 +125,13 @@ export class ConfigInstance {
   }
 
   /**
-   * Enqueues a sync request for this config's queue.
+   * Enqueues a sync request for this config's queue. Returns a promise
+   * that resolves once the request has been fully processed by the queue,
+   * so callers (e.g. e2e harnesses) can await completion. UI callers
+   * that want fire-and-forget behavior can simply ignore the return.
    */
-  enqueueSyncRequest(mode: SyncMode, scope: SyncScope, filePaths?: string[]): void {
-    this.syncQueue.enqueue(mode, scope, filePaths);
+  enqueueSyncRequest(mode: SyncMode, scope: SyncScope, filePaths?: string[]): Promise<void> {
+    return this.syncQueue.enqueue(mode, scope, filePaths);
   }
 
   /**

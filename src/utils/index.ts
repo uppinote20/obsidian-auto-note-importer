@@ -22,3 +22,9 @@ export {
   findConfigById,
   buildCredentialIndex,
 } from './settings-bridge';
+
+export {
+  extractApiErrorMessage,
+  extractApiErrorDetails,
+  normalizeServerUrl,
+} from './api-errors';

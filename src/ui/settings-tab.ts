@@ -6,7 +6,9 @@
  * and per-config settings rendering.
  *
  * @handbook 5.1-ui-components
+ * @handbook 4.4-provider-abstraction
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
+ * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  */
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
@@ -19,7 +21,7 @@ import {
   hasCredentialFormRenderer,
 } from '../services';
 import type { CredentialFormState, CredentialFormRenderer } from '../types';
-import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
+import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
@@ -43,7 +45,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private editingCredentialId: string | null = null;
   private addingCredential = false;
   private addingCredentialType: CredentialType = 'airtable';
-  private expandedSections: Set<string> = new Set(['airtable-connection']);
+  // Both connection-card ids are seeded so whichever provider's card
+  // renders for the active credential starts expanded; the inactive one
+  // is harmless (no card = no element to apply the class to).
+  private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection']);
   private pendingDeleteConfigId: string | null = null;
   private pendingDeleteCredentialId: string | null = null;
 
@@ -128,14 +133,25 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Summary card stack
     const cardStack = containerEl.createDiv({ cls: 'ani-card-stack' });
 
-    const connected = !!(config.baseId && config.tableId);
     if (credential.type === 'airtable' && credential.apiKey) {
+      const connected = !!(config.baseId && config.tableId);
       const airtableCred = credential;
       this.renderSummaryCard(cardStack, {
         sectionId: 'airtable-connection', icon: '\u{1F4E1}', title: 'Airtable Connection',
         summary: this.getConnectionSummary(config),
         badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
         renderContent: (c) => this.renderBaseSelector(c, config, airtableCred),
+      });
+    } else if (credential.type === 'seatable' && credential.apiToken) {
+      // SeaTable's API token is base-specific, so the dtable_uuid is derived
+      // from the credential at sync time — only tableId/viewId are user-supplied.
+      const connected = !!config.tableId;
+      const seatableCred = credential;
+      this.renderSummaryCard(cardStack, {
+        sectionId: 'seatable-connection', icon: '\u{1F4E1}', title: 'SeaTable Connection',
+        summary: this.getConnectionSummary(config),
+        badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
+        renderContent: (c) => this.renderSeaTableConnection(c, config, seatableCred),
       });
     }
 
@@ -218,16 +234,17 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     row.createEl('td', { cls: 'ani-cred-type', text: CREDENTIAL_TYPE_LABELS[cred.type] });
 
     const keyCell = row.createEl('td');
-    if (cred.type === 'airtable') {
-      if (cred.apiKey) {
-        keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(cred.apiKey) });
-      } else {
-        const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set API key' });
-        setLink.addEventListener('click', () => {
-          this.editingCredentialId = cred.id;
-          this.display();
-        });
-      }
+    const authValue = cred.type === 'airtable' ? cred.apiKey
+      : cred.type === 'seatable' ? cred.apiToken
+      : null;
+    if (authValue) {
+      keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(authValue) });
+    } else if (authValue === '') {
+      const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set credential' });
+      setLink.addEventListener('click', () => {
+        this.editingCredentialId = cred.id;
+        this.display();
+      });
     } else {
       keyCell.createSpan({ cls: 'ani-cred-key-na', text: '\u2014' });
     }
@@ -547,7 +564,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Credential selector
     new Setting(containerEl)
       .setName('Credential')
-      .setDesc('Select the Airtable credential to use for this configuration.')
+      .setDesc('Select the database credential to use for this configuration.')
       .addDropdown(dropdown => {
         const { credentials } = this.plugin.settings;
         if (credentials.length === 0) {
@@ -665,7 +682,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private getConnectionSummary(config: ConfigEntry): string {
-    if (!config.baseId || !config.tableId) return '';
+    // tableId is the universal "is this configured" signal. Airtable also
+    // requires baseId, but if tableId is set without baseId the Airtable
+    // path won't render anyway, so this single check is safe across providers.
+    if (!config.tableId) return '';
     const parts: string[] = [];
     if (config.filenameFieldName) parts.push(config.filenameFieldName);
     if (config.viewId) parts.push('View filtered');
@@ -747,6 +767,70 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   // ─── Existing Render Methods ───────────────────────────────────────
+
+  private renderSeaTableConnection(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SeaTableCredential,
+  ): void {
+    if (!hasFieldTypeMapper(credential.type)) {
+      new Setting(containerEl)
+        .setName('Field type mapper missing')
+        .setDesc(`No field type mapper registered for ${credential.type}.`);
+      return;
+    }
+    const mapper = getFieldTypeMapper(credential.type);
+
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'SeaTable identifies tables, views, and columns by ID. Find them in your Base under Settings → Tables, Views, and Columns.',
+    });
+
+    new Setting(containerEl)
+      .setName('Table ID')
+      .setDesc('Required. The SeaTable table identifier (e.g. 0000).')
+      .addText(text => text
+        .setPlaceholder('0000')
+        .setValue(config.tableId)
+        .onChange(async (value) => {
+          config.tableId = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('View ID (optional)')
+      .setDesc('Filter synced rows by a SeaTable view. Leave empty to sync the entire table.')
+      .addText(text => text
+        .setPlaceholder('0000')
+        .setValue(config.viewId)
+        .onChange(async (value) => {
+          config.viewId = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    const safeTypesList = mapper.getFilenameSafeTypes().join(', ') || 'text';
+    new Setting(containerEl)
+      .setName('Filename field')
+      .setDesc(`Column name whose value becomes the note filename. Recommended types: ${safeTypesList}.`)
+      .addText(text => text
+        .setPlaceholder('column name (e.g. Name)')
+        .setValue(config.filenameFieldName)
+        .onChange(async (value) => {
+          config.filenameFieldName = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Subfolder field (optional)')
+      .setDesc('Column name used for subfolder organization.')
+      .addText(text => text
+        .setPlaceholder('column name')
+        .setValue(config.subfolderFieldName)
+        .onChange(async (value) => {
+          config.subfolderFieldName = value.trim();
+          await this.plugin.saveSettings();
+        }));
+  }
 
   private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
     new Setting(containerEl)
@@ -967,9 +1051,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private renderBidirectionalSyncSettings(containerEl: HTMLElement, config: ConfigEntry): void {
+    const cred = this.plugin.settings.credentials.find(c => c.id === config.credentialId);
+    const providerLabel = cred ? CREDENTIAL_TYPE_LABELS[cred.type] : 'the remote database';
     new Setting(containerEl)
       .setName("Enable bidirectional sync")
-      .setDesc("When enabled, changes made in Obsidian will be synced back to Airtable.")
+      .setDesc(`When enabled, changes made in Obsidian will be synced back to ${providerLabel}.`)
       .addToggle(toggle => toggle
         .setValue(config.bidirectionalSync)
         .onChange(async (value) => {

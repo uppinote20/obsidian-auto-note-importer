@@ -11,6 +11,7 @@
  *
  * @handbook 4.4-provider-abstraction
  * @tested tests/services/provider-registry.test.ts
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
 import type {
@@ -26,6 +27,9 @@ import type { RateLimiter } from './rate-limiter';
 import { AirtableClient } from './airtable-client';
 import { airtableFieldMapper } from './airtable-field-mapper';
 import { airtableCredentialFormRenderer } from './airtable-credential-form';
+import { SeaTableClient } from './seatable-client';
+import { seatableFieldMapper } from './seatable-field-mapper';
+import { seatableCredentialFormRenderer } from './seatable-credential-form';
 
 /**
  * Factory signature for creating a provider instance.
@@ -140,3 +144,16 @@ registerProvider('airtable', (credential, config, rateLimiter, debugMode) => {
 
 registerFieldTypeMapper('airtable', airtableFieldMapper);
 registerCredentialFormRenderer('airtable', airtableCredentialFormRenderer);
+
+// SeaTable providers read auth fields directly from their narrowed credential
+// (per handbook §4.4 step 6) — they bypass buildLegacySettings's `apiKey`
+// reservation entirely.
+registerProvider('seatable', (credential, config, rateLimiter, _debugMode) => {
+  if (credential.type !== 'seatable') {
+    throw new Error(`SeaTable factory received non-seatable credential: ${credential.type}`);
+  }
+  return new SeaTableClient(credential, config, rateLimiter);
+});
+
+registerFieldTypeMapper('seatable', seatableFieldMapper);
+registerCredentialFormRenderer('seatable', seatableCredentialFormRenderer);

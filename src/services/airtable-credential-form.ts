@@ -19,6 +19,7 @@ import type {
   ConnectionTestResult,
   Credential,
 } from '../types';
+import { extractApiErrorMessage } from '../utils';
 
 const STATE_KEY = 'apiKey';
 
@@ -84,7 +85,7 @@ class AirtableCredentialFormRendererImpl implements CredentialFormRenderer {
       if (response.status !== 200) {
         return {
           success: false,
-          error: `HTTP ${response.status}: ${this.extractErrorMessage(response)}`,
+          error: `HTTP ${response.status}: ${extractApiErrorMessage(response)}`,
         };
       }
       const baseCount = Array.isArray(response.json?.bases) ? response.json.bases.length : 0;
@@ -98,14 +99,6 @@ class AirtableCredentialFormRendererImpl implements CredentialFormRenderer {
     }
   }
 
-  private extractErrorMessage(response: { json?: unknown }): string {
-    const json = response.json as { error?: { message?: string } | string } | undefined;
-    if (typeof json?.error === 'string') return json.error;
-    if (json?.error && typeof json.error === 'object' && json.error.message) {
-      return json.error.message;
-    }
-    return 'Unknown error';
-  }
 }
 
 export const airtableCredentialFormRenderer: CredentialFormRenderer = new AirtableCredentialFormRendererImpl();

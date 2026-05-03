@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type {
   Credential,
   AirtableCredential,
+  SeaTableCredential,
   ConfigEntry,
   DatabaseProvider,
 } from '../../src/types';
@@ -18,6 +19,17 @@ function createAirtableCredential(overrides: Partial<AirtableCredential> = {}): 
     name: 'Test Airtable',
     type: 'airtable',
     apiKey: 'pat-test',
+    ...overrides,
+  };
+}
+
+function createSeaTableCredential(overrides: Partial<SeaTableCredential> = {}): SeaTableCredential {
+  return {
+    id: 'cred-st',
+    name: 'Test SeaTable',
+    type: 'seatable',
+    apiToken: 'st-token',
+    serverUrl: 'https://cloud.seatable.io',
     ...overrides,
   };
 }
@@ -48,8 +60,11 @@ describe('provider-registry', () => {
   let hasCredentialFormRenderer: typeof import('../../src/services/provider-registry').hasCredentialFormRenderer;
   let RateLimiter: typeof import('../../src/services/rate-limiter').RateLimiter;
   let AirtableClient: typeof import('../../src/services/airtable-client').AirtableClient;
+  let SeaTableClient: typeof import('../../src/services/seatable-client').SeaTableClient;
   let airtableFieldMapper: typeof import('../../src/services/airtable-field-mapper').airtableFieldMapper;
   let airtableCredentialFormRenderer: typeof import('../../src/services/airtable-credential-form').airtableCredentialFormRenderer;
+  let seatableFieldMapper: typeof import('../../src/services/seatable-field-mapper').seatableFieldMapper;
+  let seatableCredentialFormRenderer: typeof import('../../src/services/seatable-credential-form').seatableCredentialFormRenderer;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -58,6 +73,9 @@ describe('provider-registry', () => {
     const ac = await import('../../src/services/airtable-client');
     const afm = await import('../../src/services/airtable-field-mapper');
     const acf = await import('../../src/services/airtable-credential-form');
+    const sc = await import('../../src/services/seatable-client');
+    const sfm = await import('../../src/services/seatable-field-mapper');
+    const scf = await import('../../src/services/seatable-credential-form');
     registerProvider = registry.registerProvider;
     createProvider = registry.createProvider;
     hasProvider = registry.hasProvider;
@@ -69,8 +87,11 @@ describe('provider-registry', () => {
     hasCredentialFormRenderer = registry.hasCredentialFormRenderer;
     RateLimiter = rl.RateLimiter;
     AirtableClient = ac.AirtableClient;
+    SeaTableClient = sc.SeaTableClient;
     airtableFieldMapper = afm.airtableFieldMapper;
     airtableCredentialFormRenderer = acf.airtableCredentialFormRenderer;
+    seatableFieldMapper = sfm.seatableFieldMapper;
+    seatableCredentialFormRenderer = scf.seatableCredentialFormRenderer;
   });
 
   describe('built-in registrations', () => {
@@ -78,8 +99,11 @@ describe('provider-registry', () => {
       expect(hasProvider('airtable')).toBe(true);
     });
 
-    it('should not register non-airtable providers by default', () => {
-      expect(hasProvider('seatable')).toBe(false);
+    it('should register seatable factory on module load', () => {
+      expect(hasProvider('seatable')).toBe(true);
+    });
+
+    it('should not register pending providers by default', () => {
       expect(hasProvider('supabase')).toBe(false);
       expect(hasProvider('notion')).toBe(false);
       expect(hasProvider('custom-api')).toBe(false);
@@ -90,9 +114,14 @@ describe('provider-registry', () => {
       expect(getFieldTypeMapper('airtable')).toBe(airtableFieldMapper);
     });
 
-    it('should not register non-airtable field type mappers by default', () => {
-      expect(hasFieldTypeMapper('seatable')).toBe(false);
+    it('should register seatable field type mapper on module load', () => {
+      expect(hasFieldTypeMapper('seatable')).toBe(true);
+      expect(getFieldTypeMapper('seatable')).toBe(seatableFieldMapper);
+    });
+
+    it('should not register pending field type mappers by default', () => {
       expect(hasFieldTypeMapper('supabase')).toBe(false);
+      expect(hasFieldTypeMapper('notion')).toBe(false);
     });
 
     it('should register airtable credential form renderer on module load', () => {
@@ -100,9 +129,14 @@ describe('provider-registry', () => {
       expect(getCredentialFormRenderer('airtable')).toBe(airtableCredentialFormRenderer);
     });
 
-    it('should not register non-airtable credential form renderers by default', () => {
-      expect(hasCredentialFormRenderer('seatable')).toBe(false);
+    it('should register seatable credential form renderer on module load', () => {
+      expect(hasCredentialFormRenderer('seatable')).toBe(true);
+      expect(getCredentialFormRenderer('seatable')).toBe(seatableCredentialFormRenderer);
+    });
+
+    it('should not register pending credential form renderers by default', () => {
       expect(hasCredentialFormRenderer('notion')).toBe(false);
+      expect(hasCredentialFormRenderer('supabase')).toBe(false);
     });
   });
 
@@ -121,8 +155,8 @@ describe('provider-registry', () => {
         getFilenameSafeTypes: () => [],
         getReadOnlyTypes: () => [],
       };
-      registerFieldTypeMapper('seatable', fake);
-      expect(getFieldTypeMapper('seatable')).toBe(fake);
+      registerFieldTypeMapper('notion', fake);
+      expect(getFieldTypeMapper('notion')).toBe(fake);
     });
   });
 
@@ -135,13 +169,13 @@ describe('provider-registry', () => {
 
     it('should return the renderer registered via registerCredentialFormRenderer', () => {
       const fake = {
-        type: 'seatable' as const,
-        label: 'SeaTable',
+        type: 'notion' as const,
+        label: 'Notion',
         renderFields: vi.fn(),
         build: vi.fn(),
       };
-      registerCredentialFormRenderer('seatable', fake);
-      expect(getCredentialFormRenderer('seatable')).toBe(fake);
+      registerCredentialFormRenderer('notion', fake);
+      expect(getCredentialFormRenderer('notion')).toBe(fake);
     });
   });
 
@@ -160,36 +194,54 @@ describe('provider-registry', () => {
       expect(provider.capabilities.batchUpdateMaxSize).toBe(10);
     });
 
-    it('should expose the same fieldTypeMapper from provider instance and registry', () => {
-      // Ensures the dual access paths stay in sync: sync-orchestrator uses
-      // provider.fieldTypeMapper while settings-tab uses getFieldTypeMapper
-      // by credential type. A new provider registered without a mapper would
-      // silently diverge these paths.
-      const credential = createAirtableCredential();
-      const provider = createProvider(credential, createConfig(), new RateLimiter(0), false);
-      expect(provider.fieldTypeMapper).toBe(getFieldTypeMapper(credential.type));
-      expect(provider.fieldTypeMapper).toBe(airtableFieldMapper);
+    it('should create a SeaTableClient for seatable credential', () => {
+      const provider = createProvider(
+        createSeaTableCredential(),
+        createConfig({ tableId: '0000' }),
+        new RateLimiter(0),
+        false,
+      );
+
+      expect(provider).toBeInstanceOf(SeaTableClient);
+      expect(provider.providerType).toBe('seatable');
+      expect(provider.capabilities.bidirectional).toBe(true);
+      expect(provider.capabilities.hasComputedFields).toBe(true);
+      expect(provider.capabilities.batchUpdateMaxSize).toBeGreaterThan(0);
     });
+
+    it.each([
+      ['airtable' as const, () => createAirtableCredential(), () => airtableFieldMapper],
+      ['seatable' as const, () => createSeaTableCredential(), () => seatableFieldMapper],
+    ])('should expose the same fieldTypeMapper from provider instance and registry (%s)',
+      (_type, makeCred, getExpectedMapper) => {
+        // Ensures the dual access paths stay in sync: sync-orchestrator uses
+        // provider.fieldTypeMapper while settings-tab uses getFieldTypeMapper
+        // by credential type. A new provider registered without a mapper would
+        // silently diverge these paths.
+        const credential = makeCred();
+        const provider = createProvider(credential, createConfig({ tableId: '0000' }), new RateLimiter(0), false);
+        expect(provider.fieldTypeMapper).toBe(getFieldTypeMapper(credential.type));
+        expect(provider.fieldTypeMapper).toBe(getExpectedMapper());
+      });
 
     it('should throw when no factory is registered for credential type', () => {
       const credential: Credential = {
         id: 'cred-2',
-        name: 'SeaTable',
-        type: 'seatable',
-        apiToken: 'token',
-        serverUrl: 'https://cloud.seatable.io',
+        name: 'Notion',
+        type: 'notion',
+        integrationToken: 'secret_xxx',
       };
       const config = createConfig();
       const rateLimiter = new RateLimiter(0);
 
       expect(() => createProvider(credential, config, rateLimiter, false)).toThrow(
-        /No provider registered for credential type: seatable/,
+        /No provider registered for credential type: notion/,
       );
     });
 
     it('should pass credential, config, rateLimiter, and debugMode to the factory', () => {
       const factorySpy = vi.fn().mockReturnValue({
-        providerType: 'seatable',
+        providerType: 'notion',
         capabilities: { bidirectional: false, hasComputedFields: false, batchUpdateMaxSize: 1 },
         fetchNotes: vi.fn(),
         fetchRecord: vi.fn(),
@@ -198,14 +250,13 @@ describe('provider-registry', () => {
         reconfigure: vi.fn(),
       } as unknown as DatabaseProvider);
 
-      registerProvider('seatable', factorySpy);
+      registerProvider('notion', factorySpy);
 
       const credential: Credential = {
         id: 'cred-3',
-        name: 'SeaTable',
-        type: 'seatable',
-        apiToken: 'st-token',
-        serverUrl: 'https://cloud.seatable.io',
+        name: 'Notion',
+        type: 'notion',
+        integrationToken: 'secret_xxx',
       };
       const config = createConfig();
       const rateLimiter = new RateLimiter(0);
@@ -220,11 +271,11 @@ describe('provider-registry', () => {
   describe('registerProvider', () => {
     it('should add a new factory that hasProvider detects', () => {
       const fakeFactory = vi.fn();
-      expect(hasProvider('notion')).toBe(false);
+      expect(hasProvider('supabase')).toBe(false);
 
-      registerProvider('notion', fakeFactory);
+      registerProvider('supabase', fakeFactory);
 
-      expect(hasProvider('notion')).toBe(true);
+      expect(hasProvider('supabase')).toBe(true);
     });
 
     it('should overwrite an existing factory for the same type', () => {
