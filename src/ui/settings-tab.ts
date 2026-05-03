@@ -6,6 +6,7 @@
  * and per-config settings rendering.
  *
  * @handbook 5.1-ui-components
+ * @handbook 4.4-provider-abstraction
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  */
