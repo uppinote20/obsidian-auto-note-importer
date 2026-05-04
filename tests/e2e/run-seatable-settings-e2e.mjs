@@ -16,6 +16,7 @@
 
 import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
 import { loadEnv } from './load-env.mjs';
+import { buildSettingsHarnessHelpers, makeSetConfigAndQuery } from './obsidian-helpers.mjs';
 
 loadEnv();
 
@@ -37,10 +38,11 @@ const ENV = {
 // Obsidian-side helpers
 // ---------------------------------------------------------------------------
 
-const HELPERS = `
-  function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
-
-  function getSeaConfig() {
+const HELPERS = buildSettingsHarnessHelpers({ pluginId: PLUGIN_ID }) + `
+  // SeaTable settings tests inject a dedicated e2e config keyed by
+  // E2E_CFG_ID so the user's existing configs stay untouched. The setup
+  // helper resets prior runs idempotently and marks the new config active.
+  function getActiveConfig() {
     const p = getPlugin();
     return p.settings.configs.find(c => c.id === '${E2E_CFG_ID}');
   }
@@ -87,52 +89,6 @@ const HELPERS = `
     });
     p.settings.activeConfigId = '${E2E_CFG_ID}';
   }
-
-  function getSettingsTab() {
-    return app.setting.pluginTabs.find(t => t.id === '${PLUGIN_ID}');
-  }
-
-  async function openSettingsTab() {
-    app.setting.open();
-    await new Promise(r => setTimeout(r, 200));
-    const tab = getSettingsTab();
-    if (!tab) throw new Error('Plugin settings tab not found');
-    app.setting.openTab(tab);
-    tab.display();
-    await new Promise(r => setTimeout(r, 400));
-    return tab;
-  }
-
-  async function rerenderTab() {
-    const tab = getSettingsTab();
-    if (tab) tab.display();
-    await new Promise(r => setTimeout(r, 300));
-    return tab;
-  }
-
-  function getContainer() {
-    return getSettingsTab()?.containerEl;
-  }
-
-  function queryCards(container) {
-    const el = container || getContainer();
-    return Array.from(el.querySelectorAll('.ani-summary-card'));
-  }
-
-  function cardInfo(card) {
-    return {
-      title: card.querySelector('.ani-card-title')?.textContent || '',
-      summary: card.querySelector('.ani-card-summary')?.textContent || '',
-      badge: card.querySelector('.ani-card-badge')?.textContent || '',
-      isOk: !!card.querySelector('.ani-card-badge-ok'),
-      isOff: !!card.querySelector('.ani-card-badge-off'),
-      expanded: card.classList.contains('is-expanded'),
-    };
-  }
-
-  function allCardInfos(container) {
-    return queryCards(container).map(c => cardInfo(c));
-  }
 `;
 
 // ---------------------------------------------------------------------------
@@ -162,29 +118,7 @@ async function test(name, fn) {
   }
 }
 
-function buildConfigExpr(overrides) {
-  return Object.entries(overrides)
-    .map(([key, value]) => {
-      const v = typeof value === 'string' ? `'${value.replace(/'/g, "\\'")}'`
-        : typeof value === 'boolean' ? String(value)
-        : value;
-      return `cfg.${key} = ${v};`;
-    })
-    .join('\n      ');
-}
-
-async function setConfigAndQuery(overrides) {
-  const assignments = buildConfigExpr(overrides);
-  return run(`(async () => {
-    ${HELPERS}
-    const p = getPlugin();
-    const cfg = getSeaConfig();
-    ${assignments}
-    await p.saveSettings();
-    await rerenderTab();
-    return JSON.stringify(allCardInfos());
-  })()`, 10000);
-}
+const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
 // ---------------------------------------------------------------------------
 // Tests

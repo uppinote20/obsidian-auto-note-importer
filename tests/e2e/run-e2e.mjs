@@ -33,6 +33,7 @@
 
 import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
 import { loadEnv } from './load-env.mjs';
+import { buildSyncHarnessHelpers } from './obsidian-helpers.mjs';
 
 loadEnv();
 
@@ -101,27 +102,9 @@ let hasCalField = false;
 // Obsidian-side helpers (injected into eval expressions)
 // ---------------------------------------------------------------------------
 
-const HELPERS = `
-  function waitForCache(file, key, val, maxWait = 3000) {
-    return new Promise((resolve) => {
-      const start = Date.now();
-      (function check() {
-        const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-        if (fm && String(fm[key]) === String(val)) return resolve(true);
-        if (Date.now() - start > maxWait) return resolve(false);
-        setTimeout(check, 100);
-      })();
-    });
-  }
-
-  async function openAndActivate(path) {
-    const file = app.vault.getAbstractFileByPath(path);
-    const leaf = app.workspace.getLeaf(false);
-    await leaf.openFile(file);
-    await new Promise(r => setTimeout(r, 800));
-    return file;
-  }
-
+const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_AT_CFG_ID }) + `
+  // Airtable-specific: replace E2ECount value via in-place regex (avoids
+  // the JSON.stringify quoting modifyField applies for non-numerics).
   async function modifyCount(file, newCount) {
     let content = await app.vault.read(file);
     content = content.replace(/E2ECount: \\d+/, 'E2ECount: ' + newCount);
@@ -129,25 +112,10 @@ const HELPERS = `
     await waitForCache(file, 'E2ECount', newCount);
   }
 
-  /**
-   * Generic frontmatter field editor. Replaces an existing 'key: value'
-   * line in-place, or appends one before the closing --- if absent.
-   * Strings containing colon/hash/hyphen are JSON.stringify-quoted to
-   * keep YAML happy.
-   */
-  async function modifyField(file, key, value) {
-    let content = await app.vault.read(file);
-    const re = new RegExp('^' + key + ':.*$', 'm');
-    const line = key + ': ' + (typeof value === 'string' && /[:#\\-]/.test(value) ? JSON.stringify(value) : value);
-    if (re.test(content)) {
-      content = content.replace(re, line);
-    } else {
-      content = content.replace(/^---\\n([\\s\\S]*?)\\n---/, (_, body) => '---\\n' + body + '\\n' + line + '\\n---');
-    }
-    await app.vault.modify(file, content);
-    await waitForCache(file, key, value);
-  }
-
+  // Airtable-specific: idempotent column creation via Meta API. Skips
+  // formula/rollup/lookup (the API rejects those — pre-add them via the
+  // Airtable UI). Returns { added, skipped, unsupported } so callers can
+  // downgrade computed-field cases gracefully.
   async function ensureFields(required) {
     const cfg = getConfig();
     const cred = getCredential();
@@ -205,39 +173,7 @@ const HELPERS = `
     return { added, skipped, unsupported };
   }
 
-  function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
-
-  // Default getConfig() returns the dedicated e2e config (added during
-  // setup). Pass an explicit numeric index only if you really need the
-  // user's first non-e2e config — none of our suites do.
-  function getConfig(idx) {
-    const p = getPlugin();
-    if (idx === undefined) {
-      return p.settings.configs.find(c => c.id === '${E2E_AT_CFG_ID}') || p.settings.configs[0];
-    }
-    return p.settings.configs[idx];
-  }
-
-  function getCredential(config) {
-    const p = getPlugin();
-    const cfg = config || getConfig();
-    return p.settings.credentials.find(c => c.id === cfg.credentialId);
-  }
-
-  function getInstance(config) {
-    const p = getPlugin();
-    const cfg = config || getConfig();
-    return p.configManager.getInstance(cfg.id);
-  }
-
-  function setMode(mode, autoFormula, config) {
-    const cfg = config || getConfig();
-    const cred = getCredential(cfg);
-    cfg.conflictResolution = mode;
-    if (autoFormula !== undefined) cfg.autoSyncComputedFields = autoFormula;
-    getInstance(cfg).updateSettings(cfg, cred);
-  }
-
+  // Airtable-specific: single-record GET against the data API.
   async function fetchRecord(recordId, config) {
     const cfg = config || getConfig();
     const cred = getCredential(cfg);
@@ -246,12 +182,6 @@ const HELPERS = `
       { headers: { 'Authorization': 'Bearer ' + cred.apiKey } }
     );
     return (await resp.json()).fields;
-  }
-
-  async function enqueueSync(mode, scope, config) {
-    const cfg = config || getConfig();
-    const inst = getInstance(cfg);
-    return inst.enqueueSyncRequest(mode, scope);
   }
 `;
 

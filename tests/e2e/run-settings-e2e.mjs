@@ -15,6 +15,7 @@
  */
 
 import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
+import { buildSettingsHarnessHelpers, makeSetConfigAndQuery } from './obsidian-helpers.mjs';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -26,62 +27,13 @@ const PLUGIN_ID = 'auto-note-importer';
 // Obsidian-side helpers
 // ---------------------------------------------------------------------------
 
-const HELPERS = `
-  function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
-
+const HELPERS = buildSettingsHarnessHelpers({ pluginId: PLUGIN_ID }) + `
+  // Airtable settings tests run against the user's currently active config
+  // (no dedicated e2e config gets injected).
   function getActiveConfig() {
     const p = getPlugin();
     const id = p.settings.activeConfigId;
     return p.settings.configs.find(c => c.id === id) || p.settings.configs[0];
-  }
-
-  function getConfig(idx = 0) { return getPlugin().settings.configs[idx]; }
-
-  function getSettingsTab() {
-    return app.setting.pluginTabs.find(t => t.id === '${PLUGIN_ID}');
-  }
-
-  async function openSettingsTab() {
-    app.setting.open();
-    await new Promise(r => setTimeout(r, 200));
-    const tab = getSettingsTab();
-    if (!tab) throw new Error('Plugin settings tab not found');
-    app.setting.openTab(tab);
-    tab.display();
-    await new Promise(r => setTimeout(r, 400));
-    return tab;
-  }
-
-  async function rerenderTab() {
-    const tab = getSettingsTab();
-    if (tab) tab.display();
-    await new Promise(r => setTimeout(r, 300));
-    return tab;
-  }
-
-  function getContainer() {
-    const tab = getSettingsTab();
-    return tab?.containerEl;
-  }
-
-  function queryCards(container) {
-    const el = container || getContainer();
-    return Array.from(el.querySelectorAll('.ani-summary-card'));
-  }
-
-  function cardInfo(card) {
-    return {
-      title: card.querySelector('.ani-card-title')?.textContent || '',
-      summary: card.querySelector('.ani-card-summary')?.textContent || '',
-      badge: card.querySelector('.ani-card-badge')?.textContent || '',
-      isOk: !!card.querySelector('.ani-card-badge-ok'),
-      isOff: !!card.querySelector('.ani-card-badge-off'),
-      expanded: card.classList.contains('is-expanded'),
-    };
-  }
-
-  function allCardInfos(container) {
-    return queryCards(container).map(c => cardInfo(c));
   }
 `;
 
@@ -110,34 +62,7 @@ async function test(name, fn) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper: set config fields and re-render settings tab
-// ---------------------------------------------------------------------------
-
-function buildConfigExpr(overrides) {
-  return Object.entries(overrides)
-    .map(([key, value]) => {
-      const v = typeof value === 'string' ? `'${value.replace(/'/g, "\\'")}'`
-        : typeof value === 'boolean' ? String(value)
-        : value;
-      return `cfg.${key} = ${v};`;
-    })
-    .join('\n      ');
-}
-
-async function setConfigAndQuery(overrides) {
-  const assignments = buildConfigExpr(overrides);
-  return run(`(async () => {
-    ${HELPERS}
-    const p = getPlugin();
-    const cfg = getActiveConfig();
-    ${assignments}
-    await p.saveSettings();
-    await rerenderTab();
-    const infos = allCardInfos();
-    return JSON.stringify(infos);
-  })()`, 10000);
-}
+const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
 // ---------------------------------------------------------------------------
 // Tests

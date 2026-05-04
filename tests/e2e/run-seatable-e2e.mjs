@@ -44,6 +44,7 @@
 
 import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
 import { loadEnv } from './load-env.mjs';
+import { buildSyncHarnessHelpers } from './obsidian-helpers.mjs';
 
 loadEnv();
 
@@ -93,34 +94,12 @@ let testRowIds = [];
 // Obsidian-side helpers (injected into eval expressions)
 // ---------------------------------------------------------------------------
 
-const HELPERS = `
-  function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
-
-  function getSeaConfig() {
-    const p = getPlugin();
-    return p.settings.configs.find(c => c.id === '${E2E_CFG_ID}');
-  }
-
-  function getSeaCredential() {
-    const p = getPlugin();
-    return p.settings.credentials.find(c => c.id === '${E2E_CRED_ID}');
-  }
-
-  function getInstance(config) {
-    const p = getPlugin();
-    return p.configManager.getInstance((config || getSeaConfig()).id);
-  }
-
-  function setMode(mode, autoFormula) {
-    const cfg = getSeaConfig();
-    const cred = getSeaCredential();
-    cfg.conflictResolution = mode;
-    if (autoFormula !== undefined) cfg.autoSyncComputedFields = autoFormula;
-    getInstance().updateSettings(cfg, cred);
-  }
-
+const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_CFG_ID }) + `
+  // SeaTable Base-Token exchange. Caches nothing — each helper that needs
+  // it calls exchangeBaseToken() fresh. Acceptable for e2e since per-test
+  // overhead is dominated by the actual sync work.
   async function exchangeBaseToken() {
-    const cred = getSeaCredential();
+    const cred = getCredential();
     const url = cred.serverUrl.replace(/\\/+$/, '') + '/api/v2.1/dtable/app-access-token/';
     const r = await fetch(url, { headers: { 'Authorization': 'Token ' + cred.apiToken } });
     if (!r.ok) throw new Error('Base-Token exchange failed: HTTP ' + r.status);
@@ -141,8 +120,11 @@ const HELPERS = `
     return await r.json();
   }
 
+  // SeaTable-specific: idempotent column creation. SeaTable's API Gateway
+  // doesn't expose a usable DELETE /columns/, so columns added persist on
+  // the base after the run — intentional.
   async function ensureColumns(required) {
-    const cfg = getSeaConfig();
+    const cfg = getConfig();
     const meta = await fetchMetadata();
     const tbl = meta.metadata.tables.find(t => t._id === cfg.tableId);
     if (!tbl) throw new Error('Target table ' + cfg.tableId + ' not found in metadata');
@@ -169,7 +151,7 @@ const HELPERS = `
   }
 
   async function insertRows(rows) {
-    const cfg = getSeaConfig();
+    const cfg = getConfig();
     const tok = await exchangeBaseToken();
     const r = await fetch(buildBaseUrl(tok, 'rows/'), {
       method: 'POST',
@@ -181,7 +163,7 @@ const HELPERS = `
   }
 
   async function fetchRowFromSeaTable(rowId) {
-    const cfg = getSeaConfig();
+    const cfg = getConfig();
     const tok = await exchangeBaseToken();
     const url = buildBaseUrl(tok, 'rows/' + rowId + '/?table_id=' + encodeURIComponent(cfg.tableId) + '&convert_keys=true');
     const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + tok.access_token } });
@@ -192,7 +174,7 @@ const HELPERS = `
 
   async function deleteRows(rowIds) {
     if (!rowIds || rowIds.length === 0) return;
-    const cfg = getSeaConfig();
+    const cfg = getConfig();
     const tok = await exchangeBaseToken();
     await fetch(buildBaseUrl(tok, 'rows/'), {
       method: 'DELETE',
@@ -202,7 +184,7 @@ const HELPERS = `
   }
 
   async function resetRowsToInitial(rowIds, initial) {
-    const cfg = getSeaConfig();
+    const cfg = getConfig();
     const tok = await exchangeBaseToken();
     await fetch(buildBaseUrl(tok, 'rows/'), {
       method: 'PUT',
@@ -212,52 +194,6 @@ const HELPERS = `
         updates: rowIds.map((rid, i) => ({ row_id: rid, row: initial[i] })),
       }),
     });
-  }
-
-  function waitForCache(file, key, val, maxWait = 3000) {
-    return new Promise((resolve) => {
-      const start = Date.now();
-      (function check() {
-        const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-        if (fm && String(fm[key]) === String(val)) return resolve(true);
-        if (Date.now() - start > maxWait) return resolve(false);
-        setTimeout(check, 100);
-      })();
-    });
-  }
-
-  async function openAndActivate(path) {
-    const file = app.vault.getAbstractFileByPath(path);
-    if (!file) throw new Error('No file at ' + path);
-    const leaf = app.workspace.getLeaf(false);
-    await leaf.openFile(file);
-    await new Promise(r => setTimeout(r, 800));
-    return file;
-  }
-
-  /**
-   * Replace a frontmatter line in-place. Supports any scalar value (text,
-   * number, boolean, ISO date). For unsupported keys, falls back to
-   * appending a new line at the end of the frontmatter block.
-   */
-  async function modifyField(file, key, value) {
-    let content = await app.vault.read(file);
-    const re = new RegExp('^' + key + ':.*$', 'm');
-    const line = key + ': ' + (typeof value === 'string' && /[:#\\-]/.test(value) ? JSON.stringify(value) : value);
-    if (re.test(content)) {
-      content = content.replace(re, line);
-    } else {
-      // Append before the closing --- of frontmatter
-      content = content.replace(/^---\\n([\\s\\S]*?)\\n---/, (_, body) => '---\\n' + body + '\\n' + line + '\\n---');
-    }
-    await app.vault.modify(file, content);
-    await waitForCache(file, key, value);
-  }
-
-  async function enqueueSync(mode, scope, config) {
-    const inst = getInstance(config);
-    if (!inst) throw new Error('No ConfigInstance for ' + (config || getSeaConfig()).id);
-    await inst.enqueueSyncRequest(mode, scope);
   }
 `;
 
@@ -394,7 +330,7 @@ async function cleanup() {
   await run(`(async () => {
     ${HELPERS}
     const p = getPlugin();
-    const cfg = getSeaConfig();
+    const cfg = getConfig();
 
     await deleteRows(${JSON.stringify(testRowIds)});
 
@@ -441,7 +377,7 @@ async function cleanup() {
         ${HELPERS}
         await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 6000));
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const files = app.vault.getFiles().filter(f =>
           f.path.startsWith(cfg.folderPath + '/') && f.extension === 'md'
         );
@@ -455,7 +391,7 @@ async function cleanup() {
     await test('pull / current refetches single note', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = await openAndActivate(cfg.folderPath + '/E2E-ST-Pull.md');
         await enqueueSync('pull', 'current');
         await new Promise(r => setTimeout(r, 4000));
@@ -475,7 +411,7 @@ async function cleanup() {
       // formula). System fields (_locked, _ctime, …) must be stripped.
       const r = await run(`(async () => {
         ${HELPERS}
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Pull.md');
         const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
         const leakedSystemKey = Object.keys(fm).some(k => k.startsWith('_'));
@@ -508,7 +444,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
         await modifyField(file, 'Count', 555);
         await enqueueSync('push', 'all');
@@ -525,7 +461,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
         await modifyField(file, 'Description', 'updated long-text');
         await enqueueSync('push', 'all');
@@ -542,7 +478,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
         await modifyField(file, 'DueDate', '2027-01-15');
         await enqueueSync('push', 'all');
@@ -560,7 +496,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
         await modifyField(file, 'Done', true);
         await enqueueSync('push', 'all');
@@ -577,7 +513,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
         await modifyField(file, 'Status', 'Done');
         await enqueueSync('push', 'all');
@@ -596,7 +532,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('remote-wins');
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Pull.md');
         await modifyField(file, 'Count', 9999);
         await enqueueSync('push', 'all');
@@ -613,7 +549,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('manual');
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
         await modifyField(file, 'Count', 7777);
         await enqueueSync('push', 'all');
@@ -631,7 +567,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', true);
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = await openAndActivate(cfg.folderPath + '/E2E-ST-Bidir.md');
         await modifyField(file, 'Count', 450);
         await enqueueSync('bidirectional', 'all');
@@ -655,7 +591,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins', false);
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Bidir.md');
         const beforeFm = app.metadataCache.getFileCache(file)?.frontmatter || {};
         const oldCal = beforeFm.Cal;
@@ -682,7 +618,7 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const cfg = getSeaConfig();
+        const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Pull.md');
         // Local Cal value is a formula; the user might "edit" it manually.
         await modifyField(file, 'Cal', 1);
@@ -702,8 +638,8 @@ async function cleanup() {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
-        const cfg = getSeaConfig();
-        const cred = getSeaCredential();
+        const cfg = getConfig();
+        const cred = getCredential();
 
         const before = app.vault.getFiles().filter(f => f.extension === 'base');
         for (const f of before) await app.vault.delete(f);
