@@ -180,9 +180,20 @@ export function buildSettingsHarnessHelpers({ pluginId }) {
 export function buildConfigExpr(overrides) {
   return Object.entries(overrides)
     .map(([key, value]) => {
-      const v = typeof value === 'string' ? `'${value.replace(/'/g, "\\'")}'`
-        : typeof value === 'boolean' ? String(value)
-        : value;
+      // String literals need both backslash and single-quote escapes so
+      // values like Windows-style paths or quoted text survive the eval
+      // round-trip intact. Other scalars (boolean / number) stringify
+      // safely on their own; the JSON.stringify catch-all covers any
+      // remaining shape (null / object / array) — without it those
+      // would degrade to `null` / `[object Object]` in the eval'd code.
+      let v;
+      if (typeof value === 'string') {
+        v = `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+      } else if (typeof value === 'boolean' || typeof value === 'number') {
+        v = String(value);
+      } else {
+        v = JSON.stringify(value);
+      }
       return `cfg.${key} = ${v};`;
     })
     .join('\n      ');

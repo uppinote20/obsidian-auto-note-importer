@@ -1053,7 +1053,7 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
-        const cfg1 = getConfig(0);
+        const cfg1 = getConfig();
         const cfg2 = p.settings.configs.find(c => c.id === '${MULTI_CONFIG_ID}');
         if (!cfg2) return JSON.stringify({ pass: false, detail: 'Second config not found' });
 
@@ -1094,7 +1094,7 @@ async function test(name, fn) {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
-        const cfg1 = getConfig(0);
+        const cfg1 = getConfig();
         const cfg2 = p.settings.configs.find(c => c.id === '${MULTI_CONFIG_ID}');
         if (!cfg2) return JSON.stringify({ pass: false, detail: 'Second config not found' });
 
