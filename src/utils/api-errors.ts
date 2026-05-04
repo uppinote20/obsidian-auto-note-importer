@@ -7,10 +7,17 @@
  * so the helper checks each in priority order and falls back to the raw
  * response text or the HTTP status as a last resort.
  *
+ * Also hosts the shared `buildBatchFailures` / `BATCH_LIMIT_ERROR` helpers
+ * that every `DatabaseProvider.batchUpdate()` failure path goes through —
+ * keeps the per-record SyncResult[] shape consistent across providers.
+ * See handbook §6.1 "Uniform failure shape".
+ *
  * @handbook 6.1-error-handling
  * @handbook 4.4-provider-abstraction
  * @tested tests/utils/api-errors.test.ts
  */
+
+import type { BatchUpdate, SyncResult } from '../types/database.types';
 
 interface ApiErrorBody {
   error?: string | { message?: string };
@@ -44,4 +51,15 @@ export function extractApiErrorDetails(response: { status: number; json?: unknow
 
 export function normalizeServerUrl(url: string | undefined, fallback: string): string {
   return (url || fallback).trim().replace(/\/+$/, '');
+}
+
+export const BATCH_LIMIT_ERROR = (maxSize: number): string =>
+  `Maximum ${maxSize} records allowed per batch update`;
+
+export function buildBatchFailures(updates: BatchUpdate[], error: string): SyncResult[] {
+  return updates.map(u => ({
+    success: false as const,
+    recordId: u.recordId,
+    error,
+  }));
 }

@@ -23,7 +23,7 @@ import type {
   ConfigEntry,
   CredentialType,
 } from '../types';
-import { buildLegacySettings, extractApiErrorDetails } from '../utils';
+import { BATCH_LIMIT_ERROR, buildBatchFailures, buildLegacySettings, extractApiErrorDetails } from '../utils';
 import { airtableFieldMapper } from './airtable-field-mapper';
 import { RateLimiter } from './rate-limiter';
 
@@ -235,11 +235,7 @@ export class AirtableClient implements DatabaseProvider {
     }
 
     if (updates.length > AIRTABLE_BATCH_SIZE) {
-      return updates.map(update => ({
-        success: false as const,
-        recordId: update.recordId,
-        error: `Maximum ${AIRTABLE_BATCH_SIZE} records allowed per batch update`,
-      }));
+      return buildBatchFailures(updates, BATCH_LIMIT_ERROR(AIRTABLE_BATCH_SIZE));
     }
 
     try {
@@ -260,11 +256,7 @@ export class AirtableClient implements DatabaseProvider {
 
       if (response.status !== 200) {
         const errorDetails = extractApiErrorDetails(response);
-        return updates.map(update => ({
-          success: false as const,
-          recordId: update.recordId,
-          error: `Failed to batch update Airtable records: ${errorDetails}`
-        }));
+        return buildBatchFailures(updates, `Failed to batch update Airtable records: ${errorDetails}`);
       }
 
       const json = response.json;
@@ -274,11 +266,7 @@ export class AirtableClient implements DatabaseProvider {
         updatedFields: record.fields,
       }));
     } catch (error) {
-      return updates.map(update => ({
-        success: false as const,
-        recordId: update.recordId,
-        error: error instanceof Error ? error.message : "Unknown error occurred"
-      }));
+      return buildBatchFailures(updates, error instanceof Error ? error.message : "Unknown error occurred");
     }
   }
 }

@@ -9,6 +9,7 @@ import type { LegacySettings, AirtableCredential, ConfigEntry, Credential } from
 import { DEFAULT_LEGACY_SETTINGS, DEFAULT_CONFIG_ENTRY } from '../../src/types';
 import { AIRTABLE_BATCH_SIZE } from '../../src/constants';
 import { RateLimiter } from '../../src/services/rate-limiter';
+import { BATCH_LIMIT_ERROR } from '../../src/utils/api-errors';
 import { requestUrl } from 'obsidian';
 
 const mockRequestUrl = vi.mocked(requestUrl);
@@ -199,7 +200,7 @@ describe('AirtableClient', () => {
       expect(results[0]).toMatchObject({
         success: false,
         recordId: 'rec0',
-        error: `Maximum ${AIRTABLE_BATCH_SIZE} records allowed per batch update`,
+        error: BATCH_LIMIT_ERROR(AIRTABLE_BATCH_SIZE),
       });
       expect(mockRequestUrl).not.toHaveBeenCalled();
     });

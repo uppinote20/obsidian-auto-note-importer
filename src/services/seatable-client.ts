@@ -37,7 +37,7 @@ import type {
   SeaTableCredential,
   SyncResult,
 } from '../types';
-import { extractApiErrorDetails, normalizeServerUrl } from '../utils';
+import { BATCH_LIMIT_ERROR, buildBatchFailures, extractApiErrorDetails, normalizeServerUrl } from '../utils';
 import { seatableFieldMapper } from './seatable-field-mapper';
 import { RateLimiter } from './rate-limiter';
 
@@ -286,11 +286,7 @@ export class SeaTableClient implements DatabaseProvider {
     if (updates.length === 0) return [];
 
     if (updates.length > SEATABLE_BATCH_SIZE) {
-      return updates.map(u => ({
-        success: false as const,
-        recordId: u.recordId,
-        error: `Maximum ${SEATABLE_BATCH_SIZE} records allowed per batch update`,
-      }));
+      return buildBatchFailures(updates, BATCH_LIMIT_ERROR(SEATABLE_BATCH_SIZE));
     }
 
     try {
@@ -307,11 +303,7 @@ export class SeaTableClient implements DatabaseProvider {
 
       if (response.status !== 200) {
         const errorDetails = extractApiErrorDetails(response);
-        return updates.map(u => ({
-          success: false as const,
-          recordId: u.recordId,
-          error: `Failed to batch update SeaTable rows: ${errorDetails}`,
-        }));
+        return buildBatchFailures(updates, `Failed to batch update SeaTable rows: ${errorDetails}`);
       }
 
       // SeaTable's PUT /rows/ returns `{success: true}` without echoing
@@ -323,8 +315,7 @@ export class SeaTableClient implements DatabaseProvider {
         updatedFields: u.fields,
       }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error occurred';
-      return updates.map(u => ({ success: false as const, recordId: u.recordId, error: message }));
+      return buildBatchFailures(updates, error instanceof Error ? error.message : 'Unknown error occurred');
     }
   }
 }
