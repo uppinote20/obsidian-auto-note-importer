@@ -14,9 +14,9 @@
  *   node tests/e2e/run-seatable-settings-e2e.mjs
  */
 
-import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
+import { findPageTarget } from './cdp-helpers.mjs';
 import { loadEnv } from './load-env.mjs';
-import { buildSettingsHarnessHelpers, makeSetConfigAndQuery } from './obsidian-helpers.mjs';
+import { buildSettingsHarnessHelpers, makeSetConfigAndQuery, buildConfigEntry, createTestHarness } from './obsidian-helpers.mjs';
 
 loadEnv();
 
@@ -62,31 +62,13 @@ const HELPERS = buildSettingsHarnessHelpers({ pluginId: PLUGIN_ID }) + `
       apiToken: ${JSON.stringify(ENV.apiToken)},
       serverUrl: ${JSON.stringify(ENV.serverUrl)},
     });
-    p.settings.configs.push({
-      id: '${E2E_CFG_ID}',
+    p.settings.configs.push(${JSON.stringify(buildConfigEntry({
+      id: E2E_CFG_ID,
       name: 'E2E SeaTable Settings Cfg',
-      enabled: true,
-      credentialId: '${E2E_CRED_ID}',
-      baseId: '',
-      tableId: ${JSON.stringify(ENV.tableId)},
-      viewId: '',
+      credentialId: E2E_CRED_ID,
+      tableId: ENV.tableId,
       folderPath: 'SeaTable-E2E-Settings',
-      templatePath: '',
-      filenameFieldName: 'Name',
-      subfolderFieldName: '',
-      syncInterval: 0,
-      allowOverwrite: true,
-      bidirectionalSync: false,
-      conflictResolution: 'manual',
-      watchForChanges: false,
-      fileWatchDebounce: 2000,
-      autoSyncComputedFields: false,
-      formulaSyncDelay: 1500,
-      generateBasesFile: false,
-      basesFileLocation: 'vault-root',
-      basesCustomPath: '',
-      basesRegenerateOnSync: false,
-    });
+    }))});
     p.settings.activeConfigId = '${E2E_CFG_ID}';
   }
 `;
@@ -95,29 +77,8 @@ const HELPERS = buildSettingsHarnessHelpers({ pluginId: PLUGIN_ID }) + `
 // Test runner
 // ---------------------------------------------------------------------------
 
-const results = [];
 let targetId;
-
-function log(msg) { console.log(msg); }
-
-async function run(expr, timeout) {
-  const r = await evalInObsidian(targetId, expr, timeout);
-  if (r && typeof r === 'object' && r.__error) throw new Error(r.__error);
-  return r;
-}
-
-async function test(name, fn) {
-  log(`\n=== ${name} ===`);
-  try {
-    const { pass, detail } = await fn();
-    results.push({ test: name, pass, detail: detail || 'ok' });
-    log(pass ? 'PASS' : `FAIL - ${detail}`);
-  } catch (e) {
-    results.push({ test: name, pass: false, detail: e.message });
-    log(`FAIL - ${e.message}`);
-  }
-}
-
+const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId });
 const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
 // ---------------------------------------------------------------------------

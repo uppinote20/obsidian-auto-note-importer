@@ -14,8 +14,8 @@
  *   node tests/e2e/run-settings-e2e.mjs
  */
 
-import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
-import { buildSettingsHarnessHelpers, makeSetConfigAndQuery } from './obsidian-helpers.mjs';
+import { findPageTarget } from './cdp-helpers.mjs';
+import { buildSettingsHarnessHelpers, makeSetConfigAndQuery, createTestHarness } from './obsidian-helpers.mjs';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -41,27 +41,8 @@ const HELPERS = buildSettingsHarnessHelpers({ pluginId: PLUGIN_ID }) + `
 // Test runner
 // ---------------------------------------------------------------------------
 
-const results = [];
 let targetId;
-
-function log(msg) { console.log(msg); }
-
-async function run(expr, timeout) {
-  return evalInObsidian(targetId, expr, timeout);
-}
-
-async function test(name, fn) {
-  log(`\n=== ${name} ===`);
-  try {
-    const { pass, detail } = await fn();
-    results.push({ test: name, pass, detail: detail || 'ok' });
-    log(pass ? 'PASS' : `FAIL - ${detail}`);
-  } catch (e) {
-    results.push({ test: name, pass: false, detail: e.message });
-    log(`FAIL - ${e.message}`);
-  }
-}
-
+const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId });
 const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
 // ---------------------------------------------------------------------------

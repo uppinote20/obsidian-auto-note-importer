@@ -1,29 +1,24 @@
 /**
- * Shared Obsidian-side helper builders for E2E harnesses.
+ * Shared E2E harness helpers — used by every harness under tests/e2e/.
  *
- * The harnesses inject these helpers into the Obsidian plugin runtime via
- * CDP `Runtime.evaluate`, so we cannot ship them as a normal ESM module the
- * runtime calls into. Instead each builder returns a JS string that the
- * harness concatenates with its provider-specific helpers and the test
- * expression, then evaluates as a single block.
+ * Two flavors live in this module:
  *
- * Two builders cover the surface used by all four harnesses:
+ * 1. **String factories** ({@link buildSyncHarnessHelpers},
+ *    {@link buildSettingsHarnessHelpers}) — return JS source that the
+ *    harness concatenates with its provider-specific inline helpers and
+ *    the test expression, then evaluates inside the Obsidian plugin
+ *    runtime via CDP `Runtime.evaluate`. We can't ship these as regular
+ *    ESM functions because the harness Node process can't reach into
+ *    Obsidian's plugin scope.
  *
- * - {@link buildSyncHarnessHelpers}: helpers for sync harnesses
- *   (run-e2e.mjs, run-seatable-e2e.mjs). Defines a `getConfig()` that
- *   resolves the dedicated e2e config by ID, plus the standard sync
- *   utilities — file I/O wait helpers, frontmatter mutation, and queue
- *   delegation.
- *
- * - {@link buildSettingsHarnessHelpers}: helpers for settings-tab harnesses
- *   (run-settings-e2e.mjs, run-seatable-settings-e2e.mjs). Defines tab
- *   open/rerender + summary-card querying. Each settings harness layers
- *   its own `getActiveConfig` / `getSeaConfig` on top.
- *
- * The non-string helper {@link buildConfigExpr} stays a regular ESM export —
- * it runs in the harness Node process to assemble assignment lines, never
- * inside the Obsidian runtime.
+ * 2. **Node-side ESM utilities** ({@link createTestHarness},
+ *    {@link makeSetConfigAndQuery}, {@link buildConfigEntry},
+ *    {@link buildConfigExpr}) — run in the harness Node process. They
+ *    own the test runner scaffolding, ConfigEntry default merging, and
+ *    config-mutation expression assembly. Output strings get spliced
+ *    into the eval block, but the assembly itself happens here.
  */
+import { evalInObsidian } from './cdp-helpers.mjs';
 
 /**
  * Build the helper string for sync harnesses (run-e2e.mjs, run-seatable-e2e.mjs).
@@ -177,6 +172,101 @@ export function buildSettingsHarnessHelpers({ pluginId }) {
  * @param {Record<string, unknown>} overrides
  * @returns {string}
  */
+/**
+ * Build a per-harness test runner with shared `run` / `test` / `log`
+ * scaffolding. Returns the four pieces every harness used to redeclare
+ * verbatim. The `targetId` reference goes through a getter so each
+ * harness can resolve `findPageTarget()` lazily after construction.
+ *
+ * `skipSupported: true` enables the sync-harness convention where a test
+ * fn returns `{ skip: true, detail }` to mark the case as skipped (not
+ * failed) — used by `run-e2e.mjs` for formula-dependent assertions when
+ * the Calculation column is missing.
+ *
+ * @param {object} opts
+ * @param {() => string | undefined} opts.getTargetId
+ *   Returns the resolved CDP target ID. Called inside `run`, so the
+ *   harness can assign `targetId` after `findPageTarget()` resolves.
+ * @param {boolean} [opts.skipSupported=false]
+ *   When true, `test` honors `{ skip: true }` returns from the test fn.
+ */
+export function createTestHarness({ getTargetId, skipSupported = false }) {
+  const results = [];
+  const log = (msg) => console.log(msg);
+
+  const run = async (expr, timeout) => {
+    const r = await evalInObsidian(getTargetId(), expr, timeout);
+    if (r && typeof r === 'object' && r.__error) throw new Error(r.__error);
+    return r;
+  };
+
+  const test = async (name, fn) => {
+    log(`\n=== ${name} ===`);
+    try {
+      const result = await fn();
+      if (skipSupported && result?.skip) {
+        results.push({ test: name, pass: true, skip: true, detail: result.detail || 'skipped' });
+        log(`SKIP - ${result.detail || 'skipped'}`);
+        return;
+      }
+      const { pass, detail } = result;
+      results.push({ test: name, pass, detail: detail || 'ok' });
+      log(pass ? 'PASS' : `FAIL - ${detail}`);
+    } catch (e) {
+      results.push({ test: name, pass: false, detail: e.message });
+      log(`FAIL - ${e.message}`);
+    }
+  };
+
+  return { results, log, run, test };
+}
+
+/**
+ * Build a ConfigEntry object with project defaults, merging the supplied
+ * overrides on top. The 19 default fields kept the three e2e harnesses
+ * with near-identical literal blocks; this factory collapses them so
+ * each harness only specifies what differs (id / name / credentialId /
+ * tableId / folderPath, plus per-suite knobs like bidirectionalSync).
+ *
+ * The returned plain object is meant to be `JSON.stringify`'d into the
+ * eval block — it doesn't reference any plugin runtime values.
+ *
+ * Defaults track `DEFAULT_CONFIG_ENTRY` in `src/types/config.types.ts`;
+ * adding a new field there means updating this default too. The e2e
+ * suites surface mismatches at runtime since unset booleans/numbers
+ * change observable behavior.
+ *
+ * @param {Partial<Record<string, unknown>>} overrides
+ */
+export function buildConfigEntry(overrides = {}) {
+  return {
+    id: '',
+    name: '',
+    enabled: true,
+    credentialId: '',
+    baseId: '',
+    tableId: '',
+    viewId: '',
+    folderPath: '',
+    templatePath: '',
+    filenameFieldName: 'Name',
+    subfolderFieldName: '',
+    syncInterval: 0,
+    allowOverwrite: true,
+    bidirectionalSync: false,
+    conflictResolution: 'manual',
+    watchForChanges: false,
+    fileWatchDebounce: 2000,
+    autoSyncComputedFields: false,
+    formulaSyncDelay: 1500,
+    generateBasesFile: false,
+    basesFileLocation: 'vault-root',
+    basesCustomPath: '',
+    basesRegenerateOnSync: false,
+    ...overrides,
+  };
+}
+
 export function buildConfigExpr(overrides) {
   return Object.entries(overrides)
     .map(([key, value]) => {

@@ -31,9 +31,9 @@
  *   CDP_TARGET_ID=<id> node tests/e2e/run-e2e.mjs       # specify CDP page target
  */
 
-import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
+import { findPageTarget } from './cdp-helpers.mjs';
 import { loadEnv } from './load-env.mjs';
-import { buildSyncHarnessHelpers } from './obsidian-helpers.mjs';
+import { buildSyncHarnessHelpers, buildConfigEntry, createTestHarness } from './obsidian-helpers.mjs';
 
 loadEnv();
 
@@ -189,16 +189,11 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_AT_
 // Test runner
 // ---------------------------------------------------------------------------
 
-const results = [];
 let targetId;
-
-function log(msg) { console.log(msg); }
-
-async function run(expr, timeout) {
-  const r = await evalInObsidian(targetId, expr, timeout);
-  if (r && typeof r === 'object' && r.__error) throw new Error(r.__error);
-  return r;
-}
+const { results, log, run, test } = createTestHarness({
+  getTargetId: () => targetId,
+  skipSupported: true,
+});
 
 // ---------------------------------------------------------------------------
 // Setup / teardown
@@ -235,31 +230,15 @@ async function setup() {
       apiKey: sourceCred.apiKey,
     });
 
-    p.settings.configs.push({
-      id: cfgId,
+    p.settings.configs.push(${JSON.stringify(buildConfigEntry({
+      id: E2E_AT_CFG_ID,
       name: 'E2E Airtable Cfg',
-      enabled: true,
-      credentialId: credId,
-      baseId: ${JSON.stringify(ENV.baseId)},
-      tableId: ${JSON.stringify(ENV.tableId)},
-      viewId: '',
-      folderPath: ${JSON.stringify(ENV.folderPath)},
-      templatePath: '',
-      filenameFieldName: 'Name',
-      subfolderFieldName: '',
-      syncInterval: 0,
-      allowOverwrite: true,
+      credentialId: E2E_AT_CRED_ID,
+      baseId: ENV.baseId,
+      tableId: ENV.tableId,
+      folderPath: ENV.folderPath,
       bidirectionalSync: true,
-      conflictResolution: 'manual',
-      watchForChanges: false,
-      fileWatchDebounce: 2000,
-      autoSyncComputedFields: false,
-      formulaSyncDelay: 1500,
-      generateBasesFile: false,
-      basesFileLocation: 'vault-root',
-      basesCustomPath: '',
-      basesRegenerateOnSync: false,
-    });
+    }))});
 
     await p.saveSettings();
     return JSON.stringify({ ok: true });
@@ -487,24 +466,6 @@ async function cleanupMultiConfig() {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-async function test(name, fn) {
-  log(`\n=== ${name} ===`);
-  try {
-    const result = await fn();
-    if (result?.skip) {
-      results.push({ test: name, pass: true, skip: true, detail: result.detail || 'skipped' });
-      log(`SKIP - ${result.detail || 'skipped'}`);
-      return;
-    }
-    const { pass, detail } = result;
-    results.push({ test: name, pass, detail });
-    log(pass ? 'PASS' : `FAIL - ${detail}`);
-  } catch (e) {
-    results.push({ test: name, pass: false, detail: e.message });
-    log(`FAIL - ${e.message}`);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Main

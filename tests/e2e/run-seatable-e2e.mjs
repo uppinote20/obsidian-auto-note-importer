@@ -42,9 +42,9 @@
  *   node tests/e2e/run-seatable-e2e.mjs --cleanup    # also deletes rows
  */
 
-import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
+import { findPageTarget } from './cdp-helpers.mjs';
 import { loadEnv } from './load-env.mjs';
-import { buildSyncHarnessHelpers } from './obsidian-helpers.mjs';
+import { buildSyncHarnessHelpers, buildConfigEntry, createTestHarness } from './obsidian-helpers.mjs';
 
 loadEnv();
 
@@ -201,30 +201,8 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_CFG
 // Test runner
 // ---------------------------------------------------------------------------
 
-const results = [];
 let targetId;
-
-function log(msg) { console.log(msg); }
-
-async function run(expr, timeout) {
-  const r = await evalInObsidian(targetId, expr, timeout);
-  if (r && typeof r === 'object' && r.__error) {
-    throw new Error(r.__error);
-  }
-  return r;
-}
-
-async function test(name, fn) {
-  log(`\n=== ${name} ===`);
-  try {
-    const { pass, detail } = await fn();
-    results.push({ test: name, pass, detail: detail || 'ok' });
-    log(pass ? 'PASS' : `FAIL - ${detail}`);
-  } catch (e) {
-    results.push({ test: name, pass: false, detail: e.message });
-    log(`FAIL - ${e.message}`);
-  }
-}
+const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId });
 
 // ---------------------------------------------------------------------------
 // Setup / teardown
@@ -253,31 +231,15 @@ async function setup() {
       serverUrl: ${JSON.stringify(ENV.serverUrl)},
     });
 
-    p.settings.configs.push({
-      id: cfgId,
+    p.settings.configs.push(${JSON.stringify(buildConfigEntry({
+      id: E2E_CFG_ID,
       name: 'E2E SeaTable Cfg',
-      enabled: true,
-      credentialId: credId,
-      baseId: '',
-      tableId: ${JSON.stringify(ENV.tableId)},
-      viewId: ${JSON.stringify(ENV.viewId)},
-      folderPath: ${JSON.stringify(ENV.folderPath)},
-      templatePath: '',
-      filenameFieldName: 'Name',
-      subfolderFieldName: '',
-      syncInterval: 0,
-      allowOverwrite: true,
+      credentialId: E2E_CRED_ID,
+      tableId: ENV.tableId,
+      viewId: ENV.viewId,
+      folderPath: ENV.folderPath,
       bidirectionalSync: true,
-      conflictResolution: 'manual',
-      watchForChanges: false,
-      fileWatchDebounce: 2000,
-      autoSyncComputedFields: false,
-      formulaSyncDelay: 1500,
-      generateBasesFile: false,
-      basesFileLocation: 'vault-root',
-      basesCustomPath: '',
-      basesRegenerateOnSync: false,
-    });
+    }))});
 
     await p.saveSettings();
     return JSON.stringify({ ok: true });
