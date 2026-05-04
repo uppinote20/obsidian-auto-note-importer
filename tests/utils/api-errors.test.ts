@@ -8,7 +8,10 @@ import {
   extractApiErrorMessage,
   extractApiErrorDetails,
   normalizeServerUrl,
+  buildBatchFailures,
+  formatBatchLimitError,
 } from '../../src/utils/api-errors';
+import type { BatchUpdate } from '../../src/types/database.types';
 
 describe('extractApiErrorMessage', () => {
   it('returns body.error_msg first (SeaTable shape)', () => {
@@ -107,5 +110,48 @@ describe('normalizeServerUrl', () => {
   it('also strips a trailing slash from the fallback when url is missing', () => {
     expect(normalizeServerUrl(undefined, 'https://example.com/'))
       .toBe('https://example.com');
+  });
+});
+
+describe('formatBatchLimitError', () => {
+  it('formats the canonical batch-size message', () => {
+    expect(formatBatchLimitError(10)).toBe('Maximum 10 records allowed per batch update');
+    expect(formatBatchLimitError(1000)).toBe('Maximum 1000 records allowed per batch update');
+  });
+});
+
+describe('buildBatchFailures', () => {
+  const updates: BatchUpdate[] = [
+    { recordId: 'a', fields: { Name: 'A' } },
+    { recordId: 'b', fields: { Name: 'B' } },
+  ];
+
+  it('produces one failure entry per update with the same error string', () => {
+    const results = buildBatchFailures(updates, 'boom');
+
+    expect(results).toEqual([
+      { success: false, recordId: 'a', error: 'boom' },
+      { success: false, recordId: 'b', error: 'boom' },
+    ]);
+  });
+
+  it('preserves recordId order', () => {
+    const results = buildBatchFailures(updates, 'x');
+
+    expect(results.map(r => r.recordId)).toEqual(['a', 'b']);
+  });
+
+  it('returns an empty array for an empty input', () => {
+    expect(buildBatchFailures([], 'unused')).toEqual([]);
+  });
+
+  it('narrows to the discriminated-union failure variant', () => {
+    const [first] = buildBatchFailures(updates, 'oops');
+
+    // success: false → SyncResult should expose `error`, not `updatedFields`
+    expect(first.success).toBe(false);
+    if (!first.success) {
+      expect(first.error).toBe('oops');
+    }
   });
 });

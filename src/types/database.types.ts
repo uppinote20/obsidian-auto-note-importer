@@ -82,6 +82,21 @@ export interface DatabaseProvider {
   fetchNotes(): Promise<RemoteNote[]>;
   fetchRecord(recordId: string): Promise<RemoteNote | null>;
   updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult>;
+  /**
+   * Updates multiple records in a single batch.
+   *
+   * Failure contract: this method always resolves to a `SyncResult[]` with
+   * one entry per requested update for input-side guards (e.g. exceeding
+   * `capabilities.batchUpdateMaxSize`) and per-call API response failures
+   * (HTTP non-2xx, network errors). Implementations must not `throw` for
+   * those — wrap each failure into per-record `{ success: false, recordId,
+   * error }` so callers handle one shape regardless of cause.
+   *
+   * Configuration errors (missing API key, unset table ID, etc.) are a
+   * separate category — the up-front `validateSettings()` / `validateConfig()`
+   * checks may still throw, since misconfiguration is a wiring bug rather
+   * than a per-call failure. See handbook §6.1.
+   */
   batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]>;
 
   /**

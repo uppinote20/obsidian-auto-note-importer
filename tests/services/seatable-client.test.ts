@@ -13,6 +13,7 @@ import type {
 import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
 import { SEATABLE_BATCH_SIZE } from '../../src/constants';
 import { RateLimiter } from '../../src/services/rate-limiter';
+import { formatBatchLimitError } from '../../src/utils/api-errors';
 import { requestUrl } from 'obsidian';
 
 const mockRequestUrl = vi.mocked(requestUrl);
@@ -395,13 +396,22 @@ describe('SeaTableClient', () => {
       ]);
     });
 
-    it('should throw when exceeding batch size', async () => {
+    it('should return per-record failures when exceeding batch size', async () => {
       const updates = Array.from({ length: SEATABLE_BATCH_SIZE + 1 }, (_, i) => ({
         recordId: `r${i}`,
         fields: {},
       }));
-      await expect(client.batchUpdate(updates))
-        .rejects.toThrow(`Maximum ${SEATABLE_BATCH_SIZE} records allowed`);
+
+      const results = await client.batchUpdate(updates);
+
+      expect(results).toHaveLength(updates.length);
+      expect(results.every(r => !r.success)).toBe(true);
+      expect(results[0]).toMatchObject({
+        success: false,
+        recordId: 'r0',
+        error: formatBatchLimitError(SEATABLE_BATCH_SIZE),
+      });
+      expect(mockRequestUrl).not.toHaveBeenCalled();
     });
 
     it('should return failure for all records on non-200', async () => {
