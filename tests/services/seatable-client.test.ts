@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
 import { SEATABLE_BATCH_SIZE } from '../../src/constants';
 import { RateLimiter } from '../../src/services/rate-limiter';
-import { BATCH_LIMIT_ERROR } from '../../src/utils/api-errors';
+import { formatBatchLimitError } from '../../src/utils/api-errors';
 import { requestUrl } from 'obsidian';
 
 const mockRequestUrl = vi.mocked(requestUrl);
@@ -409,7 +409,7 @@ describe('SeaTableClient', () => {
       expect(results[0]).toMatchObject({
         success: false,
         recordId: 'r0',
-        error: BATCH_LIMIT_ERROR(SEATABLE_BATCH_SIZE),
+        error: formatBatchLimitError(SEATABLE_BATCH_SIZE),
       });
       expect(mockRequestUrl).not.toHaveBeenCalled();
     });

@@ -86,11 +86,16 @@ export interface DatabaseProvider {
    * Updates multiple records in a single batch.
    *
    * Failure contract: this method always resolves to a `SyncResult[]` with
-   * one entry per requested update, including for guard-rail failures like
-   * exceeding `capabilities.batchUpdateMaxSize` or HTTP non-2xx responses.
-   * Implementations must not `throw` for input or response failures — wrap
-   * the failure into per-record `{ success: false, recordId, error }` so
-   * callers handle one shape regardless of the cause. See handbook §6.1.
+   * one entry per requested update for input-side guards (e.g. exceeding
+   * `capabilities.batchUpdateMaxSize`) and per-call API response failures
+   * (HTTP non-2xx, network errors). Implementations must not `throw` for
+   * those — wrap each failure into per-record `{ success: false, recordId,
+   * error }` so callers handle one shape regardless of cause.
+   *
+   * Configuration errors (missing API key, unset table ID, etc.) are a
+   * separate category — the up-front `validateSettings()` / `validateConfig()`
+   * checks may still throw, since misconfiguration is a wiring bug rather
+   * than a per-call failure. See handbook §6.1.
    */
   batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]>;
 

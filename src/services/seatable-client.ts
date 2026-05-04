@@ -37,7 +37,7 @@ import type {
   SeaTableCredential,
   SyncResult,
 } from '../types';
-import { BATCH_LIMIT_ERROR, buildBatchFailures, extractApiErrorDetails, normalizeServerUrl } from '../utils';
+import { formatBatchLimitError, buildBatchFailures, extractApiErrorDetails, normalizeServerUrl } from '../utils';
 import { seatableFieldMapper } from './seatable-field-mapper';
 import { RateLimiter } from './rate-limiter';
 
@@ -286,7 +286,7 @@ export class SeaTableClient implements DatabaseProvider {
     if (updates.length === 0) return [];
 
     if (updates.length > SEATABLE_BATCH_SIZE) {
-      return buildBatchFailures(updates, BATCH_LIMIT_ERROR(SEATABLE_BATCH_SIZE));
+      return buildBatchFailures(updates, formatBatchLimitError(SEATABLE_BATCH_SIZE));
     }
 
     try {

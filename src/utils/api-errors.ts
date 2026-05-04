@@ -7,7 +7,7 @@
  * so the helper checks each in priority order and falls back to the raw
  * response text or the HTTP status as a last resort.
  *
- * Also hosts the shared `buildBatchFailures` / `BATCH_LIMIT_ERROR` helpers
+ * Also hosts the shared `buildBatchFailures` / `formatBatchLimitError` helpers
  * that every `DatabaseProvider.batchUpdate()` failure path goes through —
  * keeps the per-record SyncResult[] shape consistent across providers.
  * See handbook §6.1 "Uniform failure shape".
@@ -53,7 +53,7 @@ export function normalizeServerUrl(url: string | undefined, fallback: string): s
   return (url || fallback).trim().replace(/\/+$/, '');
 }
 
-export const BATCH_LIMIT_ERROR = (maxSize: number): string =>
+export const formatBatchLimitError = (maxSize: number): string =>
   `Maximum ${maxSize} records allowed per batch update`;
 
 export function buildBatchFailures(updates: BatchUpdate[], error: string): SyncResult[] {

@@ -9,7 +9,7 @@ import {
   extractApiErrorDetails,
   normalizeServerUrl,
   buildBatchFailures,
-  BATCH_LIMIT_ERROR,
+  formatBatchLimitError,
 } from '../../src/utils/api-errors';
 import type { BatchUpdate } from '../../src/types/database.types';
 
@@ -113,10 +113,10 @@ describe('normalizeServerUrl', () => {
   });
 });
 
-describe('BATCH_LIMIT_ERROR', () => {
+describe('formatBatchLimitError', () => {
   it('formats the canonical batch-size message', () => {
-    expect(BATCH_LIMIT_ERROR(10)).toBe('Maximum 10 records allowed per batch update');
-    expect(BATCH_LIMIT_ERROR(1000)).toBe('Maximum 1000 records allowed per batch update');
+    expect(formatBatchLimitError(10)).toBe('Maximum 10 records allowed per batch update');
+    expect(formatBatchLimitError(1000)).toBe('Maximum 1000 records allowed per batch update');
   });
 });
 

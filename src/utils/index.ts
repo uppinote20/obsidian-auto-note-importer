@@ -28,5 +28,5 @@ export {
   extractApiErrorDetails,
   normalizeServerUrl,
   buildBatchFailures,
-  BATCH_LIMIT_ERROR,
+  formatBatchLimitError,
 } from './api-errors';

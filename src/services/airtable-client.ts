@@ -23,7 +23,7 @@ import type {
   ConfigEntry,
   CredentialType,
 } from '../types';
-import { BATCH_LIMIT_ERROR, buildBatchFailures, buildLegacySettings, extractApiErrorDetails } from '../utils';
+import { formatBatchLimitError, buildBatchFailures, buildLegacySettings, extractApiErrorDetails } from '../utils';
 import { airtableFieldMapper } from './airtable-field-mapper';
 import { RateLimiter } from './rate-limiter';
 
@@ -223,10 +223,6 @@ export class AirtableClient implements DatabaseProvider {
     }
   }
 
-  /**
-   * Batch updates multiple records in Airtable.
-   * Automatically handles the 10-record limit per batch.
-   */
   async batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]> {
     this.validateSettings();
 
@@ -235,7 +231,7 @@ export class AirtableClient implements DatabaseProvider {
     }
 
     if (updates.length > AIRTABLE_BATCH_SIZE) {
-      return buildBatchFailures(updates, BATCH_LIMIT_ERROR(AIRTABLE_BATCH_SIZE));
+      return buildBatchFailures(updates, formatBatchLimitError(AIRTABLE_BATCH_SIZE));
     }
 
     try {
