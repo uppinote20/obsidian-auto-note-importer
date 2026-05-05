@@ -45,6 +45,14 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private fieldCache: FieldCache;
   private seatableMetadataCache: SeaTableMetadataCache;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Bumped on each `display()` so async render callbacks (e.g. SeaTable
+   * metadata fetch) can detect that the DOM they captured has been
+   * superseded — without this they'd populate a detached element and
+   * leave the visible card body blank.
+   */
+  private renderGeneration = 0;
   private editingCredentialId: string | null = null;
   private addingCredential = false;
   private addingCredentialType: CredentialType = 'airtable';
@@ -112,6 +120,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   display(): void {
+    this.renderGeneration++;
     const { containerEl } = this;
     containerEl.empty();
 
@@ -805,9 +814,29 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       return;
     }
 
+    // Cold-cache loading hint — replaced by either renderSeaTableDropdowns
+    // (success) or renderSeaTableTextFallback (failure) once the fetch
+    // settles. Without this the card body sits blank for a beat.
+    const loadingHint = containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Loading SeaTable metadata…',
+    });
+
+    // Capture the current render generation so a subsequent display()
+    // (tab switch / cred edit) can mark our callback as stale and skip
+    // populating a detached DOM node. Without this guard the new render
+    // coexists with our zombie callback and the visible card body
+    // appears blank until another re-render kicks in.
+    const gen = this.renderGeneration;
     void this.seatableMetadataCache.fetchTables(credential).then(
-      tables => this.renderSeaTableDropdowns(containerEl, config, credential, tables),
+      tables => {
+        if (this.renderGeneration !== gen) return;
+        loadingHint.remove();
+        this.renderSeaTableDropdowns(containerEl, config, credential, tables);
+      },
       err => {
+        if (this.renderGeneration !== gen) return;
+        loadingHint.remove();
         new Notice(`Auto Note Importer: Failed to load SeaTable metadata. ${err.message || err}`);
         this.renderSeaTableTextFallback(containerEl, config);
       },
@@ -882,6 +911,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         });
       });
 
+    // Subfolder allows every column type intentionally — date / formula /
+    // single-select are all reasonable subfolder grouping keys, and we
+    // sanitize the value before using it as a path. Filename is filtered
+    // to filename-safe types because OS filename rules are stricter.
     new Setting(containerEl)
       .setName('Subfolder field (optional)')
       .setDesc('Column used for subfolder organization. Leave empty for a flat layout.')

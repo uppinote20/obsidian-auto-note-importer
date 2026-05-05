@@ -68,6 +68,13 @@ interface RawMetadataTable {
 export class SeaTableMetadataCache {
   private cachedTokens: Map<string, CachedToken> = new Map();
   private cachedTables: Map<string, SeaTableTable[]> = new Map();
+  /**
+   * Promises currently fetching tables for a credential. Lets concurrent
+   * `fetchTables` callers (e.g. two rapid `display()` re-renders before
+   * the first network round-trip finishes) share a single in-flight
+   * request instead of racing duplicate token + metadata exchanges.
+   */
+  private inFlightTables: Map<string, Promise<SeaTableTable[]>> = new Map();
 
   /**
    * Drop everything cached for a given credential — used by the settings
@@ -76,23 +83,38 @@ export class SeaTableMetadataCache {
   clearForCred(credentialId: string): void {
     this.cachedTokens.delete(credentialId);
     this.cachedTables.delete(credentialId);
+    this.inFlightTables.delete(credentialId);
   }
 
   /** Wipe all cached metadata + tokens. */
   clear(): void {
     this.cachedTokens.clear();
     this.cachedTables.clear();
+    this.inFlightTables.clear();
   }
 
   /**
    * Fetch and cache the table metadata (tables + columns + views) for a
    * SeaTable credential. Returns the same array shape on repeat calls
-   * until {@link clearForCred} or {@link clear} is invoked.
+   * until {@link clearForCred} or {@link clear} is invoked. Concurrent
+   * calls share a single in-flight request.
    */
   async fetchTables(credential: SeaTableCredential): Promise<SeaTableTable[]> {
     const cached = this.cachedTables.get(credential.id);
     if (cached) return cached;
+    const existing = this.inFlightTables.get(credential.id);
+    if (existing) return existing;
 
+    const promise = this.fetchTablesUncached(credential);
+    this.inFlightTables.set(credential.id, promise);
+    try {
+      return await promise;
+    } finally {
+      this.inFlightTables.delete(credential.id);
+    }
+  }
+
+  private async fetchTablesUncached(credential: SeaTableCredential): Promise<SeaTableTable[]> {
     const token = await this.getBaseToken(credential);
     const url = this.buildDtableUrl(token, 'metadata/');
     const r = await fetch(url, {

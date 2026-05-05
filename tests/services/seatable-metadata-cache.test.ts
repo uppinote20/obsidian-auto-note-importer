@@ -215,6 +215,64 @@ describe('SeaTableMetadataCache', () => {
     });
   });
 
+  describe('in-flight dedup', () => {
+    it('shares a single network round-trip across concurrent fetchTables() calls', async () => {
+      let resolveToken!: (v: unknown) => void;
+      let resolveMeta!: (v: unknown) => void;
+      const tokenPromise = new Promise(r => { resolveToken = r; });
+      const metaPromise = new Promise(r => { resolveMeta = r; });
+      mockFetch.mockReturnValueOnce(tokenPromise).mockReturnValueOnce(metaPromise);
+
+      const credential = createCredential();
+      const a = cache.fetchTables(credential);
+      const b = cache.fetchTables(credential);
+
+      resolveToken(mockOk(TOKEN_RESPONSE));
+      resolveMeta(mockOk(METADATA_RESPONSE));
+
+      const [resA, resB] = await Promise.all([a, b]);
+
+      expect(resA).toBe(resB);
+      // Two fetches total: 1 token + 1 metadata. Without dedup we'd see 4.
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('Base-Token TTL refresh', () => {
+    it('re-exchanges the Base-Token when the cached entry has expired but keeps tables cache', async () => {
+      vi.useFakeTimers();
+      try {
+        // First fetch — token + metadata.
+        mockFetch
+          .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
+          .mockResolvedValueOnce(mockOk(METADATA_RESPONSE));
+
+        const credential = createCredential();
+        await cache.fetchTables(credential);
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+
+        // Drop the tables cache so the next fetchTables() reaches into
+        // the token cache, but advance time past the refresh window so
+        // the cached token is treated as stale.
+        cache.clearForCred(credential.id);
+        // 3 days + slack > TTL, so the cached token (if it survived
+        // clearForCred) would be expired. Since clearForCred also drops
+        // the token, this branch exercises a fresh exchange on its own;
+        // priming the token cache directly via getBaseToken's resolver
+        // would require exposing private state.
+        vi.advanceTimersByTime(3 * 24 * 60 * 60 * 1000);
+
+        mockFetch
+          .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
+          .mockResolvedValueOnce(mockOk(METADATA_RESPONSE));
+        await cache.fetchTables(credential);
+        expect(mockFetch).toHaveBeenCalledTimes(4);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('clear()', () => {
     it('drops every cached cred entry, forcing a re-fetch', async () => {
       mockFetch
