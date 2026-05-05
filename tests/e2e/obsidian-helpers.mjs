@@ -163,16 +163,6 @@ export function buildSettingsHarnessHelpers({ pluginId }) {
 }
 
 /**
- * Assemble `cfg.<key> = <value>;` lines from an overrides object. Used by
- * both settings harnesses to generate inline assignments inside their
- * `setConfigAndQuery` helper. Stays a regular ESM export — the result is
- * a string literal pasted into the eval block, but the building runs in
- * the Node-side harness, not inside Obsidian.
- *
- * @param {Record<string, unknown>} overrides
- * @returns {string}
- */
-/**
  * Build a per-harness test runner with shared `run` / `test` / `log`
  * scaffolding. Returns the four pieces every harness used to redeclare
  * verbatim. The `targetId` reference goes through a getter so each
@@ -231,10 +221,12 @@ export function createTestHarness({ getTargetId, skipSupported = false }) {
  * The returned plain object is meant to be `JSON.stringify`'d into the
  * eval block — it doesn't reference any plugin runtime values.
  *
- * Defaults track `DEFAULT_CONFIG_ENTRY` in `src/types/config.types.ts`;
- * adding a new field there means updating this default too. The e2e
- * suites surface mismatches at runtime since unset booleans/numbers
- * change observable behavior.
+ * Defaults track `DEFAULT_CONFIG_ENTRY` in `src/types/config.types.ts`,
+ * with one intentional deviation: `filenameFieldName` defaults to `'Name'`
+ * here (vs `''` upstream) because every e2e suite needs a non-empty
+ * filename field to identify records. Adding a new field upstream means
+ * updating this default too — the e2e suites surface mismatches at
+ * runtime since unset booleans/numbers change observable behavior.
  *
  * @param {Partial<Record<string, unknown>>} overrides
  */
@@ -267,6 +259,16 @@ export function buildConfigEntry(overrides = {}) {
   };
 }
 
+/**
+ * Assemble `cfg.<key> = <value>;` lines from an overrides object. Used by
+ * both settings harnesses to generate inline assignments inside their
+ * `setConfigAndQuery` helper. Stays a regular ESM export — the result is
+ * a string literal pasted into the eval block, but the building runs in
+ * the Node-side harness, not inside Obsidian.
+ *
+ * @param {Record<string, unknown>} overrides
+ * @returns {string}
+ */
 export function buildConfigExpr(overrides) {
   return Object.entries(overrides)
     .map(([key, value]) => {
