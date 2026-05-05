@@ -95,15 +95,19 @@ let testRowIds = [];
 // ---------------------------------------------------------------------------
 
 const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_CFG_ID }) + `
-  // SeaTable Base-Token exchange. Caches nothing — each helper that needs
-  // it calls exchangeBaseToken() fresh. Acceptable for e2e since per-test
-  // overhead is dominated by the actual sync work.
+  // SeaTable Base-Token exchange with cross-eval cache to dodge
+  // rate-limit and connection-pool exhaustion. The base-token has
+  // a 3-day TTL so the cache stays valid for the entire e2e
+  // session. globalThis persists across every run() eval block,
+  // unlike module-local consts which the eval wrapper rebuilds.
   async function exchangeBaseToken() {
+    if (globalThis.__e2eSeaTableToken__) return globalThis.__e2eSeaTableToken__;
     const cred = getCredential();
     const url = cred.serverUrl.replace(/\\/+$/, '') + '/api/v2.1/dtable/app-access-token/';
     const r = await fetch(url, { headers: { 'Authorization': 'Token ' + cred.apiToken } });
     if (!r.ok) throw new Error('Base-Token exchange failed: HTTP ' + r.status);
-    return await r.json();
+    globalThis.__e2eSeaTableToken__ = await r.json();
+    return globalThis.__e2eSeaTableToken__;
   }
 
   function buildBaseUrl(tok, path) {

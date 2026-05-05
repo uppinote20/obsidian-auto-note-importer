@@ -238,6 +238,11 @@ async function setup() {
       tableId: ENV.tableId,
       folderPath: ENV.folderPath,
       bidirectionalSync: true,
+      // Default 1500ms wasn't enough for Airtable Cloud's formula
+      // recompute under bidirectional+autoSyncComputedFields=true,
+      // making the post-push pull see the prior 'Single line text'
+      // value reflected in Calculation. Extra headroom for cloud lag.
+      formulaSyncDelay: 5000,
     }))});
 
     await p.saveSettings();
@@ -957,7 +962,11 @@ async function cleanupMultiConfig() {
         const cfg = getConfig();
         const cred = getCredential();
 
-        // Add second config
+        // Multi-config secondary cfg. credentialId / baseId reference
+        // the e2e cfg's resolved values at eval time, so this stays
+        // inline rather than going through buildConfigEntry (which
+        // pre-stringifies at Node-side and can't see plugin runtime
+        // variables).
         const secondConfig = {
           id: '${MULTI_CONFIG_ID}',
           name: 'E2E Multi',

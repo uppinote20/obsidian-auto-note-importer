@@ -774,19 +774,21 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       return { pass, detail: `testBtn=${r.hasTestBtn} disabled=${r.testBtnDisabled} save=${r.hasSaveBtn} cancel=${r.hasCancelBtn}` };
     });
 
-    await test('credential / edit form rejects non-airtable credentials', async () => {
+    await test('credential / edit form rejects unsupported credential types', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
-        // Inject a fake seatable credential temporarily
-        const fakeId = 'e2e-fake-seatable-' + Date.now();
+        // Inject a fake credential of an unsupported type. Supabase is in
+        // CREDENTIAL_TYPES but has no registered form renderer yet, so it
+        // exercises the "Edit not supported" fallback (provider-aware UI).
+        const fakeId = 'e2e-fake-unsupported-' + Date.now();
         const savedCreds = [...p.settings.credentials];
         p.settings.credentials.push({
           id: fakeId,
-          name: 'Fake SeaTable',
-          type: 'seatable',
-          apiToken: 'x',
-          serverUrl: 'https://cloud.seatable.io',
+          name: 'Fake Supabase',
+          type: 'supabase',
+          projectUrl: 'https://example.supabase.co',
+          apiKey: 'x',
         });
 
         await openSettingsTab();
@@ -810,7 +812,12 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       return { pass, detail: `editNotSupported=${r.hasEditNotSupported}` };
     });
 
-    await test('credential / non-airtable type shows Not yet supported and disabled Save', async () => {
+    await test('credential / unsupported type shows Not yet supported and disabled Save', async () => {
+      // Picks `supabase` — defined in CREDENTIAL_TYPES but no registered
+      // form renderer, so the dropdown still lists it but the form falls
+      // back to the "Not yet supported" placeholder (§4.4 provider-aware
+      // settings UI). Switch to a different unsupported type if Supabase
+      // ever ships.
       const r = await run(`(async () => {
         ${HELPERS}
         await openSettingsTab();
@@ -820,7 +827,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         await new Promise(r => setTimeout(r, 300));
 
         const select = c.querySelector('.ani-credential-edit select');
-        select.value = 'seatable';
+        select.value = 'supabase';
         select.dispatchEvent(new Event('change'));
         await new Promise(r => setTimeout(r, 400));
 

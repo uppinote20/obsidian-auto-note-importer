@@ -66,13 +66,20 @@ export function buildSyncHarnessHelpers({ pluginId, e2eCfgId }) {
       return inst.enqueueSyncRequest(mode, scope);
     }
 
-    function waitForCache(file, key, val, maxWait = 3000) {
-      return new Promise((resolve) => {
+    // Bumped from 3s → 5s after a flaky case where metadataCache lagged
+    // behind a vault.modify() under bidirectional+autoSyncComputedFields
+    // load. Throws on timeout instead of silently returning so callers
+    // surface the cache-staleness instead of pushing the prior value.
+    function waitForCache(file, key, val, maxWait = 5000) {
+      return new Promise((resolve, reject) => {
         const start = Date.now();
         (function check() {
           const fm = app.metadataCache.getFileCache(file)?.frontmatter;
           if (fm && String(fm[key]) === String(val)) return resolve(true);
-          if (Date.now() - start > maxWait) return resolve(false);
+          if (Date.now() - start > maxWait) {
+            const seen = fm && key in fm ? JSON.stringify(fm[key]) : '<unset>';
+            return reject(new Error('waitForCache timeout: ' + key + ' expected=' + JSON.stringify(val) + ' seen=' + seen));
+          }
           setTimeout(check, 100);
         })();
       });
