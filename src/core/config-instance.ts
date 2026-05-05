@@ -34,6 +34,16 @@ export class ConfigInstance {
   readonly configId: string;
   credentialId: string;
 
+  /**
+   * The credential type this instance was constructed for. ConfigManager
+   * compares against the new credential's type on update; when they differ
+   * the instance is destroyed and re-created so a SeaTable→Airtable swap
+   * doesn't try to `reconfigure()` a SeaTableClient with an Airtable cred.
+   * Exposed as a field rather than a getter so unit-test mocks can leave
+   * it `undefined` and rely on ConfigManager's truthy guard.
+   */
+  readonly providerType: DatabaseProvider['providerType'];
+
   private app: App;
   private shared: SharedServices;
   private settings: LegacySettings;
@@ -64,6 +74,7 @@ export class ConfigInstance {
       this.rateLimiter,
       shared.getDebugMode(),
     );
+    this.providerType = this.databaseProvider.providerType;
 
     // 3. Create ConflictResolver
     this.conflictResolver = new ConflictResolver(this.settings, this.databaseProvider);
