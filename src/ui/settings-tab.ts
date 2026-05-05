@@ -15,11 +15,13 @@ import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
 import type { ExtraButtonComponent, Plugin } from "obsidian";
 import {
   FieldCache,
+  SeaTableMetadataCache,
   getFieldTypeMapper,
   hasFieldTypeMapper,
   getCredentialFormRenderer,
   hasCredentialFormRenderer,
 } from '../services';
+import type { SeaTableTable } from '../services';
 import type { CredentialFormState, CredentialFormRenderer } from '../types';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
@@ -41,6 +43,7 @@ export interface SettingsPlugin extends Plugin {
 export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: SettingsPlugin;
   private fieldCache: FieldCache;
+  private seatableMetadataCache: SeaTableMetadataCache;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private editingCredentialId: string | null = null;
   private addingCredential = false;
@@ -52,10 +55,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private pendingDeleteConfigId: string | null = null;
   private pendingDeleteCredentialId: string | null = null;
 
-  constructor(app: App, plugin: SettingsPlugin, fieldCache: FieldCache) {
+  constructor(
+    app: App,
+    plugin: SettingsPlugin,
+    fieldCache: FieldCache,
+    seatableMetadataCache: SeaTableMetadataCache,
+  ) {
     super(app, plugin);
     this.plugin = plugin;
     this.fieldCache = fieldCache;
+    this.seatableMetadataCache = seatableMetadataCache;
   }
 
   /**
@@ -786,11 +795,118 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .setDesc(`No field type mapper registered for ${credential.type}.`);
       return;
     }
-    const mapper = getFieldTypeMapper(credential.type);
 
+    // Try to load metadata so dropdowns can replace ID-text inputs.
+    // If the API token isn't set yet (or fetch fails), fall back to
+    // text inputs so the user can still configure manually — same
+    // graceful-degrade contract as Airtable's renderBaseSelector.
+    if (!credential.apiToken) {
+      this.renderSeaTableTextFallback(containerEl, config);
+      return;
+    }
+
+    void this.seatableMetadataCache.fetchTables(credential).then(
+      tables => this.renderSeaTableDropdowns(containerEl, config, credential, tables),
+      err => {
+        new Notice(`Auto Note Importer: Failed to load SeaTable metadata. ${err.message || err}`);
+        this.renderSeaTableTextFallback(containerEl, config);
+      },
+    );
+  }
+
+  private renderSeaTableDropdowns(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SeaTableCredential,
+    tables: SeaTableTable[],
+  ): void {
+    const mapper = getFieldTypeMapper(credential.type);
+    containerEl.empty();
     containerEl.createEl('p', {
       cls: 'ani-credential-desc',
-      text: 'SeaTable identifies tables, views, and columns by ID. Find them in your Base under Settings → Tables, Views, and Columns.',
+      text: 'Pick the table, view, and columns to sync. The dropdowns are populated from your SeaTable base metadata.',
+    });
+
+    const selectedTable = tables.find(t => t.id === config.tableId);
+
+    new Setting(containerEl)
+      .setName('Table')
+      .setDesc('Required. The SeaTable table to sync.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- Select table --');
+        for (const t of tables) dropdown.addOption(t.id, t.name);
+        dropdown.setValue(config.tableId);
+        dropdown.onChange(async (value) => {
+          config.tableId = value;
+          // Table change invalidates view + field selections, since they're
+          // table-scoped on the SeaTable side.
+          config.viewId = '';
+          config.filenameFieldName = '';
+          config.subfolderFieldName = '';
+          await this.plugin.saveSettings();
+          this.debounceDisplay();
+        });
+      })
+      .addExtraButton(button => this.configureRefreshButton(button, 'Refresh metadata', () => {
+        this.seatableMetadataCache.clearForCred(credential.id);
+      }));
+
+    new Setting(containerEl)
+      .setName('View (optional)')
+      .setDesc('Filter synced rows by a SeaTable view. Leave empty to sync the entire table.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- All rows (no view filter) --');
+        for (const v of selectedTable?.views ?? []) dropdown.addOption(v.id, v.name);
+        dropdown.setValue(config.viewId);
+        dropdown.setDisabled(!selectedTable);
+        dropdown.onChange(async (value) => {
+          config.viewId = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    const safeTypes = new Set(mapper.getFilenameSafeTypes());
+    const filenameCandidates = (selectedTable?.columns ?? []).filter(c => safeTypes.has(c.type));
+    const safeTypesList = mapper.getFilenameSafeTypes().join(', ') || 'text';
+    new Setting(containerEl)
+      .setName('Filename field')
+      .setDesc(`Column whose value becomes the note filename. Filtered to: ${safeTypesList}.`)
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- Select filename column --');
+        for (const c of filenameCandidates) dropdown.addOption(c.name, c.name);
+        dropdown.setValue(config.filenameFieldName);
+        dropdown.setDisabled(!selectedTable);
+        dropdown.onChange(async (value) => {
+          config.filenameFieldName = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName('Subfolder field (optional)')
+      .setDesc('Column used for subfolder organization. Leave empty for a flat layout.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- No subfolder column --');
+        for (const c of selectedTable?.columns ?? []) dropdown.addOption(c.name, c.name);
+        dropdown.setValue(config.subfolderFieldName);
+        dropdown.setDisabled(!selectedTable);
+        dropdown.onChange(async (value) => {
+          config.subfolderFieldName = value;
+          await this.plugin.saveSettings();
+        });
+      });
+  }
+
+  /**
+   * Manual ID/name text inputs — used while the SeaTable API token is
+   * unset, or as a fallback when metadata fetch fails (network down,
+   * token revoked, server unreachable). The user can still wire up
+   * the config by typing IDs from the SeaTable web UI directly.
+   */
+  private renderSeaTableTextFallback(containerEl: HTMLElement, config: ConfigEntry): void {
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Enter SeaTable IDs manually. Once an API token is saved and reachable, this card will switch to dropdowns automatically.',
     });
 
     new Setting(containerEl)
@@ -815,10 +931,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    const safeTypesList = mapper.getFilenameSafeTypes().join(', ') || 'text';
     new Setting(containerEl)
       .setName('Filename field')
-      .setDesc(`Column name whose value becomes the note filename. Recommended types: ${safeTypesList}.`)
+      .setDesc('Column name whose value becomes the note filename.')
       .addText(text => text
         .setPlaceholder('column name (e.g. Name)')
         .setValue(config.filenameFieldName)

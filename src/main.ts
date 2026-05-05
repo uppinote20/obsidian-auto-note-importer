@@ -13,7 +13,7 @@
 import { Plugin, normalizePath } from "obsidian";
 import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
 import { DEFAULT_SETTINGS, CREDENTIAL_TYPE_LABELS } from './types';
-import { FieldCache } from './services';
+import { FieldCache, SeaTableMetadataCache } from './services';
 import { ConfigManager } from './core';
 import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
@@ -29,6 +29,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   configManager!: ConfigManager;
   fieldCache!: FieldCache;
+  seatableMetadataCache!: SeaTableMetadataCache;
   private commandFingerprint = '';
 
   async onload() {
@@ -42,10 +43,12 @@ export default class AutoNoteImporterPlugin extends Plugin {
    */
   private initializeServices(): void {
     this.fieldCache = new FieldCache();
+    this.seatableMetadataCache = new SeaTableMetadataCache();
 
     const shared: SharedServices = {
       rateLimiters: new Map(),
       fieldCache: this.fieldCache,
+      seatableMetadataCache: this.seatableMetadataCache,
       frontmatterParser: new FrontmatterParser(this.app),
       statusBarFactory: () => this.addStatusBarItem(),
       getDebugMode: () => this.settings.debugMode,
@@ -54,7 +57,12 @@ export default class AutoNoteImporterPlugin extends Plugin {
     this.configManager = new ConfigManager(this.app, shared);
     this.configManager.initialize(this.settings.configs, this.settings.credentials);
 
-    this.settingTab = new AutoNoteImporterSettingTab(this.app, this, this.fieldCache);
+    this.settingTab = new AutoNoteImporterSettingTab(
+      this.app,
+      this,
+      this.fieldCache,
+      this.seatableMetadataCache,
+    );
     this.addSettingTab(this.settingTab);
   }
 
