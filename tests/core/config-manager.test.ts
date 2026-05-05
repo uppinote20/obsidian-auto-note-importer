@@ -177,6 +177,38 @@ describe('ConfigManager', () => {
       expect(instance.updateSettings).toHaveBeenCalledWith(updatedConfig, credential);
     });
 
+    it('should recreate instance when credential type changes', () => {
+      // Locks the #76 fix: a SeaTable→Airtable credential swap (or vice
+      // versa) destroys the old ConfigInstance and constructs a new one
+      // so the matching DatabaseProvider is built. Without this branch
+      // ConfigInstance.updateSettings would forward to
+      // SeaTableClient.reconfigure(airtableCred), which throws.
+      const config = createConfig({ id: 'cfg-1', enabled: true });
+      const airtableCred = createCredential({ id: 'cred-airtable', type: 'airtable' });
+
+      manager.addConfig(config, airtableCred);
+      const firstInstance = vi.mocked(ConfigInstance).mock.instances[0];
+      // Mock instances default to undefined providerType (handled by the
+      // truthy guard in updateConfig); production instances assign it
+      // from databaseProvider.providerType in the constructor.
+      Object.defineProperty(firstInstance, 'providerType', { value: 'airtable', configurable: true });
+
+      const seatableCred: Credential = {
+        id: 'cred-seatable',
+        name: 'Test SeaTable',
+        type: 'seatable',
+        apiToken: 'st-token',
+        serverUrl: 'https://cloud.seatable.io',
+      };
+      manager.updateConfig('cfg-1', config, seatableCred);
+
+      expect(firstInstance.destroy).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(ConfigInstance)).toHaveBeenCalledTimes(2);
+      // updateSettings on the original instance must not run — the
+      // whole point is to bypass reconfigure() for the cross-type case.
+      expect(firstInstance.updateSettings).not.toHaveBeenCalled();
+    });
+
     it('should remove instance when config is disabled', () => {
       const config = createConfig({ id: 'cfg-1', enabled: true });
       const credential = createCredential();
