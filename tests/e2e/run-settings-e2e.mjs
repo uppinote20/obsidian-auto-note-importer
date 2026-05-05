@@ -14,7 +14,8 @@
  *   node tests/e2e/run-settings-e2e.mjs
  */
 
-import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
+import { findPageTarget } from './cdp-helpers.mjs';
+import { buildSettingsHarnessHelpers, makeSetConfigAndQuery, createTestHarness } from './obsidian-helpers.mjs';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -26,62 +27,13 @@ const PLUGIN_ID = 'auto-note-importer';
 // Obsidian-side helpers
 // ---------------------------------------------------------------------------
 
-const HELPERS = `
-  function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
-
+const HELPERS = buildSettingsHarnessHelpers({ pluginId: PLUGIN_ID }) + `
+  // Airtable settings tests run against the user's currently active config
+  // (no dedicated e2e config gets injected).
   function getActiveConfig() {
     const p = getPlugin();
     const id = p.settings.activeConfigId;
     return p.settings.configs.find(c => c.id === id) || p.settings.configs[0];
-  }
-
-  function getConfig(idx = 0) { return getPlugin().settings.configs[idx]; }
-
-  function getSettingsTab() {
-    return app.setting.pluginTabs.find(t => t.id === '${PLUGIN_ID}');
-  }
-
-  async function openSettingsTab() {
-    app.setting.open();
-    await new Promise(r => setTimeout(r, 200));
-    const tab = getSettingsTab();
-    if (!tab) throw new Error('Plugin settings tab not found');
-    app.setting.openTab(tab);
-    tab.display();
-    await new Promise(r => setTimeout(r, 400));
-    return tab;
-  }
-
-  async function rerenderTab() {
-    const tab = getSettingsTab();
-    if (tab) tab.display();
-    await new Promise(r => setTimeout(r, 300));
-    return tab;
-  }
-
-  function getContainer() {
-    const tab = getSettingsTab();
-    return tab?.containerEl;
-  }
-
-  function queryCards(container) {
-    const el = container || getContainer();
-    return Array.from(el.querySelectorAll('.ani-summary-card'));
-  }
-
-  function cardInfo(card) {
-    return {
-      title: card.querySelector('.ani-card-title')?.textContent || '',
-      summary: card.querySelector('.ani-card-summary')?.textContent || '',
-      badge: card.querySelector('.ani-card-badge')?.textContent || '',
-      isOk: !!card.querySelector('.ani-card-badge-ok'),
-      isOff: !!card.querySelector('.ani-card-badge-off'),
-      expanded: card.classList.contains('is-expanded'),
-    };
-  }
-
-  function allCardInfos(container) {
-    return queryCards(container).map(c => cardInfo(c));
   }
 `;
 
@@ -89,55 +41,9 @@ const HELPERS = `
 // Test runner
 // ---------------------------------------------------------------------------
 
-const results = [];
 let targetId;
-
-function log(msg) { console.log(msg); }
-
-async function run(expr, timeout) {
-  return evalInObsidian(targetId, expr, timeout);
-}
-
-async function test(name, fn) {
-  log(`\n=== ${name} ===`);
-  try {
-    const { pass, detail } = await fn();
-    results.push({ test: name, pass, detail: detail || 'ok' });
-    log(pass ? 'PASS' : `FAIL - ${detail}`);
-  } catch (e) {
-    results.push({ test: name, pass: false, detail: e.message });
-    log(`FAIL - ${e.message}`);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helper: set config fields and re-render settings tab
-// ---------------------------------------------------------------------------
-
-function buildConfigExpr(overrides) {
-  return Object.entries(overrides)
-    .map(([key, value]) => {
-      const v = typeof value === 'string' ? `'${value.replace(/'/g, "\\'")}'`
-        : typeof value === 'boolean' ? String(value)
-        : value;
-      return `cfg.${key} = ${v};`;
-    })
-    .join('\n      ');
-}
-
-async function setConfigAndQuery(overrides) {
-  const assignments = buildConfigExpr(overrides);
-  return run(`(async () => {
-    ${HELPERS}
-    const p = getPlugin();
-    const cfg = getActiveConfig();
-    ${assignments}
-    await p.saveSettings();
-    await rerenderTab();
-    const infos = allCardInfos();
-    return JSON.stringify(infos);
-  })()`, 10000);
-}
+const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId });
+const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -868,19 +774,21 @@ async function setConfigAndQuery(overrides) {
       return { pass, detail: `testBtn=${r.hasTestBtn} disabled=${r.testBtnDisabled} save=${r.hasSaveBtn} cancel=${r.hasCancelBtn}` };
     });
 
-    await test('credential / edit form rejects non-airtable credentials', async () => {
+    await test('credential / edit form rejects unsupported credential types', async () => {
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
-        // Inject a fake seatable credential temporarily
-        const fakeId = 'e2e-fake-seatable-' + Date.now();
+        // Inject a fake credential of an unsupported type. Supabase is in
+        // CREDENTIAL_TYPES but has no registered form renderer yet, so it
+        // exercises the "Edit not supported" fallback (provider-aware UI).
+        const fakeId = 'e2e-fake-unsupported-' + Date.now();
         const savedCreds = [...p.settings.credentials];
         p.settings.credentials.push({
           id: fakeId,
-          name: 'Fake SeaTable',
-          type: 'seatable',
-          apiToken: 'x',
-          serverUrl: 'https://cloud.seatable.io',
+          name: 'Fake Supabase',
+          type: 'supabase',
+          projectUrl: 'https://example.supabase.co',
+          apiKey: 'x',
         });
 
         await openSettingsTab();
@@ -904,7 +812,12 @@ async function setConfigAndQuery(overrides) {
       return { pass, detail: `editNotSupported=${r.hasEditNotSupported}` };
     });
 
-    await test('credential / non-airtable type shows Not yet supported and disabled Save', async () => {
+    await test('credential / unsupported type shows Not yet supported and disabled Save', async () => {
+      // Picks `supabase` — defined in CREDENTIAL_TYPES but no registered
+      // form renderer, so the dropdown still lists it but the form falls
+      // back to the "Not yet supported" placeholder (§4.4 provider-aware
+      // settings UI). Switch to a different unsupported type if Supabase
+      // ever ships.
       const r = await run(`(async () => {
         ${HELPERS}
         await openSettingsTab();
@@ -914,7 +827,7 @@ async function setConfigAndQuery(overrides) {
         await new Promise(r => setTimeout(r, 300));
 
         const select = c.querySelector('.ani-credential-edit select');
-        select.value = 'seatable';
+        select.value = 'supabase';
         select.dispatchEvent(new Event('change'));
         await new Promise(r => setTimeout(r, 400));
 

@@ -14,8 +14,9 @@
  *   node tests/e2e/run-seatable-settings-e2e.mjs
  */
 
-import { findPageTarget, evalInObsidian } from './cdp-helpers.mjs';
+import { findPageTarget } from './cdp-helpers.mjs';
 import { loadEnv } from './load-env.mjs';
+import { buildSettingsHarnessHelpers, makeSetConfigAndQuery, buildConfigEntry, createTestHarness } from './obsidian-helpers.mjs';
 
 loadEnv();
 
@@ -37,10 +38,11 @@ const ENV = {
 // Obsidian-side helpers
 // ---------------------------------------------------------------------------
 
-const HELPERS = `
-  function getPlugin() { return app.plugins.plugins['${PLUGIN_ID}']; }
-
-  function getSeaConfig() {
+const HELPERS = buildSettingsHarnessHelpers({ pluginId: PLUGIN_ID }) + `
+  // SeaTable settings tests inject a dedicated e2e config keyed by
+  // E2E_CFG_ID so the user's existing configs stay untouched. The setup
+  // helper resets prior runs idempotently and marks the new config active.
+  function getActiveConfig() {
     const p = getPlugin();
     return p.settings.configs.find(c => c.id === '${E2E_CFG_ID}');
   }
@@ -60,78 +62,14 @@ const HELPERS = `
       apiToken: ${JSON.stringify(ENV.apiToken)},
       serverUrl: ${JSON.stringify(ENV.serverUrl)},
     });
-    p.settings.configs.push({
-      id: '${E2E_CFG_ID}',
+    p.settings.configs.push(${JSON.stringify(buildConfigEntry({
+      id: E2E_CFG_ID,
       name: 'E2E SeaTable Settings Cfg',
-      enabled: true,
-      credentialId: '${E2E_CRED_ID}',
-      baseId: '',
-      tableId: ${JSON.stringify(ENV.tableId)},
-      viewId: '',
+      credentialId: E2E_CRED_ID,
+      tableId: ENV.tableId,
       folderPath: 'SeaTable-E2E-Settings',
-      templatePath: '',
-      filenameFieldName: 'Name',
-      subfolderFieldName: '',
-      syncInterval: 0,
-      allowOverwrite: true,
-      bidirectionalSync: false,
-      conflictResolution: 'manual',
-      watchForChanges: false,
-      fileWatchDebounce: 2000,
-      autoSyncComputedFields: false,
-      formulaSyncDelay: 1500,
-      generateBasesFile: false,
-      basesFileLocation: 'vault-root',
-      basesCustomPath: '',
-      basesRegenerateOnSync: false,
-    });
+    }))});
     p.settings.activeConfigId = '${E2E_CFG_ID}';
-  }
-
-  function getSettingsTab() {
-    return app.setting.pluginTabs.find(t => t.id === '${PLUGIN_ID}');
-  }
-
-  async function openSettingsTab() {
-    app.setting.open();
-    await new Promise(r => setTimeout(r, 200));
-    const tab = getSettingsTab();
-    if (!tab) throw new Error('Plugin settings tab not found');
-    app.setting.openTab(tab);
-    tab.display();
-    await new Promise(r => setTimeout(r, 400));
-    return tab;
-  }
-
-  async function rerenderTab() {
-    const tab = getSettingsTab();
-    if (tab) tab.display();
-    await new Promise(r => setTimeout(r, 300));
-    return tab;
-  }
-
-  function getContainer() {
-    return getSettingsTab()?.containerEl;
-  }
-
-  function queryCards(container) {
-    const el = container || getContainer();
-    return Array.from(el.querySelectorAll('.ani-summary-card'));
-  }
-
-  function cardInfo(card) {
-    return {
-      title: card.querySelector('.ani-card-title')?.textContent || '',
-      summary: card.querySelector('.ani-card-summary')?.textContent || '',
-      badge: card.querySelector('.ani-card-badge')?.textContent || '',
-      isOk: !!card.querySelector('.ani-card-badge-ok'),
-      isOff: !!card.querySelector('.ani-card-badge-off'),
-      expanded: card.classList.contains('is-expanded'),
-    };
-  }
-
-  function allCardInfos(container) {
-    return queryCards(container).map(c => cardInfo(c));
   }
 `;
 
@@ -139,52 +77,9 @@ const HELPERS = `
 // Test runner
 // ---------------------------------------------------------------------------
 
-const results = [];
 let targetId;
-
-function log(msg) { console.log(msg); }
-
-async function run(expr, timeout) {
-  const r = await evalInObsidian(targetId, expr, timeout);
-  if (r && typeof r === 'object' && r.__error) throw new Error(r.__error);
-  return r;
-}
-
-async function test(name, fn) {
-  log(`\n=== ${name} ===`);
-  try {
-    const { pass, detail } = await fn();
-    results.push({ test: name, pass, detail: detail || 'ok' });
-    log(pass ? 'PASS' : `FAIL - ${detail}`);
-  } catch (e) {
-    results.push({ test: name, pass: false, detail: e.message });
-    log(`FAIL - ${e.message}`);
-  }
-}
-
-function buildConfigExpr(overrides) {
-  return Object.entries(overrides)
-    .map(([key, value]) => {
-      const v = typeof value === 'string' ? `'${value.replace(/'/g, "\\'")}'`
-        : typeof value === 'boolean' ? String(value)
-        : value;
-      return `cfg.${key} = ${v};`;
-    })
-    .join('\n      ');
-}
-
-async function setConfigAndQuery(overrides) {
-  const assignments = buildConfigExpr(overrides);
-  return run(`(async () => {
-    ${HELPERS}
-    const p = getPlugin();
-    const cfg = getSeaConfig();
-    ${assignments}
-    await p.saveSettings();
-    await rerenderTab();
-    return JSON.stringify(allCardInfos());
-  })()`, 10000);
-}
+const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId });
+const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
 // ---------------------------------------------------------------------------
 // Tests
