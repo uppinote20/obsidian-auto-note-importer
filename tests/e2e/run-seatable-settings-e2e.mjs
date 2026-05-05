@@ -266,6 +266,64 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       return { pass, detail: `apiToken=${r.hasApiToken} server=${r.hasServerUrl} test=${r.hasTestBtn} disabled=${r.testBtnDisabled}` };
     });
 
+    // ── Issue #73: metadata-driven dropdowns ────────────────────────
+
+    await test('connection card / renders metadata dropdowns when api token is set (#73)', async () => {
+      // Wait briefly for the async metadata fetch in renderSeaTableConnection
+      // to complete, then assert that 4 dropdowns appeared (Table, View,
+      // Filename, Subfolder) and that the Table dropdown has at least one
+      // real option beyond the placeholder.
+      const r = await run(`(async () => {
+        ${HELPERS}
+        await rerenderTab();
+        // Polling loop: the cache resolves on a microtask, but DOM update
+        // is async. Bail after 5s.
+        let dropdowns = [];
+        const start = Date.now();
+        while (Date.now() - start < 5000) {
+          const c = getContainer();
+          dropdowns = Array.from(c.querySelectorAll('.ani-summary-card .ani-card-body select'));
+          if (dropdowns.length >= 4) break;
+          await new Promise(r => setTimeout(r, 200));
+        }
+        const tableDropdown = dropdowns[0];
+        const optionCount = tableDropdown ? tableDropdown.options.length : 0;
+        return JSON.stringify({
+          dropdownCount: dropdowns.length,
+          tableOptionCount: optionCount,
+        });
+      })()`, 12000);
+      const pass = r.dropdownCount >= 4 && r.tableOptionCount >= 2;
+      return { pass, detail: `dropdowns=${r.dropdownCount} tableOptions=${r.tableOptionCount}` };
+    });
+
+    await test('connection card / falls back to text inputs when api token is empty (#73)', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const cred = p.settings.credentials.find(c => c.id === '${E2E_CRED_ID}');
+        const savedToken = cred.apiToken;
+        cred.apiToken = '';
+        await p.saveSettings();
+        await rerenderTab();
+        await new Promise(r => setTimeout(r, 300));
+        const c = getContainer();
+        const inputs = Array.from(c.querySelectorAll('.ani-summary-card .ani-card-body input[type="text"]'));
+        const dropdowns = Array.from(c.querySelectorAll('.ani-summary-card .ani-card-body select'));
+
+        cred.apiToken = savedToken;
+        await p.saveSettings();
+        await rerenderTab();
+
+        return JSON.stringify({
+          inputCount: inputs.length,
+          dropdownCount: dropdowns.length,
+        });
+      })()`, 10000);
+      const pass = r.inputCount >= 4 && r.dropdownCount === 0;
+      return { pass, detail: `inputs=${r.inputCount} dropdowns=${r.dropdownCount}` };
+    });
+
     // ── Issue #76: connection card refresh on credential dropdown change ──
 
     await test('connection card / cred dropdown change renders the new card bidirectionally (#76)', async () => {

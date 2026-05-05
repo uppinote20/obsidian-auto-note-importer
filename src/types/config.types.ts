@@ -7,11 +7,13 @@
 import type { ConflictResolutionMode, BasesFileLocation } from './settings.types';
 import type { RateLimiter } from '../services/rate-limiter';
 import type { FieldCache } from '../services/field-cache';
+import type { SeaTableMetadataCache } from '../services/seatable-metadata-cache';
 import type { FrontmatterParser } from '../file-operations/frontmatter-parser';
 
 export interface SharedServices {
   rateLimiters: Map<string, RateLimiter>;
   fieldCache: FieldCache;
+  seatableMetadataCache: SeaTableMetadataCache;
   frontmatterParser: FrontmatterParser;
   statusBarFactory: () => HTMLElement;
   getDebugMode: () => boolean;
