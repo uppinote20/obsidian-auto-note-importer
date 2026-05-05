@@ -266,6 +266,67 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       return { pass, detail: `apiToken=${r.hasApiToken} server=${r.hasServerUrl} test=${r.hasTestBtn} disabled=${r.testBtnDisabled}` };
     });
 
+    // ── Issue #76: connection card refresh on credential dropdown change ──
+
+    await test('connection card / cred dropdown change renders the new card bidirectionally (#76)', async () => {
+      // Regression guard: switching the e2e config between SeaTable and
+      // Airtable credentials must swap the connection card immediately.
+      // Pre-fix the && apiKey / && apiToken guard dropped the card when
+      // the new credential's secret was empty, so this test pins both
+      // directions plus the empty-secret rendering path.
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const fakeAirtableId = 'e2e-fake-airtable-' + Date.now();
+        const savedCreds = [...p.settings.credentials];
+        p.settings.credentials.push({
+          id: fakeAirtableId,
+          name: 'Fake Airtable',
+          type: 'airtable',
+          apiKey: '',
+        });
+        const cfg = getActiveConfig();
+        const originalCredId = cfg.credentialId;
+
+        cfg.credentialId = '${E2E_CRED_ID}';
+        await p.saveSettings();
+        await rerenderTab();
+        const stStart = allCardInfos().find(c => c.title === 'SeaTable Connection');
+
+        cfg.credentialId = fakeAirtableId;
+        await p.saveSettings();
+        await rerenderTab();
+        const atAfter = allCardInfos().find(c => c.title === 'Airtable Connection');
+        const noStAfter = !allCardInfos().some(c => c.title === 'SeaTable Connection');
+
+        cfg.credentialId = '${E2E_CRED_ID}';
+        await p.saveSettings();
+        await rerenderTab();
+        const stEnd = allCardInfos().find(c => c.title === 'SeaTable Connection');
+        const noAtEnd = !allCardInfos().some(c => c.title === 'Airtable Connection');
+
+        cfg.credentialId = originalCredId;
+        p.settings.credentials = savedCreds;
+        await p.saveSettings();
+
+        return JSON.stringify({
+          stStartOk: !!stStart,
+          atAfterOk: !!atAfter,
+          atAfterBadge: atAfter?.badge || '',
+          atAfterIsOff: !!atAfter?.isOff,
+          noStAfterOk: noStAfter,
+          stEndOk: !!stEnd,
+          noAtEndOk: noAtEnd,
+        });
+      })()`, 15000);
+      const pass = r.stStartOk && r.atAfterOk && r.atAfterBadge === 'Setup required'
+        && r.atAfterIsOff && r.noStAfterOk && r.stEndOk && r.noAtEndOk;
+      return {
+        pass,
+        detail: `st→at→st: stStart=${r.stStartOk} atAfter=${r.atAfterOk} (badge="${r.atAfterBadge}",off=${r.atAfterIsOff}) noStAfter=${r.noStAfterOk} stEnd=${r.stEndOk} noAtEnd=${r.noAtEndOk}`,
+      };
+    });
+
     // ── Cleanup ──────────────────────────────────────────────────
 
     log('\n=== Cleanup ===');

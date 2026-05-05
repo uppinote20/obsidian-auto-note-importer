@@ -74,6 +74,12 @@ if (!ENV.baseId || !ENV.tableId) {
 // deterministic for assertions.
 const ENSURED_FIELDS = [
   { name: 'Name',        type: 'singleLineText' },
+  // Source column for Demo's stock 'Calculation' formula. Auto-ensured
+  // so the harness works on a freshly-created Demo base where this
+  // column wouldn't exist by default — without it, record creation
+  // fails with UNKNOWN_FIELD_NAME because we push 'Single line text'
+  // payloads into the formula's input.
+  { name: 'Single line text', type: 'singleLineText' },
   { name: 'E2ECount',    type: 'number', options: { precision: 0 } },
   {
     name: 'Status',
@@ -97,6 +103,11 @@ let multiConfigRecordIds = [];
 // target table — set in setup() so formula-dependent cases skip cleanly
 // if the column was renamed/removed.
 let hasCalField = false;
+// Whether the dedicated multi-config table exists on the target base.
+// Setup checks for MULTI_CONFIG_TABLE_ID; missing means we're running
+// against a base (e.g. a freshly-created Demo) where the user hasn't
+// added that table yet, so multi-config cases skip cleanly.
+let hasMultiConfigTable = false;
 
 // ---------------------------------------------------------------------------
 // Obsidian-side helpers (injected into eval expressions)
@@ -304,6 +315,11 @@ async function setup() {
 
   // Detect Demo's stock 'Calculation' formula field. Airtable's Meta
   // API can't create formula fields, so we rely on the seeded one.
+  // Verify the formula expression too — the column name alone matching
+  // isn't enough since a base may have a 'Calculation' formula that
+  // computes something different (e.g. {E2ECount}*0), in which case
+  // the assertions would silently break. Whitespace-normalized compare
+  // tolerates Airtable's rendering quirks around the curly-brace refs.
   const calcCheck = await run(`(async () => {
     ${HELPERS}
     const cfg = getConfig();
@@ -313,14 +329,43 @@ async function setup() {
     }).then(r => r.json());
     const tbl = (meta.tables || []).find(t => t.id === cfg.tableId);
     const calc = tbl?.fields?.find(f => f.name === ${JSON.stringify(CALCULATION_FIELD)} && f.type === 'formula');
-    return JSON.stringify({ found: !!calc });
+    const expected = ${JSON.stringify(`IF({${CALCULATION_SOURCE}}, {${CALCULATION_SOURCE}} & "${CALCULATION_SUFFIX}", "")`)};
+    const formula = calc?.options?.formula || '';
+    const norm = (s) => s.replace(/\\s+/g, '');
+    const formulaMatches = norm(formula) === norm(expected);
+    return JSON.stringify({ found: !!calc, formulaMatches, formula });
   })()`, 15000);
-  hasCalField = calcCheck.found;
+  hasCalField = calcCheck.found && calcCheck.formulaMatches;
   if (!hasCalField) {
-    log(`  ⚠️  Demo's stock "${CALCULATION_FIELD}" formula field not detected on the target table.`);
-    log('     Add a formula column with the seeded formula:');
+    if (!calcCheck.found) {
+      log(`  ⚠️  Demo's stock "${CALCULATION_FIELD}" formula field not detected on the target table.`);
+    } else {
+      log(`  ⚠️  "${CALCULATION_FIELD}" formula expression doesn't match the harness contract.`);
+      log(`     Got:      ${calcCheck.formula}`);
+    }
+    log('     Add or update the formula column to:');
     log(`       IF({${CALCULATION_SOURCE}}, {${CALCULATION_SOURCE}} & "${CALCULATION_SUFFIX}", "")`);
     log('     Calculation-dependent test cases will be skipped until then.');
+  }
+
+  // Detect dedicated multi-config table. Without it we skip multi-config
+  // suites instead of failing — a freshly-created Demo base wouldn't have
+  // it, and table creation via Meta API would leak across runs.
+  const multiCheck = await run(`(async () => {
+    ${HELPERS}
+    const cfg = getConfig();
+    const cred = getCredential();
+    const meta = await fetch('https://api.airtable.com/v0/meta/bases/' + cfg.baseId + '/tables', {
+      headers: { 'Authorization': 'Bearer ' + cred.apiKey },
+    }).then(r => r.json());
+    const tbl = (meta.tables || []).find(t => t.id === '${MULTI_CONFIG_TABLE_ID}');
+    return JSON.stringify({ found: !!tbl });
+  })()`, 15000);
+  hasMultiConfigTable = multiCheck.found;
+  if (!hasMultiConfigTable) {
+    log(`  ⚠️  Multi-config table '${MULTI_CONFIG_TABLE_ID}' not present on this base.`);
+    log('     Multi-config test cases will be skipped. Add a table named E2E-MultiConfig with');
+    log('     fields Name (text), Value (number), Tag (singleSelect) to enable them.');
   }
 
   log('=== Setup: Create test records ===');
@@ -955,6 +1000,7 @@ async function cleanupMultiConfig() {
     });
 
     await test('multi-config / independent sync', async () => {
+      if (!hasMultiConfigTable) return { skip: true, detail: `multi-config table '${MULTI_CONFIG_TABLE_ID}' missing — see setup notes` };
       // Setup: add second config and create records in second table
       const mcSetup = await run(`(async () => {
         ${HELPERS}
@@ -1061,6 +1107,7 @@ async function cleanupMultiConfig() {
     });
 
     await test('multi-config / folder isolation', async () => {
+      if (!hasMultiConfigTable) return { skip: true, detail: `multi-config table '${MULTI_CONFIG_TABLE_ID}' missing — see setup notes` };
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();

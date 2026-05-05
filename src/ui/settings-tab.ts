@@ -133,20 +133,27 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Summary card stack
     const cardStack = containerEl.createDiv({ cls: 'ani-card-stack' });
 
-    if (credential.type === 'airtable' && credential.apiKey) {
-      const connected = !!(config.baseId && config.tableId);
+    // The card renders by credential type alone — missing secrets just
+    // flip the badge to 'Setup required'. Previously the && apiKey / &&
+    // apiToken guard dropped the whole card when the new credential's
+    // secret was empty, which manifested as a one-way render asymmetry
+    // when the user switched credentials via the dropdown (the next
+    // display() call would only fire from an unrelated re-render — see
+    // issue #76).
+    if (credential.type === 'airtable') {
       const airtableCred = credential;
+      const connected = !!(airtableCred.apiKey && config.baseId && config.tableId);
       this.renderSummaryCard(cardStack, {
         sectionId: 'airtable-connection', icon: '\u{1F4E1}', title: 'Airtable Connection',
         summary: this.getConnectionSummary(config),
         badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
         renderContent: (c) => this.renderBaseSelector(c, config, airtableCred),
       });
-    } else if (credential.type === 'seatable' && credential.apiToken) {
+    } else if (credential.type === 'seatable') {
       // SeaTable's API token is base-specific, so the dtable_uuid is derived
       // from the credential at sync time — only tableId/viewId are user-supplied.
-      const connected = !!config.tableId;
       const seatableCred = credential;
+      const connected = !!(seatableCred.apiToken && config.tableId);
       this.renderSummaryCard(cardStack, {
         sectionId: 'seatable-connection', icon: '\u{1F4E1}', title: 'SeaTable Connection',
         summary: this.getConnectionSummary(config),

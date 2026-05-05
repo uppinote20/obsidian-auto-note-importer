@@ -101,6 +101,17 @@ export class ConfigManager {
     const instance = this.instances.get(configId);
 
     if (instance && config.enabled) {
+      // Credential-type change can't be handled by reconfigure() since each
+      // DatabaseProvider implementation narrows on its own credential variant
+      // (e.g. SeaTableClient throws when handed an Airtable credential).
+      // Re-create the instance from scratch so the right provider is built.
+      // The truthy guard tolerates mocked instances in unit tests where
+      // providerType isn't stubbed — production instances always expose it.
+      if (instance.providerType && instance.providerType !== credential.type) {
+        this.removeConfig(configId);
+        this.addConfig(config, credential);
+        return;
+      }
       instance.updateSettings(config, credential);
     } else if (instance && !config.enabled) {
       this.removeConfig(configId);
