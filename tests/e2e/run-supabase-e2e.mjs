@@ -506,28 +506,120 @@ async function cleanup() {
 
     // ── Read-only field protection ──────────────────────────────────
 
-    await test('push / GENERATED column (full_text) edits are silently dropped', async () => {
-      // full_text has readOnly:true in the OpenAPI spec; SupabaseFieldMapper
-      // must mark it isReadOnly() → SyncOrchestrator strips it before upsert.
+    await test('push / GENERATED column (full_text) edits are silently dropped and the rest of the row updates successfully', async () => {
+      // G1 #1: SupabaseClient.batchUpdate must drop GENERATED columns from
+      // the upsert body (PostgREST otherwise returns 400 "column ... can only
+      // be updated to DEFAULT"). Verifies both that the GENERATED column is
+      // NOT overwritten AND that the rest of the row reaches Supabase.
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
         const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-SB-Pull.md');
-        // Attempt to overwrite the GENERATED column from Obsidian.
+        // Attempt to overwrite the GENERATED column AND change a writable column.
         await modifyField(file, 'full_text', 'tampered value');
+        await modifyField(file, 'content', 'updated alongside generated');
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
         const row = await fetchRowFromSupabase(${JSON.stringify(testRowIds[0])});
         setMode('manual');
-        // Server-computed: title('E2E-SB-Pull') + ' ' + content('pull row')
-        return JSON.stringify({ remoteFullText: row?.full_text });
+        // Server-computed: title('E2E-SB-Pull') + ' ' + content('updated alongside generated')
+        return JSON.stringify({ remoteFullText: row?.full_text, remoteContent: row?.content });
       })()`, 25000);
       const pass = typeof r.remoteFullText === 'string'
         && r.remoteFullText.includes('E2E-SB-Pull')
-        && !r.remoteFullText.includes('tampered');
-      return { pass, detail: `full_text="${r.remoteFullText}"` };
+        && !r.remoteFullText.includes('tampered')
+        && r.remoteContent === 'updated alongside generated';  // writable column survived
+      return { pass, detail: `full_text="${r.remoteFullText}" content="${r.remoteContent}"` };
+    });
+
+    // ── Provider-level invariants surfaced by G1-G5 fixes ───────────────
+
+    await test('push / duplicate primaryField across two vault notes fails the batch explicitly (G5 #15)', async () => {
+      // Two notes pointing at the same Supabase row must not be silently
+      // deduped by PostgREST merge-duplicates. SupabaseClient.batchUpdate
+      // detects the collision and rejects the whole batch with an explicit
+      // 'Duplicate recordId' error so the user can clean up the vault.
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getConfig();
+        const dupTitle = 'E2E-SB-Dup-Copy';
+        const dupPath = cfg.folderPath + '/' + dupTitle + '.md';
+
+        // Create a second .md file pointing at the same Supabase row.
+        const existing = app.vault.getAbstractFileByPath(dupPath);
+        if (existing) await app.vault.delete(existing);
+        const sourceContent = await app.vault.read(app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-SB-Pull.md'));
+        await app.vault.create(dupPath, sourceContent);
+        const newFile = app.vault.getAbstractFileByPath(dupPath);
+        await modifyField(newFile, 'content', 'duplicate-attempt');
+
+        // Capture Notices emitted during push so we can spot the 'Duplicate' message.
+        const notices = [];
+        const origNotice = window.Notice;
+        // @ts-ignore Notice may be patched in dev/test
+        window.Notice = function(text, timeout) {
+          notices.push(typeof text === 'string' ? text : (text?.textContent || ''));
+          return new origNotice(text, timeout);
+        };
+
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+
+        // Restore
+        // @ts-ignore
+        window.Notice = origNotice;
+        await app.vault.delete(newFile);
+        setMode('manual');
+
+        const remote = await fetchRowFromSupabase(${JSON.stringify(testRowIds[0])});
+        return JSON.stringify({
+          notices,
+          remoteContent: remote?.content,
+        });
+      })()`, 25000);
+      const sawDuplicateNotice = (r.notices || []).some(n => /duplicate/i.test(n));
+      const remoteUnchanged = r.remoteContent === 'pull row';  // initial value from doReset
+      const pass = sawDuplicateNotice && remoteUnchanged;
+      return { pass, detail: `sawDup=${sawDuplicateNotice} remote="${r.remoteContent}"` };
+    });
+
+    await test('push / view-only columns are dropped before reaching the base table (G1 #2)', async () => {
+      // When a config uses a viewId, fetchNotes returns rows shaped by that
+      // view. If the view exposes columns that don't exist on the base
+      // table, those columns would 400 the upsert. SupabaseClient.batchUpdate
+      // must filter the body to base-table columns regardless of which
+      // endpoint produced the row.
+      //
+      // active_notes is a SELECT * view so this scenario doesn't reproduce
+      // here — the test instead documents the intent and asserts that
+      // pushing via a view still succeeds on writable columns.
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getConfig();
+        const cred = getCredential();
+        cfg.viewId = 'active_notes';
+        getInstance(cfg).updateSettings(cfg, cred);
+
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-SB-Push.md');
+        await modifyField(file, 'content', 'pushed via view');
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 7000));
+
+        cfg.viewId = '';
+        getInstance(cfg).updateSettings(cfg, cred);
+        setMode('manual');
+
+        const row = await fetchRowFromSupabase(${JSON.stringify(testRowIds[1])});
+        return JSON.stringify({ remoteContent: row?.content });
+      })()`, 30000);
+      const pass = r.remoteContent === 'pushed via view';
+      return { pass, detail: `remoteContent="${r.remoteContent}"` };
     });
 
     // ── View support ────────────────────────────────────────────────

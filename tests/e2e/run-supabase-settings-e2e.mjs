@@ -163,6 +163,109 @@ const { results, log, run, test } = createTestHarness({ getTargetId: () => targe
       return { pass, detail: `inputs=${r.inputCount} dropdowns=${r.dropdownCount}` };
     });
 
+    // ════════════════════════════════════════════════════════════════
+    // G4 #7 — credential row displays masked key (not em-dash)
+    // ════════════════════════════════════════════════════════════════
+
+    await test('credentials table / Supabase row shows masked key, not em-dash (G4 #7)', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        await rerenderTab();
+        await new Promise(r => setTimeout(r, 300));
+        const c = getContainer();
+        // Find the row in the credentials table that corresponds to our e2e cred.
+        const rows = Array.from(c.querySelectorAll('table tr'));
+        const target = rows.find(r => r.textContent && r.textContent.includes('E2E Supabase'));
+        if (!target) return JSON.stringify({ foundRow: false });
+        const keyCell = target.querySelector('.ani-cred-key, .ani-cred-key-na, .ani-cred-key-set');
+        return JSON.stringify({
+          foundRow: true,
+          cellClass: keyCell?.className || null,
+          cellText: keyCell?.textContent || '',
+        });
+      })()`, 10000);
+      // Pass: masked-key span (.ani-cred-key) with bullet-dot prefix (••••).
+      const isMasked = r.foundRow && r.cellClass === 'ani-cred-key' && /•+/.test(r.cellText);
+      return {
+        pass: isMasked,
+        detail: `foundRow=${r.foundRow} class=${r.cellClass} text="${r.cellText}"`,
+      };
+    });
+
+    // ════════════════════════════════════════════════════════════════
+    // G4 #9 — fallback schema change cascades to dependent fields
+    // ════════════════════════════════════════════════════════════════
+
+    await test('connection card / fallback schema change clears tableId/viewId/primaryKeyColumn/filename/subfolder (G4 #9)', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const cred = p.settings.credentials.find(c => c.id === '${E2E_CRED_ID}');
+        const cfg = getActiveConfig();
+
+        // Force fallback by clearing apiKey, populate dependent fields, then mutate schema.
+        const savedKey = cred.apiKey;
+        cred.apiKey = '';
+        cfg.baseId = 'public';
+        cfg.tableId = 'notes';
+        cfg.viewId = 'active_notes';
+        cfg.primaryKeyColumn = 'id';
+        cfg.filenameFieldName = 'title';
+        cfg.subfolderFieldName = 'status';
+        await p.saveSettings();
+        await rerenderTab();
+        await new Promise(r => setTimeout(r, 300));
+
+        const c = getContainer();
+        const inputs = Array.from(c.querySelectorAll('.ani-summary-card .ani-card-body input[type="text"]'));
+        // First input is the Schema field in the fallback layout.
+        const schemaInput = inputs[0];
+        if (!schemaInput) {
+          cred.apiKey = savedKey;
+          await p.saveSettings();
+          return JSON.stringify({ noSchemaInput: true });
+        }
+
+        // Simulate user typing a new schema name and dispatching the input event.
+        const proto = Object.getPrototypeOf(schemaInput);
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+        setter.call(schemaInput, 'analytics');
+        schemaInput.dispatchEvent(new Event('input', { bubbles: true }));
+        // Debounce inside settings-tab is 400 ms — wait a bit longer.
+        await new Promise(r => setTimeout(r, 700));
+
+        const result = {
+          baseId: cfg.baseId,
+          tableId: cfg.tableId,
+          viewId: cfg.viewId,
+          primaryKeyColumn: cfg.primaryKeyColumn,
+          filenameFieldName: cfg.filenameFieldName,
+          subfolderFieldName: cfg.subfolderFieldName,
+        };
+
+        // Restore
+        cred.apiKey = savedKey;
+        cfg.baseId = 'public';
+        cfg.tableId = 'notes';
+        cfg.viewId = '';
+        cfg.primaryKeyColumn = 'id';
+        cfg.filenameFieldName = '';
+        cfg.subfolderFieldName = '';
+        await p.saveSettings();
+        await rerenderTab();
+
+        return JSON.stringify(result);
+      })()`, 15000);
+      if (r.noSchemaInput) return { pass: false, detail: 'fallback schema input not found' };
+      const allCleared = r.tableId === '' && r.viewId === '' && r.primaryKeyColumn === ''
+        && r.filenameFieldName === '' && r.subfolderFieldName === '';
+      const schemaUpdated = r.baseId === 'analytics';
+      return {
+        pass: allCleared && schemaUpdated,
+        detail: `schema=${r.baseId} table="${r.tableId}" view="${r.viewId}" pk="${r.primaryKeyColumn}" fn="${r.filenameFieldName}" sf="${r.subfolderFieldName}"`,
+      };
+    });
+
     // ── Cleanup ──────────────────────────────────────────────────
 
     log('\n=== Cleanup ===');
