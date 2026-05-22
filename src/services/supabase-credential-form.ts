@@ -10,6 +10,16 @@
  * @tested tests/services/supabase-credential-form.test.ts
  */
 
+import { Setting, requestUrl } from 'obsidian';
+import type {
+  ConnectionTestResult,
+  Credential,
+  CredentialBuildResult,
+  CredentialFormRenderer,
+  CredentialFormState,
+} from '../types';
+import { extractApiErrorMessage, normalizeServerUrl } from '../utils';
+
 export type KeyKind =
   | 'publishable-new'
   | 'secret-new'
@@ -60,16 +70,6 @@ export function detectKeyType(key: string): KeyTypeInfo {
   }
   return { kind: 'unknown', label: 'Unrecognized key format', tone: 'neutral' };
 }
-
-import { Setting, requestUrl } from 'obsidian';
-import type {
-  ConnectionTestResult,
-  Credential,
-  CredentialBuildResult,
-  CredentialFormRenderer,
-  CredentialFormState,
-} from '../types';
-import { extractApiErrorMessage, normalizeServerUrl } from '../utils';
 
 const PROJECT_URL_KEY = 'projectUrl';
 const API_KEY_KEY = 'apiKey';
