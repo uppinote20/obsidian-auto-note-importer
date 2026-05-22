@@ -18,11 +18,14 @@ npm run test:e2e:full       # Build + deploy + run Airtable sync e2e
 npm run test:e2e:seatable          # SeaTable sync e2e (.env required)
 npm run test:e2e:seatable:settings # SeaTable settings UI e2e
 npm run test:e2e:seatable:full     # Build + deploy + run SeaTable e2e
+npm run test:e2e:supabase          # Supabase sync e2e (.env required)
+npm run test:e2e:supabase:settings # Supabase settings UI e2e
+npm run test:e2e:supabase:full     # Build + deploy + run Supabase e2e
 ```
 
 ## Architecture Overview
 
-This is an Obsidian plugin that syncs notes bidirectionally between **remote databases (Airtable, SeaTable; Supabase / Notion / Custom API tracked in epic #11)** and your Obsidian vault. Higher layers operate on the provider-agnostic `DatabaseProvider` interface — adding a new provider is documented in handbook §4.4.
+This is an Obsidian plugin that syncs notes bidirectionally between **remote databases (Airtable, SeaTable, Supabase; Notion / Custom API tracked in epic #11)** and your Obsidian vault. Higher layers operate on the provider-agnostic `DatabaseProvider` interface — adding a new provider is documented in handbook §4.4.
 
 ### Module Structure (`src/`)
 
@@ -48,6 +51,10 @@ src/
 │   ├── seatable-client.ts               # SeaTable DatabaseProvider impl (API Gateway v2 + Base-Token caching)
 │   ├── seatable-field-mapper.ts         # SeaTable type → StandardFieldType
 │   ├── seatable-credential-form.ts      # SeaTable settings form + connection test
+│   ├── supabase-client.ts               # Supabase DatabaseProvider impl (PostgREST direct + upsert batchUpdate)
+│   ├── supabase-field-mapper.ts         # PG/PostgREST type → StandardFieldType (colon-format providerType)
+│   ├── supabase-credential-form.ts      # Supabase settings form + key-kind auto-detect + connection test
+│   ├── supabase-metadata-cache.ts       # PostgREST OpenAPI spec cache (per credential + schema)
 │   ├── provider-registry.ts             # Factory + mapper + form-renderer registry by CredentialType
 │   ├── rate-limiter.ts                  # Per-credential request throttling + 429 retry + transient retry
 │   └── field-cache.ts                   # Airtable field metadata cache (Meta API)
