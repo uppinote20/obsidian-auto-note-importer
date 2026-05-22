@@ -69,7 +69,7 @@ export class SupabaseClient implements DatabaseProvider {
     _debugMode: boolean,
   ): void {
     if (credential.type !== 'supabase') {
-      throw new Error(`supabase credential required; got ${credential.type}`);
+      throw new Error(`SupabaseClient cannot be reconfigured with a ${credential.type} credential`);
     }
     if (
       credential.projectUrl !== this.credential.projectUrl ||

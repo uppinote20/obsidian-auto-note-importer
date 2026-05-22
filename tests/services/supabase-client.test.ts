@@ -53,7 +53,7 @@ describe('SupabaseClient.reconfigure', () => {
   it('throws when given a non-supabase credential', () => {
     const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
     expect(() => c.reconfigure({ id: 'c2', name: 'X', type: 'airtable', apiKey: 'k' }, makeConfig(), new RateLimiter(), false))
-      .toThrow(/supabase/);
+      .toThrow(/supabase/i);
   });
 
   it('clears metadata cache for credential when apiKey changes', () => {
