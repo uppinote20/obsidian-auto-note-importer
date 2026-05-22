@@ -183,3 +183,95 @@ describe('SupabaseClient.fetchRecord', () => {
     await expect(c.fetchRecord('')).rejects.toThrow(/empty/i);
   });
 });
+
+describe('SupabaseClient.batchUpdate (upsert)', () => {
+  it('returns empty array for empty input', async () => {
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    expect(await c.batchUpdate([])).toEqual([]);
+    expect(mockRequestUrl).not.toHaveBeenCalled();
+  });
+
+  it('returns per-record failure when batch exceeds limit', async () => {
+    const big = Array.from({ length: 101 }, (_, i) => ({ recordId: `r${i}`, fields: { x: 1 } }));
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const result = await c.batchUpdate(big);
+    expect(result).toHaveLength(101);
+    expect(result.every(r => !r.success)).toBe(true);
+  });
+
+  it('POSTs to rest/v1/table with on_conflict=pk and merge-duplicates prefer', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200,
+      json: [{ id: 'r1', title: 'foo' }, { id: 'r2', status: 'archived' }],
+      headers: {},
+    });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const result = await c.batchUpdate([
+      { recordId: 'r1', fields: { title: 'foo' } },
+      { recordId: 'r2', fields: { status: 'archived' } },
+    ]);
+    const call = mockRequestUrl.mock.calls[0][0];
+    expect(call.url).toContain('/rest/v1/notes?on_conflict=id');
+    expect(call.method).toBe('POST');
+    expect(call.headers.Prefer).toContain('resolution=merge-duplicates');
+    expect(call.headers.Prefer).toContain('return=representation');
+    expect(JSON.parse(call.body)).toEqual([
+      { id: 'r1', title: 'foo' },
+      { id: 'r2', status: 'archived' },
+    ]);
+    expect(result).toEqual([
+      { success: true, recordId: 'r1', updatedFields: { id: 'r1', title: 'foo' } },
+      { success: true, recordId: 'r2', updatedFields: { id: 'r2', status: 'archived' } },
+    ]);
+  });
+
+  it('attaches Content-Profile for non-public schemas', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig({ baseId: 'app' }), new RateLimiter(), new SupabaseMetadataCache());
+    await c.batchUpdate([{ recordId: 'r1', fields: { x: 1 } }]);
+    expect(mockRequestUrl.mock.calls[0][0].headers['Content-Profile']).toBe('app');
+  });
+
+  it('maps partial response (missing PK) to per-record failure', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200, json: [{ id: 'r1', title: 'foo' }], headers: {},
+    });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const result = await c.batchUpdate([
+      { recordId: 'r1', fields: { title: 'foo' } },
+      { recordId: 'r2', fields: { title: 'bar' } },
+    ]);
+    expect(result[0]).toMatchObject({ success: true, recordId: 'r1' });
+    expect(result[1]).toMatchObject({ success: false, recordId: 'r2' });
+    expect(result[1]).toHaveProperty('error');
+  });
+
+  it('maps HTTP non-200 to per-record failure with same error', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 403, json: { code: '42501', message: 'permission denied' }, headers: {},
+    });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const result = await c.batchUpdate([
+      { recordId: 'r1', fields: { title: 'foo' } },
+      { recordId: 'r2', fields: { title: 'bar' } },
+    ]);
+    expect(result.every(r => !r.success)).toBe(true);
+    expect(result.every(r => 'error' in r && r.error.includes('permission denied'))).toBe(true);
+  });
+
+  it('maps thrown error to per-record failure', async () => {
+    mockRequestUrl.mockRejectedValueOnce(new Error('network down'));
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const result = await c.batchUpdate([{ recordId: 'r1', fields: { x: 1 } }]);
+    expect(result).toEqual([{ success: false, recordId: 'r1', error: 'network down' }]);
+  });
+
+  it('updateRecord delegates to batchUpdate and unwraps to single SyncResult', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200, json: [{ id: 'r1', title: 'foo' }], headers: {},
+    });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const result = await c.updateRecord('r1', { title: 'foo' });
+    expect(result).toMatchObject({ success: true, recordId: 'r1' });
+  });
+});

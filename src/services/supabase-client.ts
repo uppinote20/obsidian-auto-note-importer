@@ -31,7 +31,7 @@ import type {
   SupabaseCredential,
   SyncResult,
 } from '../types';
-import { normalizeServerUrl, extractApiErrorDetails } from '../utils';
+import { normalizeServerUrl, extractApiErrorDetails, buildBatchFailures, formatBatchLimitError } from '../utils';
 import { supabaseFieldMapper } from './supabase-field-mapper';
 import { SupabaseMetadataCache } from './supabase-metadata-cache';
 import { RateLimiter } from './rate-limiter';
@@ -210,8 +210,59 @@ export class SupabaseClient implements DatabaseProvider {
     return result;
   }
 
-  async batchUpdate(_updates: BatchUpdate[]): Promise<SyncResult[]> {
+  async batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]> {
     this.validateConfig();
-    throw new Error('Implemented in Task 17');
+    if (updates.length === 0) return [];
+
+    if (updates.length > SUPABASE_DEFAULT_BATCH_SIZE) {
+      return buildBatchFailures(updates, formatBatchLimitError(SUPABASE_DEFAULT_BATCH_SIZE));
+    }
+
+    try {
+      const projectUrl = this.getProjectUrl();
+      const tableName = this.config.tableId;  // upsert always targets base table, not view
+      const pk = this.config.primaryKeyColumn;
+      const url = `${projectUrl}/rest/v1/${tableName}?on_conflict=${encodeURIComponent(pk)}`;
+
+      const body = updates.map(u => ({ [pk]: u.recordId, ...u.fields }));
+
+      const response = await this.rateLimiter.execute(() =>
+        requestUrl({
+          url,
+          method: 'POST',
+          headers: {
+            ...this.buildHeaders({ write: true }),
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=representation',
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+
+      if (response.status !== 200 && response.status !== 201) {
+        return buildBatchFailures(updates, `Failed to batch update Supabase rows: ${extractApiErrorDetails(response)}`);
+      }
+
+      const returned = (response.json as Record<string, unknown>[] | undefined) ?? [];
+      const returnedByPk = new Map<string, Record<string, unknown>>();
+      for (const row of returned) {
+        const v = row[pk];
+        if (v !== undefined && v !== null) returnedByPk.set(String(v), row);
+      }
+
+      return updates.map<SyncResult>(u => {
+        const row = returnedByPk.get(u.recordId);
+        if (row) {
+          return { success: true, recordId: u.recordId, updatedFields: row };
+        }
+        return {
+          success: false,
+          recordId: u.recordId,
+          error: 'Row not updated - RLS denial or PK missing.',
+        };
+      });
+    } catch (error) {
+      return buildBatchFailures(updates, error instanceof Error ? error.message : 'Unknown error occurred');
+    }
   }
 }
