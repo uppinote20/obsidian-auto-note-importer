@@ -83,3 +83,25 @@ export const SEATABLE_BASE_TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
  * does not include an explicit expiry.
  */
 export const SEATABLE_BASE_TOKEN_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Default PostgreSQL schema exposed by Supabase. Most user tables live here.
+ */
+export const SUPABASE_DEFAULT_SCHEMA = 'public';
+
+/**
+ * Maximum rows per batchUpdate (PostgREST POST upsert).
+ * PostgREST itself accepts more; we cap to keep single transactions short.
+ */
+export const SUPABASE_DEFAULT_BATCH_SIZE = 100;
+
+/**
+ * Default page size for fetchNotes Range-header pagination.
+ * PostgREST caps a single response at db-pool max-rows (default 1000).
+ */
+export const SUPABASE_PAGE_SIZE = 1000;
+
+/**
+ * TTL for the cached OpenAPI spec per (credential, schema) tuple.
+ */
+export const SUPABASE_METADATA_TTL_MS = 10 * 60 * 1000;
