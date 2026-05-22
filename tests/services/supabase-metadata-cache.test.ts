@@ -119,3 +119,113 @@ describe('SupabaseMetadataCache.getTables and getViews', () => {
     expect(cache.getViews(emptySpec as never)).toEqual([]);
   });
 });
+
+describe('SupabaseMetadataCache.detectPrimaryKey', () => {
+  it('returns column with pk marker', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = await cache.getSpec(cred, 'public');
+    expect(cache.detectPrimaryKey(spec, 'notes')).toBe('id');
+  });
+
+  it('falls back to required[0] when no pk marker present', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        widgets: {
+          required: ['widget_uid', 'name'],
+          properties: {
+            widget_uid: { type: 'string' },
+            name: { type: 'string' },
+          },
+        },
+      },
+    } as never;
+    expect(cache.detectPrimaryKey(spec, 'widgets')).toBe('widget_uid');
+  });
+
+  it('falls back to id then uuid', () => {
+    const cache = new SupabaseMetadataCache();
+    const specA = {
+      definitions: {
+        t: { properties: { id: { type: 'integer' }, name: { type: 'string' } } },
+      },
+    } as never;
+    expect(cache.detectPrimaryKey(specA, 't')).toBe('id');
+
+    const specB = {
+      definitions: {
+        t: { properties: { uuid: { type: 'string', format: 'uuid' }, label: { type: 'string' } } },
+      },
+    } as never;
+    expect(cache.detectPrimaryKey(specB, 't')).toBe('uuid');
+  });
+
+  it('returns null when no PK can be detected', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        t: { properties: { name: { type: 'string' }, label: { type: 'string' } } },
+      },
+    } as never;
+    expect(cache.detectPrimaryKey(spec, 't')).toBeNull();
+  });
+
+  it('returns null for unknown table', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = { definitions: {} } as never;
+    expect(cache.detectPrimaryKey(spec, 'missing')).toBeNull();
+  });
+});
+
+describe('SupabaseMetadataCache.getColumns', () => {
+  it('returns columns with composed providerType strings', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = await cache.getSpec(cred, 'public');
+    const cols = cache.getColumns(spec, 'notes');
+    expect(cols).toEqual([
+      { name: 'id', providerType: 'string:uuid', isPk: true, default: undefined },
+      { name: 'title', providerType: 'string', isPk: false, default: undefined },
+      { name: 'archived', providerType: 'boolean', isPk: false, default: undefined },
+    ]);
+  });
+
+  it('appends readonly when OpenAPI marks the column readOnly', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        t: {
+          properties: {
+            id: { type: 'integer', readOnly: true },
+            name: { type: 'string' },
+          },
+        },
+      },
+    } as never;
+    const cols = cache.getColumns(spec, 't');
+    expect(cols[0].providerType).toBe('integer:readonly');
+    expect(cols[1].providerType).toBe('string');
+  });
+
+  it('composes array element type into array:string form', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        t: {
+          properties: {
+            tags: { type: 'array', items: { type: 'string' } },
+            counts: { type: 'array', items: { type: 'integer' } },
+          },
+        },
+      },
+    } as never;
+    const cols = cache.getColumns(spec, 't');
+    expect(cols.find(c => c.name === 'tags')?.providerType).toBe('array:string');
+    expect(cols.find(c => c.name === 'counts')?.providerType).toBe('array:integer');
+  });
+
+  it('returns empty array for unknown table', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = { definitions: {} } as never;
+    expect(cache.getColumns(spec, 'missing')).toEqual([]);
+  });
+});
