@@ -57,3 +57,13 @@ export type {
   CustomApiCredential,
 } from './credential.types';
 export { CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from './credential.types';
+
+export type {
+  SupabaseProviderType,
+  SupabaseColumn,
+  SupabaseTable,
+  SupabaseView,
+  SupabaseOpenApiColumnDef,
+  SupabaseOpenApiDefinition,
+  SupabaseOpenApiSpec,
+} from './supabase.types';
