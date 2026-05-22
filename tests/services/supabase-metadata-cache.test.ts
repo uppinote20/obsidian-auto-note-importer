@@ -96,3 +96,26 @@ describe('SupabaseMetadataCache.getSpec', () => {
     expect(mockRequestUrl).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('SupabaseMetadataCache.getTables and getViews', () => {
+  it('classifies definitions with any pk-marked column as tables', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = await cache.getSpec(cred, 'public');
+    const tables = cache.getTables(spec);
+    expect(tables.map(t => t.name)).toEqual(['notes']);
+  });
+
+  it('classifies definitions without pk marker as views', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = await cache.getSpec(cred, 'public');
+    const views = cache.getViews(spec);
+    expect(views.map(v => v.name)).toEqual(['active_notes']);
+  });
+
+  it('returns empty arrays for spec with no definitions', () => {
+    const cache = new SupabaseMetadataCache();
+    const emptySpec = { definitions: {} } as const;
+    expect(cache.getTables(emptySpec as never)).toEqual([]);
+    expect(cache.getViews(emptySpec as never)).toEqual([]);
+  });
+});
