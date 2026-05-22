@@ -120,7 +120,6 @@ describe('provider-registry', () => {
     });
 
     it('should not register pending field type mappers by default', () => {
-      expect(hasFieldTypeMapper('supabase')).toBe(false);
       expect(hasFieldTypeMapper('notion')).toBe(false);
     });
 
@@ -136,7 +135,6 @@ describe('provider-registry', () => {
 
     it('should not register pending credential form renderers by default', () => {
       expect(hasCredentialFormRenderer('notion')).toBe(false);
-      expect(hasCredentialFormRenderer('supabase')).toBe(false);
     });
   });
 
@@ -298,6 +296,16 @@ describe('provider-registry', () => {
 
       expect(firstFactory).not.toHaveBeenCalled();
       expect(secondFactory).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('provider-registry: supabase', () => {
+    it('registers field type mapper under supabase', () => {
+      expect(hasFieldTypeMapper('supabase')).toBe(true);
+    });
+
+    it('registers credential form renderer under supabase', () => {
+      expect(hasCredentialFormRenderer('supabase')).toBe(true);
     });
   });
 

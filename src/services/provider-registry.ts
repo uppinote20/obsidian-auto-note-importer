@@ -30,6 +30,8 @@ import { airtableCredentialFormRenderer } from './airtable-credential-form';
 import { SeaTableClient } from './seatable-client';
 import { seatableFieldMapper } from './seatable-field-mapper';
 import { seatableCredentialFormRenderer } from './seatable-credential-form';
+import { supabaseFieldMapper } from './supabase-field-mapper';
+import { supabaseCredentialFormRenderer } from './supabase-credential-form';
 
 /**
  * Factory signature for creating a provider instance.
@@ -157,3 +159,8 @@ registerProvider('seatable', (credential, config, rateLimiter, _debugMode) => {
 
 registerFieldTypeMapper('seatable', seatableFieldMapper);
 registerCredentialFormRenderer('seatable', seatableCredentialFormRenderer);
+
+// Supabase field mapper and credential form renderer registrations
+// (factory registration is deferred to T19 — requires SharedServices threading)
+registerFieldTypeMapper('supabase', supabaseFieldMapper);
+registerCredentialFormRenderer('supabase', supabaseCredentialFormRenderer);
