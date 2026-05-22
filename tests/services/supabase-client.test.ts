@@ -147,3 +147,39 @@ describe('SupabaseClient.fetchNotes', () => {
     await expect(c.fetchNotes()).rejects.toThrow(/JWT expired/);
   });
 });
+
+describe('SupabaseClient.fetchRecord', () => {
+  it('builds URL with pk=eq.id and limit=1', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1', title: 'A' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const note = await c.fetchRecord('r1');
+    expect(note).toEqual({ id: 'r1', primaryField: 'r1', fields: { id: 'r1', title: 'A' } });
+    const call = mockRequestUrl.mock.calls[0][0];
+    expect(call.url).toContain('/rest/v1/notes?id=eq.r1');
+    expect(call.url).toContain('limit=1');
+  });
+
+  it('returns null for empty result', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    expect(await c.fetchRecord('missing')).toBeNull();
+  });
+
+  it('returns null on 404', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 404, json: {}, headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    expect(await c.fetchRecord('r1')).toBeNull();
+  });
+
+  it('URL-encodes special characters in the id', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    await c.fetchRecord('a/b c');
+    expect(mockRequestUrl.mock.calls[0][0].url).toContain('id=eq.a%2Fb%20c');
+  });
+
+  it('throws when recordId is empty', async () => {
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    await expect(c.fetchRecord('')).rejects.toThrow(/empty/i);
+  });
+});

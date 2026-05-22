@@ -177,9 +177,30 @@ export class SupabaseClient implements DatabaseProvider {
     throw new Error(`Supabase fetchNotes hit MAX_FETCH_ROWS=${MAX_FETCH_ROWS} guard.`);
   }
 
-  async fetchRecord(_recordId: string): Promise<RemoteNote | null> {
+  async fetchRecord(recordId: string): Promise<RemoteNote | null> {
     this.validateConfig();
-    throw new Error('Implemented in Task 16');
+    if (!recordId) throw new Error('Supabase record ID cannot be empty.');
+
+    const projectUrl = this.getProjectUrl();
+    const endpoint = this.getEndpoint();
+    const pk = this.config.primaryKeyColumn;
+    const url = `${projectUrl}/rest/v1/${endpoint}?${encodeURIComponent(pk)}=eq.${encodeURIComponent(recordId)}&limit=1`;
+
+    const response = await this.rateLimiter.execute(() =>
+      requestUrl({ url, method: 'GET', headers: this.buildHeaders() }),
+    );
+
+    if (response.status === 404) return null;
+    if (response.status !== 200) {
+      throw new Error(`Failed to fetch Supabase record ${recordId}: ${extractApiErrorDetails(response)}`);
+    }
+    const rows = (response.json as Record<string, unknown>[] | undefined) ?? [];
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    const idValue = row[pk];
+    if (idValue === undefined || idValue === null) return null;
+    const idString = String(idValue);
+    return { id: idString, primaryField: idString, fields: row };
   }
 
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult> {
