@@ -30,3 +30,5 @@ export {
   buildBatchFailures,
   formatBatchLimitError,
 } from './api-errors';
+
+export { debounce } from './debounce';

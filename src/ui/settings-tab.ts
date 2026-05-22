@@ -9,6 +9,7 @@
  * @handbook 4.4-provider-abstraction
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
+ * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
  */
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
@@ -29,6 +30,7 @@ import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
 import { validateFolderPath } from '../utils/validation';
+import { debounce } from '../utils/debounce';
 
 /**
  * Interface for the plugin that the settings tab needs.
@@ -103,6 +105,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     this.debounceTimer = setTimeout(() => {
       this.display();
     }, delay);
+  }
+
+  /**
+   * Returns a debouncer that saves plugin settings after `delay` ms of input
+   * inactivity. Use for text-input handlers where saving on every keystroke
+   * triggers heavy work (provider reconfigure, command re-register).
+   */
+  private makeFieldDebouncer(delay = 400): () => void {
+    return debounce(() => { void this.plugin.saveSettings(); }, delay);
   }
 
   private configureRefreshButton(button: ExtraButtonComponent, tooltip: string, clearCache: () => void): ExtraButtonComponent {
@@ -274,6 +285,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const keyCell = row.createEl('td');
     const authValue = cred.type === 'airtable' ? cred.apiKey
       : cred.type === 'seatable' ? cred.apiToken
+      : cred.type === 'supabase' ? cred.apiKey
       : null;
     if (authValue) {
       keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(authValue) });
@@ -1024,10 +1036,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       text: 'Loading Supabase schema…',
     });
 
+    // Capture the current render generation so a subsequent display() (tab
+    // switch, cred edit) can mark our callback as stale and skip populating
+    // a now-detached containerEl. Same guard SeaTable uses (line ~843).
+    const gen = this.renderGeneration;
     try {
       const spec = await this.supabaseMetadataCache.getSpec(credential, schema);
+      if (this.renderGeneration !== gen) return;
       this.renderSupabaseDropdowns(containerEl, config, credential, spec);
     } catch (error) {
+      if (this.renderGeneration !== gen) return;
       const message = error instanceof Error ? error.message : 'Check API key or network.';
       new Notice(`Auto Note Importer: Failed to load Supabase schema. ${message}`);
       this.renderSupabaseTextFallback(containerEl, config);
@@ -1165,15 +1183,29 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       text: 'Enter Supabase config manually. Once an API key + project URL are saved and reachable, this card switches to dropdowns automatically.',
     });
 
+    // Debounced save to avoid disk write + provider reconfigure on every
+    // keystroke (fallback path is a raw text input — no dropdown coalescing).
+    const debouncedSave = this.makeFieldDebouncer();
+
     new Setting(containerEl)
       .setName('Schema')
       .setDesc('PostgreSQL schema name. Default "public".')
       .addText(text => text
         .setValue(config.baseId || 'public')
         .setPlaceholder('public')
-        .onChange(async value => {
-          config.baseId = value.trim() || 'public';
-          await this.plugin.saveSettings();
+        .onChange(value => {
+          const trimmed = value.trim() || 'public';
+          if (trimmed === config.baseId) return;
+          // Schema change invalidates every dependent selection — same
+          // cascade reset as the dropdown path so a half-switched config
+          // can't target the wrong table under the new schema.
+          config.baseId = trimmed;
+          config.tableId = '';
+          config.viewId = '';
+          config.primaryKeyColumn = '';
+          config.filenameFieldName = '';
+          config.subfolderFieldName = '';
+          debouncedSave();
         }));
 
     new Setting(containerEl)
@@ -1182,9 +1214,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addText(text => text
         .setValue(config.tableId)
         .setPlaceholder('notes')
-        .onChange(async value => {
+        .onChange(value => {
           config.tableId = value.trim();
-          await this.plugin.saveSettings();
+          debouncedSave();
         }));
 
     new Setting(containerEl)
@@ -1193,9 +1225,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addText(text => text
         .setValue(config.viewId)
         .setPlaceholder('active_notes')
-        .onChange(async value => {
+        .onChange(value => {
           config.viewId = value.trim();
-          await this.plugin.saveSettings();
+          debouncedSave();
         }));
 
     new Setting(containerEl)
@@ -1204,9 +1236,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addText(text => text
         .setValue(config.primaryKeyColumn || '')
         .setPlaceholder('id')
-        .onChange(async value => {
+        .onChange(value => {
           config.primaryKeyColumn = value.trim();
-          await this.plugin.saveSettings();
+          debouncedSave();
         }));
 
     new Setting(containerEl)
@@ -1215,9 +1247,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addText(text => text
         .setValue(config.filenameFieldName)
         .setPlaceholder('title')
-        .onChange(async value => {
+        .onChange(value => {
           config.filenameFieldName = value.trim();
-          await this.plugin.saveSettings();
+          debouncedSave();
         }));
 
     new Setting(containerEl)
@@ -1226,9 +1258,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addText(text => text
         .setValue(config.subfolderFieldName)
         .setPlaceholder('category')
-        .onChange(async value => {
+        .onChange(value => {
           config.subfolderFieldName = value.trim();
-          await this.plugin.saveSettings();
+          debouncedSave();
         }));
   }
 
