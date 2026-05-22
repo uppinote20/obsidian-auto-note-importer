@@ -1158,9 +1158,78 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       });
   }
 
-  private renderSupabaseTextFallback(containerEl: HTMLElement, _config: ConfigEntry): void {
+  private renderSupabaseTextFallback(containerEl: HTMLElement, config: ConfigEntry): void {
     containerEl.empty();
-    containerEl.createEl('p', { text: 'Text fallback implemented in Task 23.' });
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Enter Supabase config manually. Once an API key + project URL are saved and reachable, this card switches to dropdowns automatically.',
+    });
+
+    new Setting(containerEl)
+      .setName('Schema')
+      .setDesc('PostgreSQL schema name. Default "public".')
+      .addText(text => text
+        .setValue(config.baseId || 'public')
+        .setPlaceholder('public')
+        .onChange(async value => {
+          config.baseId = value.trim() || 'public';
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Table')
+      .setDesc('Required. PostgreSQL table name.')
+      .addText(text => text
+        .setValue(config.tableId)
+        .setPlaceholder('notes')
+        .onChange(async value => {
+          config.tableId = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('View (optional)')
+      .setDesc('PostgreSQL view to sync. Leave empty for the full table.')
+      .addText(text => text
+        .setValue(config.viewId)
+        .setPlaceholder('active_notes')
+        .onChange(async value => {
+          config.viewId = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Primary key column')
+      .setDesc('Required for updates. e.g. "id" or "uuid".')
+      .addText(text => text
+        .setValue(config.primaryKeyColumn || '')
+        .setPlaceholder('id')
+        .onChange(async value => {
+          config.primaryKeyColumn = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Filename field')
+      .setDesc('Column whose value becomes the note filename.')
+      .addText(text => text
+        .setValue(config.filenameFieldName)
+        .setPlaceholder('title')
+        .onChange(async value => {
+          config.filenameFieldName = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Subfolder field (optional)')
+      .setDesc('Column used for subfolder organization. Leave empty for flat layout.')
+      .addText(text => text
+        .setValue(config.subfolderFieldName)
+        .setPlaceholder('category')
+        .onChange(async value => {
+          config.subfolderFieldName = value.trim();
+          await this.plugin.saveSettings();
+        }));
   }
 
   private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
