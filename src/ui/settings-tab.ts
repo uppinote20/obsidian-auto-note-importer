@@ -27,6 +27,7 @@ import type { SeaTableTable } from '../services';
 import type { CredentialFormState, CredentialFormRenderer } from '../types';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, SupabaseCredential, SupabaseOpenApiSpec, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
+import { SUPABASE_DEFAULT_SCHEMA } from '../constants';
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
 import { validateFolderPath } from '../utils/validation';
@@ -194,7 +195,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         renderContent: (c) => this.renderSeaTableConnection(c, config, seatableCred),
       });
     } else if (credential.type === 'supabase') {
-      const supabaseCred = credential as SupabaseCredential;
+      const supabaseCred = credential;
       const connected = !!(supabaseCred.apiKey && supabaseCred.projectUrl && config.tableId);
       this.renderSummaryCard(cardStack, {
         sectionId: 'supabase-connection', icon: '\u{1F4E1}', title: 'Supabase Connection',
@@ -1019,11 +1020,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     config: ConfigEntry,
     credential: SupabaseCredential,
   ): Promise<void> {
-    const schema = (config.baseId?.trim() || 'public');
-    if (!config.baseId) {
-      config.baseId = 'public';
-      await this.plugin.saveSettings();
-    }
+    // Read defaults at render time; do NOT persist 'public' as a side effect of
+    // rendering. The schema input's onChange handler is the only place that
+    // writes baseId — opening the settings tab is read-only.
+    const schema = (config.baseId?.trim() || SUPABASE_DEFAULT_SCHEMA);
 
     if (!credential.apiKey?.trim() || !credential.projectUrl?.trim()) {
       this.renderSupabaseTextFallback(containerEl, config);
@@ -1074,10 +1074,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .setName('Schema')
       .setDesc('PostgreSQL schema name. Default is "public".')
       .addText(text => text
-        .setValue(config.baseId || 'public')
-        .setPlaceholder('public')
+        .setValue(config.baseId || SUPABASE_DEFAULT_SCHEMA)
+        .setPlaceholder(SUPABASE_DEFAULT_SCHEMA)
         .onChange(async value => {
-          const trimmed = value.trim() || 'public';
+          const trimmed = value.trim() || SUPABASE_DEFAULT_SCHEMA;
           if (trimmed === config.baseId) return;
           config.baseId = trimmed;
           config.tableId = '';
@@ -1191,10 +1191,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .setName('Schema')
       .setDesc('PostgreSQL schema name. Default "public".')
       .addText(text => text
-        .setValue(config.baseId || 'public')
-        .setPlaceholder('public')
+        .setValue(config.baseId || SUPABASE_DEFAULT_SCHEMA)
+        .setPlaceholder(SUPABASE_DEFAULT_SCHEMA)
         .onChange(value => {
-          const trimmed = value.trim() || 'public';
+          const trimmed = value.trim() || SUPABASE_DEFAULT_SCHEMA;
           if (trimmed === config.baseId) return;
           // Schema change invalidates every dependent selection — same
           // cascade reset as the dropdown path so a half-switched config

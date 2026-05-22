@@ -81,4 +81,21 @@ describe('supabaseFieldMapper enumerations', () => {
     expect(list).toContain('string:readonly');
     expect(list).toContain('object:readonly');
   });
+
+  // Drift protection: every FILENAME_SAFE_TYPES entry must have a corresponding
+  // base type in TYPE_TO_STANDARD. Without this guard, adding a new safe type
+  // (e.g. 'string:time') without registering it as a known type would silently
+  // make it unfilterable (it would be returned as filename-safe but every other
+  // mapper method would treat it as 'unknown').
+  it('every filename-safe type has a TYPE_TO_STANDARD mapping (no silent drift)', () => {
+    const safeTypes = supabaseFieldMapper.getFilenameSafeTypes();
+    for (const t of safeTypes) {
+      // Strip optional :readonly suffix before checking the base mapping.
+      const base = t.endsWith(':readonly') ? t.slice(0, -':readonly'.length) : t;
+      expect(
+        supabaseFieldMapper.mapToStandardType(base),
+        `filename-safe type "${t}" base "${base}" has no TYPE_TO_STANDARD entry`,
+      ).not.toBe('unknown');
+    }
+  });
 });

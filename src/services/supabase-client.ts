@@ -152,9 +152,12 @@ export class SupabaseClient implements DatabaseProvider {
     const projectUrl = this.getProjectUrl();
     const endpoint = this.getEndpoint();
     const pk = this.config.primaryKeyColumn;
-    const url = `${projectUrl}/rest/v1/${endpoint}`;
+    // PostgREST takes the path segment verbatim; tables/views with spaces or
+    // non-ASCII characters need percent-encoding so the URL stays valid.
+    const url = `${projectUrl}/rest/v1/${encodeURIComponent(endpoint)}`;
 
     const allNotes: RemoteNote[] = [];
+    let rawRowsFetched = 0;   // counts every server-returned row, including PK-null skips
     let start = 0;
     while (allNotes.length < MAX_FETCH_ROWS) {
       const end = start + SUPABASE_PAGE_SIZE - 1;
@@ -200,13 +203,17 @@ export class SupabaseClient implements DatabaseProvider {
       const contentRange = (response.headers?.['content-range'] ?? response.headers?.['Content-Range']) as string | undefined;
       const total = parseContentRangeTotal(contentRange);
 
+      rawRowsFetched += rows.length;
+
       // Exit priority:
-      // 1. Total known and reached — stop.
+      // 1. Total known and reached — stop. Compare against rawRowsFetched
+      //    (every server-returned row) not allNotes.length (only PK-non-null
+      //    rows), so a PK-null skip can't trick us into an extra empty page.
       // 2. Server returned zero rows — guaranteed EOF (also infinite-loop guard).
       // 3. Total unknown AND server returned a short page — best-effort EOF guess.
       //    (Skipped when total IS known: a server-side row cap below PAGE_SIZE
       //    would otherwise silently truncate the table.)
-      if (total !== null && allNotes.length >= total) return allNotes;
+      if (total !== null && rawRowsFetched >= total) return allNotes;
       if (rows.length === 0) return allNotes;
       if (total === null && rows.length < SUPABASE_PAGE_SIZE) return allNotes;
       start += rows.length;
@@ -225,7 +232,7 @@ export class SupabaseClient implements DatabaseProvider {
     // concurrent remote edits.
     const endpoint = this.config.tableId;
     const pk = this.config.primaryKeyColumn;
-    const url = `${projectUrl}/rest/v1/${endpoint}?${encodeURIComponent(pk)}=eq.${encodeURIComponent(recordId)}&limit=1`;
+    const url = `${projectUrl}/rest/v1/${encodeURIComponent(endpoint)}?${encodeURIComponent(pk)}=eq.${encodeURIComponent(recordId)}&limit=1`;
 
     const response = await this.rateLimiter.execute(() =>
       requestUrl({ url, method: 'GET', headers: this.buildHeaders() }),
@@ -280,7 +287,7 @@ export class SupabaseClient implements DatabaseProvider {
       const tableName = this.config.tableId;  // upsert always targets base table, not view
       const pk = this.config.primaryKeyColumn;
       const schema = this.getSchema();
-      const url = `${projectUrl}/rest/v1/${tableName}?on_conflict=${encodeURIComponent(pk)}`;
+      const url = `${projectUrl}/rest/v1/${encodeURIComponent(tableName)}?on_conflict=${encodeURIComponent(pk)}`;
 
       // Base-table column set (writable only) lets us filter out GENERATED
       // columns and view-derived joins that frontmatter may carry but the
@@ -298,6 +305,12 @@ export class SupabaseClient implements DatabaseProvider {
         return { ...filtered, [pk]: u.recordId };
       });
 
+      // `return=representation` always on: the conflict-resolver and the
+      // bidirectional sync flow both rely on `SyncResult.updatedFields` to
+      // pull server-computed values (defaults, generated columns) back into
+      // the local note. A push-only optimization to `return=minimal` would
+      // require plumbing the orchestrator mode through to the provider and
+      // is tracked separately rather than here.
       const response = await this.rateLimiter.execute(() =>
         requestUrl({
           url,

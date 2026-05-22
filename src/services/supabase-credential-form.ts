@@ -40,12 +40,16 @@ function decodeJwtPayload(token: string): { role?: string } | null {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   try {
-    const padded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const decoded =
-      typeof atob === 'function'
-        ? atob(padded)
-        : Buffer.from(padded, 'base64').toString('binary');
-    return JSON.parse(decoded);
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    // `atob` returns a binary string where each character holds one byte; if
+    // the payload contains UTF-8 multi-byte characters (Unicode display names,
+    // non-ASCII custom claims) the resulting string corrupts the JSON. Route
+    // through TextDecoder so multi-byte sequences are decoded correctly.
+    if (typeof atob === 'function') {
+      const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+    return JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
   } catch {
     return null;
   }
