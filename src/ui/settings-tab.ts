@@ -16,6 +16,7 @@ import type { ExtraButtonComponent, Plugin } from "obsidian";
 import {
   FieldCache,
   SeaTableMetadataCache,
+  SupabaseMetadataCache,
   getFieldTypeMapper,
   hasFieldTypeMapper,
   getCredentialFormRenderer,
@@ -23,7 +24,7 @@ import {
 } from '../services';
 import type { SeaTableTable } from '../services';
 import type { CredentialFormState, CredentialFormRenderer } from '../types';
-import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
+import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, SupabaseCredential, SupabaseOpenApiSpec, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
@@ -44,6 +45,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: SettingsPlugin;
   private fieldCache: FieldCache;
   private seatableMetadataCache: SeaTableMetadataCache;
+  private supabaseMetadataCache: SupabaseMetadataCache;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -59,7 +61,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   // Both connection-card ids are seeded so whichever provider's card
   // renders for the active credential starts expanded; the inactive one
   // is harmless (no card = no element to apply the class to).
-  private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection']);
+  private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection', 'supabase-connection']);
   private pendingDeleteConfigId: string | null = null;
   private pendingDeleteCredentialId: string | null = null;
 
@@ -68,11 +70,13 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     plugin: SettingsPlugin,
     fieldCache: FieldCache,
     seatableMetadataCache: SeaTableMetadataCache,
+    supabaseMetadataCache: SupabaseMetadataCache,
   ) {
     super(app, plugin);
     this.plugin = plugin;
     this.fieldCache = fieldCache;
     this.seatableMetadataCache = seatableMetadataCache;
+    this.supabaseMetadataCache = supabaseMetadataCache;
   }
 
   /**
@@ -177,6 +181,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         summary: this.getConnectionSummary(config),
         badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
         renderContent: (c) => this.renderSeaTableConnection(c, config, seatableCred),
+      });
+    } else if (credential.type === 'supabase') {
+      const supabaseCred = credential as SupabaseCredential;
+      const connected = !!(supabaseCred.apiKey && supabaseCred.projectUrl && config.tableId);
+      this.renderSummaryCard(cardStack, {
+        sectionId: 'supabase-connection', icon: '\u{1F4E1}', title: 'Supabase Connection',
+        summary: this.getConnectionSummary(config),
+        badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
+        renderContent: (c) => { void this.renderSupabaseConnection(c, config, supabaseCred); },
       });
     }
 
@@ -985,6 +998,56 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           config.subfolderFieldName = value.trim();
           await this.plugin.saveSettings();
         }));
+  }
+
+  // ─── Supabase Connection ───────────────────────────────────────────
+
+  private async renderSupabaseConnection(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SupabaseCredential,
+  ): Promise<void> {
+    const schema = (config.baseId?.trim() || 'public');
+    if (!config.baseId) {
+      config.baseId = 'public';
+      await this.plugin.saveSettings();
+    }
+
+    if (!credential.apiKey?.trim() || !credential.projectUrl?.trim()) {
+      this.renderSupabaseTextFallback(containerEl, config);
+      return;
+    }
+
+    containerEl.empty();
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Loading Supabase schema…',
+    });
+
+    try {
+      const spec = await this.supabaseMetadataCache.getSpec(credential, schema);
+      this.renderSupabaseDropdowns(containerEl, config, credential, spec);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Check API key or network.';
+      new Notice(`Auto Note Importer: Failed to load Supabase schema. ${message}`);
+      this.renderSupabaseTextFallback(containerEl, config);
+    }
+  }
+
+  // STUBS - filled in by T22 and T23
+  private renderSupabaseDropdowns(
+    containerEl: HTMLElement,
+    _config: ConfigEntry,
+    _credential: SupabaseCredential,
+    _spec: SupabaseOpenApiSpec,
+  ): void {
+    containerEl.empty();
+    containerEl.createEl('p', { text: 'Dropdowns implemented in Task 22.' });
+  }
+
+  private renderSupabaseTextFallback(containerEl: HTMLElement, _config: ConfigEntry): void {
+    containerEl.empty();
+    containerEl.createEl('p', { text: 'Text fallback implemented in Task 23.' });
   }
 
   private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {

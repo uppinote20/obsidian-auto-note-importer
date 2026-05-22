@@ -65,6 +65,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       this,
       this.fieldCache,
       this.seatableMetadataCache,
+      this.supabaseMetadataCache,
     );
     this.addSettingTab(this.settingTab);
   }
