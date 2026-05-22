@@ -13,9 +13,11 @@
  * @tested e2e:tests/e2e/run-supabase-e2e.mjs
  */
 
+import { requestUrl } from 'obsidian';
 import {
   SUPABASE_DEFAULT_BATCH_SIZE,
   SUPABASE_DEFAULT_SCHEMA,
+  SUPABASE_PAGE_SIZE,
 } from '../constants';
 import type {
   BatchUpdate,
@@ -29,7 +31,7 @@ import type {
   SupabaseCredential,
   SyncResult,
 } from '../types';
-import { normalizeServerUrl } from '../utils';
+import { normalizeServerUrl, extractApiErrorDetails } from '../utils';
 import { supabaseFieldMapper } from './supabase-field-mapper';
 import { SupabaseMetadataCache } from './supabase-metadata-cache';
 import { RateLimiter } from './rate-limiter';
@@ -39,6 +41,16 @@ const SUPABASE_CAPABILITIES: ProviderCapabilities = {
   hasComputedFields: true,
   batchUpdateMaxSize: SUPABASE_DEFAULT_BATCH_SIZE,
 };
+
+const MAX_FETCH_ROWS = 1_000_000;
+
+function parseContentRangeTotal(header: string | undefined): number | null {
+  if (!header) return null;
+  const match = header.match(/\/(\d+|\*)$/);
+  if (!match || match[1] === '*') return null;
+  const n = parseInt(match[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
 
 export class SupabaseClient implements DatabaseProvider {
   readonly providerType: CredentialType = 'supabase';
@@ -123,7 +135,46 @@ export class SupabaseClient implements DatabaseProvider {
 
   async fetchNotes(): Promise<RemoteNote[]> {
     this.validateConfig();
-    throw new Error('Implemented in Task 15');
+    const projectUrl = this.getProjectUrl();
+    const endpoint = this.getEndpoint();
+    const pk = this.config.primaryKeyColumn;
+    const url = `${projectUrl}/rest/v1/${endpoint}`;
+
+    const allNotes: RemoteNote[] = [];
+    let start = 0;
+    while (allNotes.length < MAX_FETCH_ROWS) {
+      const end = start + SUPABASE_PAGE_SIZE - 1;
+      const response = await this.rateLimiter.execute(() =>
+        requestUrl({
+          url,
+          method: 'GET',
+          headers: {
+            ...this.buildHeaders(),
+            'Range-Unit': 'items',
+            'Range': `${start}-${end}`,
+          },
+        }),
+      );
+
+      if (response.status !== 200 && response.status !== 206) {
+        throw new Error(`Failed to fetch Supabase rows: ${extractApiErrorDetails(response)}`);
+      }
+
+      const rows = (response.json as Record<string, unknown>[] | undefined) ?? [];
+      for (const row of rows) {
+        const idValue = row[pk];
+        if (idValue === undefined || idValue === null) continue;
+        const idString = String(idValue);
+        allNotes.push({ id: idString, primaryField: idString, fields: row });
+      }
+
+      const contentRange = (response.headers?.['content-range'] ?? response.headers?.['Content-Range']) as string | undefined;
+      const total = parseContentRangeTotal(contentRange);
+      if (rows.length < SUPABASE_PAGE_SIZE) return allNotes;
+      if (total !== null && allNotes.length >= total) return allNotes;
+      start += rows.length;
+    }
+    throw new Error(`Supabase fetchNotes hit MAX_FETCH_ROWS=${MAX_FETCH_ROWS} guard.`);
   }
 
   async fetchRecord(_recordId: string): Promise<RemoteNote | null> {

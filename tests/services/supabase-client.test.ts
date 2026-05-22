@@ -89,3 +89,61 @@ describe('SupabaseClient validateConfig (via fetchNotes)', () => {
     await expect(c.fetchNotes()).rejects.toThrow(/primary key/i);
   });
 });
+
+describe('SupabaseClient.fetchNotes', () => {
+  it('builds URL with table and PostgREST pagination headers', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200, json: [{ id: 'r1', title: 'A' }],
+      headers: { 'content-range': '0-0/1' },
+    });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const notes = await c.fetchNotes();
+    expect(notes).toEqual([{ id: 'r1', primaryField: 'r1', fields: { id: 'r1', title: 'A' } }]);
+    const call = mockRequestUrl.mock.calls[0][0];
+    expect(call.url).toBe('https://abc.supabase.co/rest/v1/notes');
+    expect(call.headers.Range).toMatch(/0-/);
+    expect(call.headers['Range-Unit']).toBe('items');
+  });
+
+  it('uses viewId as endpoint when set', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig({ viewId: 'active_notes' }), new RateLimiter(), new SupabaseMetadataCache());
+    await c.fetchNotes();
+    expect(mockRequestUrl.mock.calls[0][0].url).toContain('/rest/v1/active_notes');
+  });
+
+  it('attaches Accept-Profile for non-public schemas', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig({ baseId: 'app' }), new RateLimiter(), new SupabaseMetadataCache());
+    await c.fetchNotes();
+    expect(mockRequestUrl.mock.calls[0][0].headers['Accept-Profile']).toBe('app');
+  });
+
+  it('paginates until Content-Range total reached', async () => {
+    const rows1 = Array.from({ length: 1000 }, (_, i) => ({ id: `r${i}` }));
+    const rows2 = [{ id: 'r1000' }];
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 200, json: rows1, headers: { 'content-range': '0-999/1001' } })
+      .mockResolvedValueOnce({ status: 200, json: rows2, headers: { 'content-range': '1000-1000/1001' } });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    const notes = await c.fetchNotes();
+    expect(notes).toHaveLength(1001);
+  });
+
+  it('uses primaryKeyColumn value as RemoteNote id and primaryField', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200, json: [{ uuid: 'u-1', title: 'A' }], headers: {},
+    });
+    const c = new SupabaseClient(cred, makeConfig({ primaryKeyColumn: 'uuid' }), new RateLimiter(), new SupabaseMetadataCache());
+    const notes = await c.fetchNotes();
+    expect(notes[0]).toEqual({ id: 'u-1', primaryField: 'u-1', fields: { uuid: 'u-1', title: 'A' } });
+  });
+
+  it('throws on HTTP error with PostgREST error detail', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 401, json: { code: 'PGRST301', message: 'JWT expired' }, headers: {},
+    });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), new SupabaseMetadataCache());
+    await expect(c.fetchNotes()).rejects.toThrow(/JWT expired/);
+  });
+});
