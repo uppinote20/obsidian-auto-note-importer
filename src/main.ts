@@ -13,7 +13,7 @@
 import { Plugin, normalizePath } from "obsidian";
 import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
 import { DEFAULT_SETTINGS, CREDENTIAL_TYPE_LABELS } from './types';
-import { FieldCache, SeaTableMetadataCache } from './services';
+import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache } from './services';
 import { ConfigManager } from './core';
 import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
@@ -30,6 +30,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
   configManager!: ConfigManager;
   fieldCache!: FieldCache;
   seatableMetadataCache!: SeaTableMetadataCache;
+  supabaseMetadataCache!: SupabaseMetadataCache;
   private commandFingerprint = '';
 
   async onload() {
@@ -44,11 +45,13 @@ export default class AutoNoteImporterPlugin extends Plugin {
   private initializeServices(): void {
     this.fieldCache = new FieldCache();
     this.seatableMetadataCache = new SeaTableMetadataCache();
+    this.supabaseMetadataCache = new SupabaseMetadataCache();
 
     const shared: SharedServices = {
       rateLimiters: new Map(),
       fieldCache: this.fieldCache,
       seatableMetadataCache: this.seatableMetadataCache,
+      supabaseMetadataCache: this.supabaseMetadataCache,
       frontmatterParser: new FrontmatterParser(this.app),
       statusBarFactory: () => this.addStatusBarItem(),
       getDebugMode: () => this.settings.debugMode,
