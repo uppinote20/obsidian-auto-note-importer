@@ -1037,12 +1037,125 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   // STUBS - filled in by T22 and T23
   private renderSupabaseDropdowns(
     containerEl: HTMLElement,
-    _config: ConfigEntry,
-    _credential: SupabaseCredential,
-    _spec: SupabaseOpenApiSpec,
+    config: ConfigEntry,
+    credential: SupabaseCredential,
+    spec: SupabaseOpenApiSpec,
   ): void {
+    const mapper = getFieldTypeMapper(credential.type);
     containerEl.empty();
-    containerEl.createEl('p', { text: 'Dropdowns implemented in Task 22.' });
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Pick the schema, table, view, and columns to sync. Dropdowns are populated from your Supabase OpenAPI spec.',
+    });
+
+    const tables = this.supabaseMetadataCache.getTables(spec);
+    const views = this.supabaseMetadataCache.getViews(spec);
+
+    // Schema (text input + Refresh)
+    new Setting(containerEl)
+      .setName('Schema')
+      .setDesc('PostgreSQL schema name. Default is "public".')
+      .addText(text => text
+        .setValue(config.baseId || 'public')
+        .setPlaceholder('public')
+        .onChange(async value => {
+          const trimmed = value.trim() || 'public';
+          if (trimmed === config.baseId) return;
+          config.baseId = trimmed;
+          config.tableId = '';
+          config.viewId = '';
+          config.primaryKeyColumn = '';
+          config.filenameFieldName = '';
+          config.subfolderFieldName = '';
+          await this.plugin.saveSettings();
+          this.supabaseMetadataCache.clearForCred(credential.id);
+          this.debounceDisplay();
+        }))
+      .addExtraButton(button => this.configureRefreshButton(button, 'Refresh schema', () => {
+        this.supabaseMetadataCache.clearForCred(credential.id);
+      }));
+
+    // Table dropdown
+    const selectedTable = tables.find(t => t.name === config.tableId);
+    new Setting(containerEl)
+      .setName('Table')
+      .setDesc('Required. PostgreSQL table to sync.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- Select table --');
+        for (const t of tables) dropdown.addOption(t.name, t.name);
+        dropdown.setValue(config.tableId);
+        dropdown.onChange(async value => {
+          config.tableId = value;
+          config.viewId = '';
+          config.filenameFieldName = '';
+          config.subfolderFieldName = '';
+          config.primaryKeyColumn = this.supabaseMetadataCache.detectPrimaryKey(spec, value) ?? '';
+          await this.plugin.saveSettings();
+          this.debounceDisplay();
+        });
+      });
+
+    // View dropdown (optional)
+    new Setting(containerEl)
+      .setName('View (optional)')
+      .setDesc('Filter synced rows by a PostgreSQL view. Leave empty to sync the entire table.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- All rows (no view filter) --');
+        for (const v of views) dropdown.addOption(v.name, v.name);
+        dropdown.setValue(config.viewId);
+        dropdown.setDisabled(!selectedTable);
+        dropdown.onChange(async value => {
+          config.viewId = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    // Primary key (text input, auto-filled + editable)
+    new Setting(containerEl)
+      .setName('Primary key column')
+      .setDesc('Auto-detected from OpenAPI. Override for views, composite PKs, or non-standard names.')
+      .addText(text => text
+        .setValue(config.primaryKeyColumn || '')
+        .setPlaceholder('id')
+        .onChange(async value => {
+          config.primaryKeyColumn = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    // Filename / Subfolder field dropdowns
+    const activeEndpoint = config.viewId || config.tableId;
+    const columns = activeEndpoint ? this.supabaseMetadataCache.getColumns(spec, activeEndpoint) : [];
+    const safeTypes = new Set(mapper.getFilenameSafeTypes());
+    const filenameCandidates = columns.filter(c => safeTypes.has(c.providerType));
+    const safeTypesList = mapper.getFilenameSafeTypes().join(', ');
+
+    new Setting(containerEl)
+      .setName('Filename field')
+      .setDesc(`Column whose value becomes the note filename. Filtered to: ${safeTypesList}.`)
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- Select filename column --');
+        for (const c of filenameCandidates) dropdown.addOption(c.name, c.name);
+        dropdown.setValue(config.filenameFieldName);
+        dropdown.setDisabled(columns.length === 0);
+        dropdown.onChange(async value => {
+          config.filenameFieldName = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName('Subfolder field (optional)')
+      .setDesc('Column used for subfolder organization. Leave empty for flat layout.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- No subfolder column --');
+        for (const c of columns) dropdown.addOption(c.name, c.name);
+        dropdown.setValue(config.subfolderFieldName);
+        dropdown.setDisabled(columns.length === 0);
+        dropdown.onChange(async value => {
+          config.subfolderFieldName = value;
+          await this.plugin.saveSettings();
+        });
+      });
   }
 
   private renderSupabaseTextFallback(containerEl: HTMLElement, _config: ConfigEntry): void {
