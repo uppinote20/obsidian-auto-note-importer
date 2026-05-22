@@ -237,3 +237,34 @@ describe('migrateSettings', () => {
     });
   });
 });
+
+describe('migration: primaryKeyColumn default', () => {
+  it('legacy v1 to v3 fills primaryKeyColumn empty', () => {
+    const result = migrateSettings({ apiKey: 'k' });
+    expect(result?.configs[0].primaryKeyColumn).toBe('');
+  });
+
+  it('v2 to v3 preserves explicit primaryKeyColumn when present', () => {
+    const result = migrateSettings({
+      version: 2,
+      credentials: [{ id: 'c1', name: 'X', type: 'supabase', projectUrl: 'https://x.supabase.co', apiKey: 'k' }],
+      configs: [{
+        id: 'cfg1', name: 'D', credentialId: 'c1',
+        baseId: 'public', tableId: 'notes', viewId: '',
+        primaryKeyColumn: 'uuid',
+      }],
+      activeConfigId: 'cfg1',
+    });
+    expect(result?.configs[0].primaryKeyColumn).toBe('uuid');
+  });
+
+  it('existing v2 config without primaryKeyColumn defaults to empty', () => {
+    const result = migrateSettings({
+      version: 2,
+      credentials: [{ id: 'c1', name: 'A', type: 'airtable', apiKey: 'k' }],
+      configs: [{ id: 'cfg1', name: 'D', credentialId: 'c1', baseId: 'app', tableId: 'tbl', viewId: '' }],
+      activeConfigId: 'cfg1',
+    });
+    expect(result?.configs[0].primaryKeyColumn).toBe('');
+  });
+});

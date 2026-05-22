@@ -29,6 +29,14 @@ export interface ConfigEntry {
   tableId: string;
   viewId: string;
 
+  /**
+   * Primary key column name (Supabase provider only).
+   * Airtable/SeaTable encode the PK as the immutable record id and ignore
+   * this field. Default empty; settings UI auto-fills from OpenAPI on
+   * connect, user can override.
+   */
+  primaryKeyColumn: string;
+
   folderPath: string;
   templatePath: string;
   filenameFieldName: string;
@@ -54,6 +62,7 @@ export const DEFAULT_CONFIG_ENTRY: Omit<ConfigEntry, 'id' | 'name' | 'credential
   baseId: '',
   tableId: '',
   viewId: '',
+  primaryKeyColumn: '',
   folderPath: '',
   templatePath: '',
   filenameFieldName: '',
