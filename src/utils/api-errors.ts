@@ -23,6 +23,10 @@ interface ApiErrorBody {
   error?: string | { message?: string };
   error_msg?: string;
   error_message?: string;
+  code?: string;
+  message?: string;
+  hint?: string;
+  details?: string;
 }
 
 interface ApiErrorResponse {
@@ -34,6 +38,11 @@ interface ApiErrorResponse {
 export function extractApiErrorMessage(response: ApiErrorResponse): string {
   const body = response.json as ApiErrorBody | undefined;
   if (body) {
+    // PostgREST format: code + message (both strings) is unique; check first
+    if (typeof body.code === 'string' && typeof body.message === 'string') {
+      const hint = typeof body.hint === 'string' && body.hint ? ` (hint: ${body.hint})` : '';
+      return `${body.message}${hint} [${body.code}]`;
+    }
     if (typeof body.error_msg === 'string' && body.error_msg) return body.error_msg;
     if (typeof body.error_message === 'string' && body.error_message) return body.error_message;
     if (typeof body.error === 'string' && body.error) return body.error;

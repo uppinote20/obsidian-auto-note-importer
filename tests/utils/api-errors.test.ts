@@ -155,3 +155,38 @@ describe('buildBatchFailures', () => {
     }
   });
 });
+
+describe('PostgREST error format', () => {
+  it('extracts message + code + hint', () => {
+    const response = {
+      status: 403,
+      json: {
+        code: '42501',
+        message: 'permission denied for table notes',
+        details: null,
+        hint: 'Check RLS policies',
+      },
+    };
+    const result = extractApiErrorDetails(response);
+    expect(result).toContain('permission denied for table notes');
+    expect(result).toContain('42501');
+    expect(result).toContain('Check RLS policies');
+  });
+
+  it('handles message-only PostgREST error (no hint)', () => {
+    const response = {
+      status: 409,
+      json: { code: '23505', message: 'duplicate key value' },
+    };
+    expect(extractApiErrorDetails(response)).toContain('duplicate key value');
+    expect(extractApiErrorDetails(response)).toContain('23505');
+  });
+
+  it('does not collide with airtable/seatable format when keys overlap', () => {
+    const response = {
+      status: 400,
+      json: { error: { message: 'Airtable error' } },
+    };
+    expect(extractApiErrorDetails(response)).toContain('Airtable error');
+  });
+});
