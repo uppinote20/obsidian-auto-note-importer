@@ -229,3 +229,44 @@ describe('SupabaseMetadataCache.getColumns', () => {
     expect(cache.getColumns(spec, 'missing')).toEqual([]);
   });
 });
+
+describe('SupabaseMetadataCache invalidation', () => {
+  it('clearForCred drops every schema for a credential', async () => {
+    const cache = new SupabaseMetadataCache();
+    await cache.getSpec(cred, 'public');
+    await cache.getSpec(cred, 'app');
+    cache.clearForCred(cred.id);
+    await cache.getSpec(cred, 'public');
+    await cache.getSpec(cred, 'app');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(4);
+  });
+
+  it('clearForCred leaves other credentials untouched', async () => {
+    const other: SupabaseCredential = { ...cred, id: 'c2' };
+    const cache = new SupabaseMetadataCache();
+    await cache.getSpec(cred, 'public');
+    await cache.getSpec(other, 'public');
+    cache.clearForCred(cred.id);
+    await cache.getSpec(cred, 'public');
+    await cache.getSpec(other, 'public');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(3);
+  });
+
+  it('clear() drops all credentials', async () => {
+    const other: SupabaseCredential = { ...cred, id: 'c2' };
+    const cache = new SupabaseMetadataCache();
+    await cache.getSpec(cred, 'public');
+    await cache.getSpec(other, 'public');
+    cache.clear();
+    await cache.getSpec(cred, 'public');
+    await cache.getSpec(other, 'public');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(4);
+  });
+
+  it('refresh() forces re-fetch', async () => {
+    const cache = new SupabaseMetadataCache();
+    await cache.getSpec(cred, 'public');
+    await cache.refresh(cred, 'public');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+  });
+});
