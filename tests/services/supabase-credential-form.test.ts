@@ -59,3 +59,49 @@ describe('detectKeyType', () => {
     }
   });
 });
+
+import type { Credential, CredentialFormState } from '../../src/types';
+import { supabaseCredentialFormRenderer } from '../../src/services/supabase-credential-form';
+
+describe('supabaseCredentialFormRenderer.build', () => {
+  const state = (overrides: Partial<CredentialFormState> = {}): CredentialFormState => ({
+    projectUrl: 'https://abc.supabase.co',
+    apiKey: 'sb_publishable_xxx',
+    ...overrides,
+  });
+
+  it('builds a SupabaseCredential when all fields are valid', () => {
+    const r = supabaseCredentialFormRenderer.build('My Project', state(), 'c1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.credential).toMatchObject({
+      id: 'c1', name: 'My Project', type: 'supabase',
+      projectUrl: 'https://abc.supabase.co',
+      apiKey: 'sb_publishable_xxx',
+    });
+  });
+
+  it('rejects empty name', () => {
+    expect(supabaseCredentialFormRenderer.build('   ', state(), 'c1').ok).toBe(false);
+  });
+
+  it('rejects empty projectUrl', () => {
+    expect(supabaseCredentialFormRenderer.build('X', state({ projectUrl: '' }), 'c1').ok).toBe(false);
+  });
+
+  it('rejects projectUrl without scheme', () => {
+    expect(supabaseCredentialFormRenderer.build('X', state({ projectUrl: 'abc.supabase.co' }), 'c1').ok).toBe(false);
+  });
+
+  it('strips trailing slash from projectUrl', () => {
+    const r = supabaseCredentialFormRenderer.build('X', state({ projectUrl: 'https://abc.supabase.co/' }), 'c1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    if (r.credential.type !== 'supabase') throw new Error('wrong type');
+    expect(r.credential.projectUrl).toBe('https://abc.supabase.co');
+  });
+
+  it('rejects empty apiKey', () => {
+    expect(supabaseCredentialFormRenderer.build('X', state({ apiKey: '' }), 'c1').ok).toBe(false);
+  });
+});
