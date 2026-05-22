@@ -152,10 +152,10 @@ export class SupabaseMetadataCache {
         return name;
       }
     }
-    if (def.required && def.required.length > 0) {
-      const first = def.required[0];
-      if (def.properties?.[first]) return first;
-    }
+    // No `required[0]` fallback: OpenAPI `required` is an unordered set of
+    // NOT NULL columns, not an ordered PK list. Views never have <pk/>
+    // markers, so trusting `required[0]` would auto-save a wrong PK and
+    // cause on_conflict failures or duplicate rows on every upsert.
     if (def.properties?.['id']) return 'id';
     if (def.properties?.['uuid']) return 'uuid';
     return null;

@@ -38,10 +38,17 @@ interface ApiErrorResponse {
 export function extractApiErrorMessage(response: ApiErrorResponse): string {
   const body = response.json as ApiErrorBody | undefined;
   if (body) {
-    // PostgREST format: code + message (both strings) is unique; check first
+    // PostgREST proper: code + message (both strings) is the most structured form
     if (typeof body.code === 'string' && typeof body.message === 'string') {
       const hint = typeof body.hint === 'string' && body.hint ? ` (hint: ${body.hint})` : '';
       return `${body.message}${hint} [${body.code}]`;
+    }
+    // Kong / GoTrue auth-gateway proxy: top-level `message` (and optional hint) WITHOUT a `code`.
+    // Without this branch, Supabase auth failures fall through to raw response.text
+    // or doubled "HTTP 401" output, hiding the actionable hint.
+    if (typeof body.message === 'string' && body.message) {
+      const hint = typeof body.hint === 'string' && body.hint ? ` (hint: ${body.hint})` : '';
+      return `${body.message}${hint}`;
     }
     if (typeof body.error_msg === 'string' && body.error_msg) return body.error_msg;
     if (typeof body.error_message === 'string' && body.error_message) return body.error_message;

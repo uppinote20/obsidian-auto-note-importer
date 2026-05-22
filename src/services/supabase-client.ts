@@ -121,6 +121,20 @@ export class SupabaseClient implements DatabaseProvider {
     return normalizeServerUrl(this.credential.projectUrl, '');
   }
 
+  private async loadWritableColumns(tableName: string, schema: string): Promise<Set<string> | null> {
+    try {
+      const spec = await this.metadataCache.getSpec(this.credential, schema);
+      const columns = this.metadataCache.getColumns(spec, tableName);
+      return new Set(
+        columns
+          .filter(c => !supabaseFieldMapper.isReadOnly(c.providerType))
+          .map(c => c.name),
+      );
+    } catch {
+      return null;
+    }
+  }
+
   private buildHeaders(opts: { write?: boolean } = {}): Record<string, string> {
     const headers: Record<string, string> = {
       'apikey': this.credential.apiKey,
@@ -156,11 +170,26 @@ export class SupabaseClient implements DatabaseProvider {
         }),
       );
 
+      // 416 Range Not Satisfiable past EOF is normal once we've accumulated
+      // rows — PostgREST 11+ returns it when the requested range starts
+      // beyond the last row (e.g. table size is an exact PAGE_SIZE multiple).
+      if (response.status === 416 && allNotes.length > 0) return allNotes;
+
       if (response.status !== 200 && response.status !== 206) {
         throw new Error(`Failed to fetch Supabase rows: ${extractApiErrorDetails(response)}`);
       }
 
       const rows = (response.json as Record<string, unknown>[] | undefined) ?? [];
+      // Fail fast on the first page when the configured PK column doesn't
+      // appear in the endpoint's rows. Otherwise the loop silently produces
+      // [] and the user sees "0 notes synced" with no hint that the view
+      // is the wrong shape for this PK.
+      if (start === 0 && rows.length > 0 && !(pk in rows[0])) {
+        throw new Error(
+          `Supabase primaryKeyColumn "${pk}" not found in endpoint "${endpoint}". ` +
+          `The configured view/table does not expose that column — pick a different PK or endpoint in settings.`,
+        );
+      }
       for (const row of rows) {
         const idValue = row[pk];
         if (idValue === undefined || idValue === null) continue;
@@ -170,8 +199,16 @@ export class SupabaseClient implements DatabaseProvider {
 
       const contentRange = (response.headers?.['content-range'] ?? response.headers?.['Content-Range']) as string | undefined;
       const total = parseContentRangeTotal(contentRange);
-      if (rows.length < SUPABASE_PAGE_SIZE) return allNotes;
+
+      // Exit priority:
+      // 1. Total known and reached — stop.
+      // 2. Server returned zero rows — guaranteed EOF (also infinite-loop guard).
+      // 3. Total unknown AND server returned a short page — best-effort EOF guess.
+      //    (Skipped when total IS known: a server-side row cap below PAGE_SIZE
+      //    would otherwise silently truncate the table.)
       if (total !== null && allNotes.length >= total) return allNotes;
+      if (rows.length === 0) return allNotes;
+      if (total === null && rows.length < SUPABASE_PAGE_SIZE) return allNotes;
       start += rows.length;
     }
     throw new Error(`Supabase fetchNotes hit MAX_FETCH_ROWS=${MAX_FETCH_ROWS} guard.`);
@@ -182,7 +219,11 @@ export class SupabaseClient implements DatabaseProvider {
     if (!recordId) throw new Error('Supabase record ID cannot be empty.');
 
     const projectUrl = this.getProjectUrl();
-    const endpoint = this.getEndpoint();
+    // Base table — not the view — so conflict detection sees rows that
+    // left the view (status flip, soft-delete). Pulling through a view
+    // would silently report "row not found" and let pushFiles overwrite
+    // concurrent remote edits.
+    const endpoint = this.config.tableId;
     const pk = this.config.primaryKeyColumn;
     const url = `${projectUrl}/rest/v1/${endpoint}?${encodeURIComponent(pk)}=eq.${encodeURIComponent(recordId)}&limit=1`;
 
@@ -218,13 +259,44 @@ export class SupabaseClient implements DatabaseProvider {
       return buildBatchFailures(updates, formatBatchLimitError(SUPABASE_DEFAULT_BATCH_SIZE));
     }
 
+    // PostgREST silently merges duplicate-PK rows server-side; the original
+    // body composition then reported both as "success" against the merged
+    // result, masking the fact that one shadowed the other. Reject the
+    // whole batch explicitly so the user can fix vault duplicates rather
+    // than seeing a silent overwrite.
+    const seen = new Set<string>();
+    for (const u of updates) {
+      if (seen.has(u.recordId)) {
+        return buildBatchFailures(
+          updates,
+          `Duplicate recordId "${u.recordId}" in batch — vault contains multiple notes with the same primaryField. Remove duplicates and retry.`,
+        );
+      }
+      seen.add(u.recordId);
+    }
+
     try {
       const projectUrl = this.getProjectUrl();
       const tableName = this.config.tableId;  // upsert always targets base table, not view
       const pk = this.config.primaryKeyColumn;
+      const schema = this.getSchema();
       const url = `${projectUrl}/rest/v1/${tableName}?on_conflict=${encodeURIComponent(pk)}`;
 
-      const body = updates.map(u => ({ [pk]: u.recordId, ...u.fields }));
+      // Base-table column set (writable only) lets us filter out GENERATED
+      // columns and view-derived joins that frontmatter may carry but the
+      // base table either rejects or doesn't have. Metadata fetch is
+      // best-effort — failures fall through to "send everything".
+      const writableColumns = await this.loadWritableColumns(tableName, schema);
+
+      const body = updates.map(u => {
+        const filtered: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(u.fields)) {
+          if (k === pk) continue;
+          if (writableColumns && !writableColumns.has(k)) continue;
+          filtered[k] = v;
+        }
+        return { ...filtered, [pk]: u.recordId };
+      });
 
       const response = await this.rateLimiter.execute(() =>
         requestUrl({
@@ -244,6 +316,16 @@ export class SupabaseClient implements DatabaseProvider {
       }
 
       const returned = (response.json as Record<string, unknown>[] | undefined) ?? [];
+
+      // Empty representation on a 200/201 means the upsert ran but the RLS
+      // policy denied SELECT (common for write-only audit tables, or WITH
+      // CHECK passing while USING denies). Treat as success for every
+      // requested record — we can't fabricate updatedFields, but at least
+      // the user doesn't see N false failures for N successful writes.
+      if (returned.length === 0) {
+        return updates.map<SyncResult>(u => ({ success: true, recordId: u.recordId }));
+      }
+
       const returnedByPk = new Map<string, Record<string, unknown>>();
       for (const row of returned) {
         const v = row[pk];

@@ -189,4 +189,24 @@ describe('PostgREST error format', () => {
     };
     expect(extractApiErrorDetails(response)).toContain('Airtable error');
   });
+
+  // Kong / GoTrue auth-gateway shape: `message` (and optionally `hint`) with NO `code`.
+  // PostgREST proper always sends `code`+`message`; Supabase's auth proxy doesn't.
+  it('extracts message from Kong-style auth errors (message only, no code)', () => {
+    const response = {
+      status: 401,
+      json: { message: 'Invalid API key', hint: "Double-check your Supabase 'anon' key." },
+    };
+    const result = extractApiErrorMessage(response);
+    expect(result).toContain('Invalid API key');
+    expect(result).toContain('anon');
+  });
+
+  it('still prefers structured PostgREST format when both code and message are present', () => {
+    const response = {
+      status: 409,
+      json: { code: 'PGRST116', message: 'No rows returned' },
+    };
+    expect(extractApiErrorMessage(response)).toContain('PGRST116');
+  });
 });

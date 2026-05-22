@@ -1,3 +1,7 @@
+/**
+ * @covers src/services/supabase-metadata-cache.ts
+ */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SupabaseMetadataCache } from '../../src/services/supabase-metadata-cache';
 import type { SupabaseCredential } from '../../src/types';
@@ -127,20 +131,24 @@ describe('SupabaseMetadataCache.detectPrimaryKey', () => {
     expect(cache.detectPrimaryKey(spec, 'notes')).toBe('id');
   });
 
-  it('falls back to required[0] when no pk marker present', () => {
+  it('does NOT fall back to required[0] (OpenAPI required is an unordered NOT NULL set, picking [0] mis-detects PK for views)', () => {
     const cache = new SupabaseMetadataCache();
     const spec = {
       definitions: {
-        widgets: {
-          required: ['widget_uid', 'name'],
+        active_notes: {
+          // View with two NOT NULL columns and no <pk/> marker.
+          // The first entry of `required` is NOT guaranteed to be the
+          // logical PK — auto-saving it would create on_conflict failures
+          // or duplicate rows on subsequent upserts.
+          required: ['email', 'user_id'],
           properties: {
-            widget_uid: { type: 'string' },
-            name: { type: 'string' },
+            email: { type: 'string' },
+            user_id: { type: 'string', format: 'uuid' },
           },
         },
       },
     } as never;
-    expect(cache.detectPrimaryKey(spec, 'widgets')).toBe('widget_uid');
+    expect(cache.detectPrimaryKey(spec, 'active_notes')).toBeNull();
   });
 
   it('falls back to id then uuid', () => {

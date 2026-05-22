@@ -23,9 +23,14 @@ export interface RemoteNote {
 
 /**
  * Result of a sync operation (discriminated union on `success`).
+ *
+ * `updatedFields` is the server-echoed record after the write (used to pull
+ * formula/generated values back into the local note). It is optional because
+ * a provider may legitimately succeed without being able to return the row
+ * (e.g. Supabase RLS that permits the write but denies SELECT).
  */
 export type SyncResult =
-  | { success: true; recordId: string; updatedFields: Record<string, unknown> }
+  | { success: true; recordId: string; updatedFields?: Record<string, unknown> }
   | { success: false; recordId: string; error: string };
 
 /**

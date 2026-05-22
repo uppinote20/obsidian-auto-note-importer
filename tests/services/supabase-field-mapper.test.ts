@@ -1,3 +1,7 @@
+/**
+ * @covers src/services/supabase-field-mapper.ts
+ */
+
 import { describe, it, expect } from 'vitest';
 import { supabaseFieldMapper } from '../../src/services/supabase-field-mapper';
 
