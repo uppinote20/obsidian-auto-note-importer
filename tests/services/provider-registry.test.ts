@@ -10,8 +10,11 @@ import type {
   SeaTableCredential,
   ConfigEntry,
   DatabaseProvider,
+  SharedServices,
 } from '../../src/types';
 import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
+
+const dummyShared = {} as SharedServices;
 
 function createAirtableCredential(overrides: Partial<AirtableCredential> = {}): AirtableCredential {
   return {
@@ -103,8 +106,11 @@ describe('provider-registry', () => {
       expect(hasProvider('seatable')).toBe(true);
     });
 
+    it('should register supabase factory on module load', () => {
+      expect(hasProvider('supabase')).toBe(true);
+    });
+
     it('should not register pending providers by default', () => {
-      expect(hasProvider('supabase')).toBe(false);
       expect(hasProvider('notion')).toBe(false);
       expect(hasProvider('custom-api')).toBe(false);
     });
@@ -183,7 +189,7 @@ describe('provider-registry', () => {
       const config = createConfig();
       const rateLimiter = new RateLimiter(0);
 
-      const provider = createProvider(credential, config, rateLimiter, false);
+      const provider = createProvider(credential, config, rateLimiter, false, dummyShared);
 
       expect(provider).toBeInstanceOf(AirtableClient);
       expect(provider.providerType).toBe('airtable');
@@ -198,6 +204,7 @@ describe('provider-registry', () => {
         createConfig({ tableId: '0000' }),
         new RateLimiter(0),
         false,
+        dummyShared,
       );
 
       expect(provider).toBeInstanceOf(SeaTableClient);
@@ -217,7 +224,7 @@ describe('provider-registry', () => {
         // by credential type. A new provider registered without a mapper would
         // silently diverge these paths.
         const credential = makeCred();
-        const provider = createProvider(credential, createConfig({ tableId: '0000' }), new RateLimiter(0), false);
+        const provider = createProvider(credential, createConfig({ tableId: '0000' }), new RateLimiter(0), false, dummyShared);
         expect(provider.fieldTypeMapper).toBe(getFieldTypeMapper(credential.type));
         expect(provider.fieldTypeMapper).toBe(getExpectedMapper());
       });
@@ -232,7 +239,7 @@ describe('provider-registry', () => {
       const config = createConfig();
       const rateLimiter = new RateLimiter(0);
 
-      expect(() => createProvider(credential, config, rateLimiter, false)).toThrow(
+      expect(() => createProvider(credential, config, rateLimiter, false, dummyShared)).toThrow(
         /No provider registered for credential type: notion/,
       );
     });
@@ -259,21 +266,21 @@ describe('provider-registry', () => {
       const config = createConfig();
       const rateLimiter = new RateLimiter(0);
 
-      createProvider(credential, config, rateLimiter, true);
+      createProvider(credential, config, rateLimiter, true, dummyShared);
 
       expect(factorySpy).toHaveBeenCalledOnce();
-      expect(factorySpy).toHaveBeenCalledWith(credential, config, rateLimiter, true);
+      expect(factorySpy).toHaveBeenCalledWith(credential, config, rateLimiter, true, dummyShared);
     });
   });
 
   describe('registerProvider', () => {
     it('should add a new factory that hasProvider detects', () => {
       const fakeFactory = vi.fn();
-      expect(hasProvider('supabase')).toBe(false);
+      expect(hasProvider('notion')).toBe(false);
 
-      registerProvider('supabase', fakeFactory);
+      registerProvider('notion', fakeFactory);
 
-      expect(hasProvider('supabase')).toBe(true);
+      expect(hasProvider('notion')).toBe(true);
     });
 
     it('should overwrite an existing factory for the same type', () => {
@@ -292,7 +299,7 @@ describe('provider-registry', () => {
         authValue: 'secret',
       };
 
-      createProvider(credential, createConfig(), new RateLimiter(0), false);
+      createProvider(credential, createConfig(), new RateLimiter(0), false, dummyShared);
 
       expect(firstFactory).not.toHaveBeenCalled();
       expect(secondFactory).toHaveBeenCalledOnce();
