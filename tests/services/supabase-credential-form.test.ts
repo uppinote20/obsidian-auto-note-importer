@@ -105,3 +105,56 @@ describe('supabaseCredentialFormRenderer.build', () => {
     expect(supabaseCredentialFormRenderer.build('X', state({ apiKey: '' }), 'c1').ok).toBe(false);
   });
 });
+
+import { vi, beforeEach } from 'vitest';
+
+const mockRequestUrl = vi.fn();
+vi.mock('obsidian', async () => {
+  const actual = await vi.importActual<typeof import('obsidian')>('obsidian');
+  return { ...actual, requestUrl: (...args: unknown[]) => mockRequestUrl(...args) };
+});
+
+describe('supabaseCredentialFormRenderer.testConnection', () => {
+  beforeEach(() => mockRequestUrl.mockReset());
+
+  const cred: Credential = {
+    id: 'c1', name: 'X', type: 'supabase',
+    projectUrl: 'https://abc.supabase.co', apiKey: 'sb_publishable_xxx',
+  };
+
+  it('returns success with endpoint count when spec is reachable', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200,
+      json: { definitions: { notes: {}, active_notes: {}, tags: {} } },
+    });
+    const r = await supabaseCredentialFormRenderer.testConnection!(cred);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.detail).toContain('3');
+  });
+
+  it('returns failure on 401', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 401,
+      json: { code: 'PGRST301', message: 'JWT expired' },
+    });
+    const r = await supabaseCredentialFormRenderer.testConnection!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('401');
+  });
+
+  it('returns failure on network error', async () => {
+    mockRequestUrl.mockRejectedValueOnce(new Error('network unreachable'));
+    const r = await supabaseCredentialFormRenderer.testConnection!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('network');
+  });
+
+  it('refuses non-supabase credential', async () => {
+    const wrong: Credential = { id: 'c1', name: 'X', type: 'airtable', apiKey: 'k' };
+    const r = await supabaseCredentialFormRenderer.testConnection!(wrong);
+    expect(r.success).toBe(false);
+  });
+});
