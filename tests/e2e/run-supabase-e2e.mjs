@@ -39,10 +39,14 @@
  *        CREATE POLICY "anon_all" ON notes FOR ALL USING (true);
  *   5. If you're using a publishable key (sb_publishable_...) — Supabase's
  *      new key system blocks OpenAPI schema access for publishable keys, so
- *      the harness needs the RPC fallback installed. Print the SQL with:
- *        node -e "console.log(require('./src/constants/supabase-rpc.ts').SUPABASE_RPC_SCHEMA_SQL)"
- *      paste it into Supabase SQL Editor, and Run. Skip this step if you're
- *      using a legacy anon JWT — those still get OpenAPI directly.
+ *      the harness needs the RPC fallback installed. The easiest path is to
+ *      build + load the plugin once, open Settings → Supabase Connection,
+ *      and click "Copy SQL" in the one-time setup banner. For headless
+ *      contributors, extract the SQL via tsx (plain `node -e require(…ts)`
+ *      doesn't work across Node versions):
+ *        npx tsx -e "import('./src/constants/supabase-rpc.ts').then(m => console.log(m.SUPABASE_RPC_SCHEMA_SQL))"
+ *      Paste it into Supabase SQL Editor and Run. Skip this step for legacy
+ *      anon JWTs — those still get OpenAPI directly.
  *
  * What the harness does:
  *   - Adds (or reuses) a dedicated Supabase credential + ConfigEntry

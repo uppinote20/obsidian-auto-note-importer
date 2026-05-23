@@ -281,13 +281,17 @@ ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "anon_all" ON notes FOR ALL USING (true);
 ```
 
-If you'll run e2e (or the plugin itself) with a **publishable key** (`sb_publishable_…`), also install the schema-introspection RPC fallback — Supabase's new key system blocks the OpenAPI endpoint for publishable keys, and the plugin reads schema through this RPC instead:
+If you'll run e2e (or the plugin itself) with a **publishable key** (`sb_publishable_…`), also install the schema-introspection RPC fallback — Supabase's new key system blocks the OpenAPI endpoint for publishable keys, and the plugin reads schema through this RPC instead.
+
+Easiest path: build + load the plugin once, open Settings → Supabase Connection, and click **Copy SQL** in the "One-time setup required" banner. Paste into Supabase SQL Editor and Run.
+
+For automated environments where you can't open the UI, extract the SQL with `tsx` (Node alone can't `require` a `.ts` file on every release):
 
 ```bash
-node -e "console.log(require('./src/constants/supabase-rpc.ts').SUPABASE_RPC_SCHEMA_SQL)"
+npx tsx -e "import('./src/constants/supabase-rpc.ts').then(m => console.log(m.SUPABASE_RPC_SCHEMA_SQL))"
 ```
 
-Paste the output into Supabase SQL Editor and Run. Re-running is safe (`CREATE OR REPLACE`). This step is unnecessary for legacy `anon` JWTs — those still receive OpenAPI directly.
+Re-running is safe (`CREATE OR REPLACE`). This step is unnecessary for legacy `anon` JWTs — those still receive OpenAPI directly.
 
 Add to `.env` at the project root:
 
