@@ -177,6 +177,23 @@ describe('supabaseCredentialFormRenderer.testConnection', () => {
     expect(r.needsSetup).toBeUndefined();
   });
 
+  it('does NOT miscategorize non-JSON body on RPC fallback as rpc-missing', async () => {
+    // OpenAPI 401 → falls through to RPC. RPC returns HTML 502 (proxy).
+    // Without isRpcMissingResponse's type guard, the .code check would
+    // silently fall through. Verify the helper catches it.
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({
+        status: 502,
+        json: undefined,
+        text: () => '<html>502</html>',
+      });
+    const r = await supabaseCredentialFormRenderer.testConnection!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('502');
+  });
+
   it('returns failure on non-401 OpenAPI status (e.g., 500)', async () => {
     mockRequestUrl.mockResolvedValueOnce({
       status: 500,
@@ -222,12 +239,49 @@ describe('supabaseCredentialFormRenderer.verifySetup', () => {
     expect(r.needsSetup).toEqual({ kind: 'supabase-rpc' });
   });
 
-  it('returns plain success when RPC returns 200', async () => {
+  it('returns plain success with detail when RPC returns 200', async () => {
     mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { notes: {} } });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(r.needsSetup).toBeUndefined();
+    expect(r.detail).toBe('RPC reachable.');
+  });
+
+  it('does NOT miscategorize non-JSON body (HTML 502) as rpc-missing', async () => {
+    // Self-hosted PostgREST behind a misconfigured proxy may return
+    // HTML 502 with no JSON body — without isRpcMissingResponse's type
+    // guard, the .code check would silently fall through to "not
+    // missing" and we'd return a generic HTTP error (still correct here)
+    // — but with `rpc.json === undefined` we MUST NOT throw or
+    // miscategorize as success.
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 502,
+      json: undefined,
+      text: () => '<html>502 Bad Gateway</html>',
+    });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('502');
+  });
+
+  it('does NOT miscategorize null rpc.json as rpc-missing', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 500, json: null });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(false);
+  });
+
+  it('does NOT miscategorize array rpc.json as rpc-missing', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 404,
+      json: ['unexpected', 'shape'],
+    });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    // Critical: must surface as failure, NOT as `success: true, needsSetup`.
+    expect(r.error).toContain('404');
   });
 
   it('returns failure on 401', async () => {
