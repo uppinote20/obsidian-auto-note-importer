@@ -1192,7 +1192,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Primary key (text input, auto-filled + editable)
     new Setting(containerEl)
       .setName('Primary key column')
-      .setDesc('Auto-detected from OpenAPI. Override for views, composite PKs, or non-standard names.')
+      .setDesc('Auto-detected from OpenAPI. Override for views or non-standard names. Single column only — composite primary keys are not supported for sync (pick one unique column).')
       .addText(text => text
         .setValue(config.primaryKeyColumn || '')
         .setPlaceholder('id')
@@ -1293,7 +1293,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Primary key column')
-      .setDesc('Required for updates. e.g. "id" or "uuid".')
+      .setDesc('Required for updates. e.g. "id" or "uuid". Single column only — composite PKs not supported.')
       .addText(text => text
         .setValue(config.primaryKeyColumn || '')
         .setPlaceholder('id')

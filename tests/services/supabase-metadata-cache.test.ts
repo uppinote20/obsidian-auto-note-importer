@@ -387,7 +387,10 @@ describe('SupabaseMetadataCache.detectPrimaryKey — RPC x-primary-key extension
     expect(cache.detectPrimaryKey(spec, 't')).toBe('tenant_id');
   });
 
-  it('comma-joins x-primary-key for composite PKs (ordered by kcu.ordinal_position)', () => {
+  it('returns null for composite x-primary-key (sync does not support comma-joined PKs)', () => {
+    // Composite PK is detected (length > 1) but not auto-filled into the UI —
+    // SupabaseClient.validateConfig rejects primaryKeyColumn with a comma, so
+    // surfacing one through detectPrimaryKey would only confuse the user.
     const cache = new SupabaseMetadataCache();
     const spec = {
       definitions: {
@@ -397,7 +400,7 @@ describe('SupabaseMetadataCache.detectPrimaryKey — RPC x-primary-key extension
         },
       },
     } as never;
-    expect(cache.detectPrimaryKey(spec, 't')).toBe('org_id,item_id');
+    expect(cache.detectPrimaryKey(spec, 't')).toBeNull();
   });
 
   it('ignores empty x-primary-key array and falls through to <pk/> marker', () => {
@@ -413,7 +416,7 @@ describe('SupabaseMetadataCache.detectPrimaryKey — RPC x-primary-key extension
     expect(cache.detectPrimaryKey(spec, 't')).toBe('id');
   });
 
-  it('OpenAPI path: comma-joins multiple <pk/> markers in document order (composite PK)', () => {
+  it('OpenAPI path: returns null when multiple <pk/> markers indicate a composite PK', () => {
     const cache = new SupabaseMetadataCache();
     const spec = {
       definitions: {
@@ -425,7 +428,7 @@ describe('SupabaseMetadataCache.detectPrimaryKey — RPC x-primary-key extension
         },
       },
     } as never;
-    expect(cache.detectPrimaryKey(spec, 't')).toBe('org_id,item_id');
+    expect(cache.detectPrimaryKey(spec, 't')).toBeNull();
   });
 });
 

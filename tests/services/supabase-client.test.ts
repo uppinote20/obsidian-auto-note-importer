@@ -615,7 +615,11 @@ describe('SupabaseClient.batchUpdate type-aware coercion (Path A — frontmatter
 });
 
 describe('SupabaseClient.batchUpdate composite PK + view-as-tableId guards (review followup)', () => {
-  it('encodes composite PK on_conflict with comma preserved (not %2C)', async () => {
+  it('rejects composite primaryKeyColumn (comma-separated) with an actionable per-record error', async () => {
+    // The other sync paths (row[pk] lookup, batchUpdate body composition,
+    // fetchRecord URL) all assume primaryKeyColumn is a single column name.
+    // Until composite-PK support lands, fail fast so the user can pick a
+    // single unique column rather than hitting a "PK not found" mid-sync.
     const cache = new SupabaseMetadataCache();
     const spec = {
       definitions: {
@@ -623,7 +627,6 @@ describe('SupabaseClient.batchUpdate composite PK + view-as-tableId guards (revi
           properties: {
             tenant_id: { type: 'string', description: '<pk/>' },
             item_id:   { type: 'string', description: '<pk/>' },
-            title:     { type: 'string' },
           },
           required: ['tenant_id', 'item_id'],
         },
@@ -631,12 +634,13 @@ describe('SupabaseClient.batchUpdate composite PK + view-as-tableId guards (revi
     };
     (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
       .entries.set('c1:public', { spec, fetchedAt: Date.now() });
-    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [], headers: {} });
     const c = new SupabaseClient(cred, makeConfig({ primaryKeyColumn: 'tenant_id,item_id' }), new RateLimiter(), cache);
-    await c.batchUpdate([{ recordId: 'tenant_id,item_id', fields: { title: 't' } }]);
-    const url = mockRequestUrl.mock.calls[0][0].url;
-    expect(url).toContain('on_conflict=tenant_id,item_id');
-    expect(url).not.toContain('on_conflict=tenant_id%2Citem_id');
+    const result = await c.batchUpdate([{ recordId: 'tenant_id,item_id', fields: { title: 't' } }]);
+    expect(result[0].success).toBe(false);
+    if (!result[0].success) {
+      expect(result[0].error).toMatch(/composite primary key/i);
+    }
+    expect(mockRequestUrl).not.toHaveBeenCalled();
   });
 
   it('returns explicit batch failure when writableColumns is empty (likely a non-updatable view as tableId)', async () => {

@@ -108,6 +108,17 @@ export class SupabaseClient implements DatabaseProvider {
     if (!this.config.primaryKeyColumn?.trim()) {
       throw new Error('Supabase primary key column must be set.');
     }
+    // Composite primary keys are detected (and the on_conflict URL parameter
+    // would encode them correctly), but every other sync path — row[pk]
+    // lookup, batchUpdate body composition, fetchRecord URL — assumes
+    // primaryKeyColumn is a single column name. Fail fast with an actionable
+    // message instead of producing a "PK not found" mid-sync.
+    if (this.config.primaryKeyColumn.includes(',')) {
+      throw new Error(
+        `Composite primary key "${this.config.primaryKeyColumn}" is not supported for sync. ` +
+        `Set primaryKeyColumn to a single unique column (e.g. id or uuid).`,
+      );
+    }
   }
 
   private getSchema(): string {
@@ -333,8 +344,17 @@ export class SupabaseClient implements DatabaseProvider {
   }
 
   async batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]> {
-    this.validateConfig();
     if (updates.length === 0) return [];
+
+    // validateConfig may throw on misconfiguration (e.g. composite PK before
+    // sync support lands) — surface that as a per-record SyncResult failure
+    // instead of an unhandled rejection so the user sees an actionable Notice
+    // and the sync orchestrator's "X synced, Y errors" counter is accurate.
+    try {
+      this.validateConfig();
+    } catch (error) {
+      return buildBatchFailures(updates, error instanceof Error ? error.message : 'Invalid Supabase config');
+    }
 
     if (updates.length > SUPABASE_DEFAULT_BATCH_SIZE) {
       return buildBatchFailures(updates, formatBatchLimitError(SUPABASE_DEFAULT_BATCH_SIZE));

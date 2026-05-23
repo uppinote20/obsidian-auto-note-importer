@@ -261,24 +261,29 @@ export class SupabaseMetadataCache {
       | undefined;
     if (!def) return null;
 
-    // RPC fallback path: trust the ordered x-primary-key list. For composite
-    // PKs (length > 1), return them comma-joined — SupabaseClient.batchUpdate
-    // and the settings UI text input both accept that form.
+    // RPC fallback path: trust the ordered x-primary-key list.
+    // Composite PKs (length > 1) are detected but not auto-filled — sync
+    // doesn't support them yet (`SupabaseClient.validateConfig` rejects
+    // primaryKeyColumn with a comma). Returning null forces the user to
+    // pick a single unique column manually in the settings UI rather than
+    // seeing an auto-filled value that breaks at sync time.
     const xPk = def['x-primary-key'];
-    if (Array.isArray(xPk) && xPk.length > 0) {
-      return xPk.join(',');
+    if (Array.isArray(xPk)) {
+      if (xPk.length === 1) return xPk[0];
+      if (xPk.length > 1) return null;
     }
 
     // OpenAPI path: PostgREST marks PK columns with <pk/> in the description.
-    // Single-marker tables resolve cleanly; composite PKs would emit multiple
-    // markers — collect them in document order and join.
+    // Single-marker → use it. Multiple markers → composite PK, same null
+    // behavior as the RPC path so the UI doesn't auto-fill an unusable value.
     const markers: string[] = [];
     for (const [name, col] of Object.entries(def.properties ?? {})) {
       if (typeof col.description === 'string' && col.description.includes(PK_MARKER)) {
         markers.push(name);
       }
     }
-    if (markers.length > 0) return markers.join(',');
+    if (markers.length === 1) return markers[0];
+    if (markers.length > 1) return null;
 
     // No `required[0]` fallback: OpenAPI `required` is an unordered set of
     // NOT NULL columns, not an ordered PK list. Views never have <pk/>
