@@ -11,7 +11,11 @@
  */
 
 import { requestUrl } from 'obsidian';
-import { SUPABASE_DEFAULT_SCHEMA, SUPABASE_METADATA_TTL_MS } from '../constants';
+import {
+  SUPABASE_DEFAULT_SCHEMA,
+  SUPABASE_METADATA_TTL_MS,
+  SUPABASE_RPC_SCHEMA_FN,
+} from '../constants';
 import type {
   SupabaseCredential,
   SupabaseColumn,
@@ -21,6 +25,16 @@ import type {
   SupabaseView,
 } from '../types';
 import { extractApiErrorDetails, normalizeServerUrl } from '../utils';
+
+/**
+ * Error subclass thrown when neither OpenAPI nor the RPC fallback can return
+ * a schema spec — used by the settings UI to render the "Run this SQL" banner
+ * specifically (instead of a generic network-failure message).
+ */
+export class SupabaseSchemaRpcMissingError extends Error {
+  readonly kind = 'rpc-missing' as const;
+  constructor(message: string) { super(message); this.name = 'SupabaseSchemaRpcMissingError'; }
+}
 
 interface CacheEntry {
   spec: SupabaseOpenApiSpec;
@@ -93,23 +107,105 @@ export class SupabaseMetadataCache {
     if (!projectUrl) {
       throw new Error('Supabase projectUrl must be set.');
     }
-    const url = `${projectUrl}/rest/v1/`;
-    const response = await requestUrl({
-      url,
-      method: 'GET',
-      headers: buildHeaders(credential, schema),
-    });
 
-    if (response.status !== 200) {
+    // Step 1: try the native OpenAPI endpoint. Works for legacy anon JWT keys
+    // and (server-side) secret keys; new publishable keys get HTTP 401 by
+    // Supabase's intended policy.
+    let response: Awaited<ReturnType<typeof requestUrl>>;
+    try {
+      response = await requestUrl({
+        url: `${projectUrl}/rest/v1/`,
+        method: 'GET',
+        headers: buildHeaders(credential, schema),
+        throw: false,
+      });
+    } catch (e) {
+      // Older Obsidian builds ignore `throw: false` and reject on 4xx/5xx.
+      // Recover the response shape the rest of this method expects.
+      const err = e as { status?: number; headers?: Record<string, string>; json?: unknown; text?: string };
+      if (typeof err.status !== 'number') throw e;
+      response = {
+        status: err.status,
+        headers: err.headers ?? {},
+        json: err.json,
+        text: err.text ?? '',
+        arrayBuffer: new ArrayBuffer(0),
+      } as Awaited<ReturnType<typeof requestUrl>>;
+    }
+
+    if (response.status === 200) {
+      const spec = (response.json ?? {}) as SupabaseOpenApiSpec;
+      if (!spec.definitions) {
+        throw new Error('Supabase OpenAPI response missing definitions.');
+      }
+      this.entries.set(key, { spec, fetchedAt: now });
+      return spec;
+    }
+
+    // Step 2: 401 → publishable-key path. Fall back to the user-installed
+    // SECURITY DEFINER RPC that exposes information_schema in OpenAPI shape.
+    // Any other status is a real error (network, projectUrl typo, etc.).
+    if (response.status !== 401) {
       throw new Error(`Failed to fetch Supabase OpenAPI spec: ${extractApiErrorDetails(response)}`);
     }
 
-    const spec = (response.json ?? {}) as SupabaseOpenApiSpec;
-    if (!spec.definitions) {
-      throw new Error('Supabase OpenAPI response missing definitions.');
-    }
+    const spec = await this.fetchSpecViaRpc(credential, schema, projectUrl);
     this.entries.set(key, { spec, fetchedAt: now });
     return spec;
+  }
+
+  private async fetchSpecViaRpc(
+    credential: SupabaseCredential,
+    schema: string,
+    projectUrl: string,
+  ): Promise<SupabaseOpenApiSpec> {
+    const rpcUrl = `${projectUrl}/rest/v1/rpc/${SUPABASE_RPC_SCHEMA_FN}`;
+    let rpcResponse: Awaited<ReturnType<typeof requestUrl>>;
+    try {
+      rpcResponse = await requestUrl({
+        url: rpcUrl,
+        method: 'POST',
+        headers: {
+          // Reuse the apikey/Authorization/Accept-Profile from buildHeaders
+          // but override Accept — RPC returns plain JSON, not the OpenAPI
+          // media type, and PostgREST returns 406 PGRST107 otherwise.
+          ...buildHeaders(credential, schema),
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ p_schema: schema }),
+        throw: false,
+      });
+    } catch (e) {
+      const err = e as { status?: number; headers?: Record<string, string>; json?: unknown; text?: string };
+      if (typeof err.status !== 'number') throw e;
+      rpcResponse = {
+        status: err.status,
+        headers: err.headers ?? {},
+        json: err.json,
+        text: err.text ?? '',
+        arrayBuffer: new ArrayBuffer(0),
+      } as Awaited<ReturnType<typeof requestUrl>>;
+    }
+
+    if (rpcResponse.status === 404 || rpcResponse.status === 400) {
+      // 404 = function not yet installed in this project.
+      // 400 = some Supabase deployments surface "function does not exist" as 400.
+      throw new SupabaseSchemaRpcMissingError(
+        `Supabase schema introspection unavailable. Run the one-time setup SQL ` +
+        `(Settings → Supabase Connection → "Copy SQL") in your Supabase SQL Editor.`,
+      );
+    }
+
+    if (rpcResponse.status !== 200) {
+      throw new Error(`Failed to fetch Supabase schema via RPC: ${extractApiErrorDetails(rpcResponse)}`);
+    }
+
+    const definitions = rpcResponse.json as Record<string, unknown> | undefined;
+    if (!definitions || typeof definitions !== 'object') {
+      throw new Error('Supabase RPC schema response was not a JSON object.');
+    }
+    return { definitions } as SupabaseOpenApiSpec;
   }
 
   async refresh(credential: SupabaseCredential, schema: string): Promise<void> {

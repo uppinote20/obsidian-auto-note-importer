@@ -3,7 +3,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SupabaseMetadataCache } from '../../src/services/supabase-metadata-cache';
+import {
+  SupabaseMetadataCache,
+  SupabaseSchemaRpcMissingError,
+} from '../../src/services/supabase-metadata-cache';
 import type { SupabaseCredential } from '../../src/types';
 
 const mockRequestUrl = vi.fn();
@@ -91,13 +94,89 @@ describe('SupabaseMetadataCache.getSpec', () => {
     expect(call.headers['Accept-Profile']).toBeUndefined();
   });
 
-  it('throws and does not cache on HTTP failure', async () => {
-    mockRequestUrl.mockResolvedValueOnce({ status: 401, json: { message: 'invalid jwt' }, text: '' });
+  it('throws and does not cache on non-401 HTTP failure', async () => {
+    // 401 now triggers the RPC fallback (publishable-key path). Use 500 to
+    // exercise the "real failure" branch that should still throw.
+    mockRequestUrl.mockResolvedValueOnce({ status: 500, json: { message: 'boom' }, text: '' });
     const cache = new SupabaseMetadataCache();
-    await expect(cache.getSpec(cred, 'public')).rejects.toThrow(/401|invalid/i);
+    await expect(cache.getSpec(cred, 'public')).rejects.toThrow(/500|boom/i);
     mockRequestUrl.mockResolvedValueOnce({ status: 200, json: sampleSpec, text: '' });
     await cache.getSpec(cred, 'public');
     expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('SupabaseMetadataCache RPC fallback (publishable-key path)', () => {
+  it('falls back to RPC when OpenAPI returns 401 and caches the resulting spec', async () => {
+    const rpcDefinitions = {
+      notes: {
+        properties: {
+          id:    { type: 'string', format: 'uuid', description: '<pk/>' },
+          title: { type: 'string' },
+        },
+        required: ['id', 'title'],
+      },
+    };
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: { message: 'Schema introspection restricted' }, text: '' })
+      .mockResolvedValueOnce({ status: 200, json: rpcDefinitions, text: '' });
+
+    const cache = new SupabaseMetadataCache();
+    const spec = await cache.getSpec(cred, 'public');
+    expect(spec.definitions?.notes).toBeTruthy();
+    expect(spec.definitions?.notes.properties?.id.description).toContain('<pk/>');
+
+    // Second call within TTL must hit the cache (no extra request).
+    await cache.getSpec(cred, 'public');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+
+    // RPC call shape: POST /rpc/<fn> with { p_schema }.
+    const rpcCall = mockRequestUrl.mock.calls[1][0];
+    expect(rpcCall.url).toContain('/rest/v1/rpc/ani_supabase_schema');
+    expect(rpcCall.method).toBe('POST');
+    expect(JSON.parse(rpcCall.body)).toEqual({ p_schema: 'public' });
+  });
+
+  it('throws SupabaseSchemaRpcMissingError when RPC returns 404 (function not installed)', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {}, text: '' })
+      .mockResolvedValueOnce({ status: 404, json: { code: 'PGRST202', message: 'function not found' }, text: '' });
+
+    const cache = new SupabaseMetadataCache();
+    await expect(cache.getSpec(cred, 'public')).rejects.toBeInstanceOf(SupabaseSchemaRpcMissingError);
+  });
+
+  it('throws SupabaseSchemaRpcMissingError when RPC returns 400 (function does not exist surfaced as 400)', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {}, text: '' })
+      .mockResolvedValueOnce({ status: 400, json: { message: 'function does not exist' }, text: '' });
+
+    const cache = new SupabaseMetadataCache();
+    await expect(cache.getSpec(cred, 'public')).rejects.toBeInstanceOf(SupabaseSchemaRpcMissingError);
+  });
+
+  it('throws a plain Error when RPC fails for other reasons (e.g., 500)', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {}, text: '' })
+      .mockResolvedValueOnce({ status: 500, json: { message: 'internal error' }, text: '' });
+
+    const cache = new SupabaseMetadataCache();
+    const err = await cache.getSpec(cred, 'public').catch(e => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(SupabaseSchemaRpcMissingError);
+    expect(String(err.message)).toMatch(/500|internal/i);
+  });
+
+  it('forwards Accept-Profile to the RPC call for non-public schemas', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {}, text: '' })
+      .mockResolvedValueOnce({ status: 200, json: { notes: { properties: { id: { type: 'string', description: '<pk/>' } }, required: ['id'] } }, text: '' });
+
+    const cache = new SupabaseMetadataCache();
+    await cache.getSpec(cred, 'app');
+    const rpcCall = mockRequestUrl.mock.calls[1][0];
+    expect(rpcCall.headers['Accept-Profile']).toBe('app');
+    expect(JSON.parse(rpcCall.body)).toEqual({ p_schema: 'app' });
   });
 });
 

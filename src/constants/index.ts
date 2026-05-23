@@ -24,3 +24,8 @@ export {
   SUPABASE_PAGE_SIZE,
   SUPABASE_METADATA_TTL_MS,
 } from './api';
+
+export {
+  SUPABASE_RPC_SCHEMA_FN,
+  SUPABASE_RPC_SCHEMA_SQL,
+} from './supabase-rpc';

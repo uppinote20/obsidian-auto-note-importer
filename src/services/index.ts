@@ -1,7 +1,7 @@
 export { RateLimiter } from './rate-limiter';
 export { FieldCache } from './field-cache';
 export { SeaTableMetadataCache } from './seatable-metadata-cache';
-export { SupabaseMetadataCache } from './supabase-metadata-cache';
+export { SupabaseMetadataCache, SupabaseSchemaRpcMissingError } from './supabase-metadata-cache';
 export type { SeaTableTable, SeaTableColumn, SeaTableView } from './seatable-metadata-cache';
 export { AirtableClient } from './airtable-client';
 export { SeaTableClient } from './seatable-client';

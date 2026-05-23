@@ -18,6 +18,7 @@ import {
   FieldCache,
   SeaTableMetadataCache,
   SupabaseMetadataCache,
+  SupabaseSchemaRpcMissingError,
   getFieldTypeMapper,
   hasFieldTypeMapper,
   getCredentialFormRenderer,
@@ -27,7 +28,7 @@ import type { SeaTableTable } from '../services';
 import type { CredentialFormState, CredentialFormRenderer } from '../types';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, SupabaseCredential, SupabaseOpenApiSpec, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
-import { SUPABASE_DEFAULT_SCHEMA } from '../constants';
+import { SUPABASE_DEFAULT_SCHEMA, SUPABASE_RPC_SCHEMA_SQL } from '../constants';
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
 import { validateFolderPath } from '../utils/validation';
@@ -1046,10 +1047,68 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       this.renderSupabaseDropdowns(containerEl, config, credential, spec);
     } catch (error) {
       if (this.renderGeneration !== gen) return;
+      // The RPC-missing case has its own banner with one-time setup SQL; every
+      // other failure (network, project URL typo, etc.) falls through to the
+      // generic text-input fallback with a Notice.
+      if (error instanceof SupabaseSchemaRpcMissingError) {
+        this.renderSupabaseRpcSetupBanner(containerEl, config, credential);
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Check API key or network.';
       new Notice(`Auto Note Importer: Failed to load Supabase schema. ${message}`);
       this.renderSupabaseTextFallback(containerEl, config);
     }
+  }
+
+  /**
+   * Rendered when the publishable key can read /rest/v1/<table> for data but
+   * cannot read /rest/v1/ for schema introspection (Supabase new key policy)
+   * AND the user has not yet installed the SECURITY DEFINER RPC fallback.
+   *
+   * Shows the one-time setup SQL with a Copy button + a Refresh action that
+   * clears the cache and re-runs the fetch chain. Settled, the card flips
+   * to renderSupabaseDropdowns automatically.
+   */
+  private renderSupabaseRpcSetupBanner(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SupabaseCredential,
+  ): void {
+    containerEl.empty();
+    const banner = containerEl.createDiv({ cls: 'ani-rpc-setup-banner' });
+    banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
+    const desc = banner.createEl('p');
+    desc.setText(
+      'Supabase’s new key system blocks publishable keys from reading the ' +
+      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
+      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
+    );
+
+    const codeBlock = banner.createEl('pre', { cls: 'ani-rpc-setup-sql' });
+    codeBlock.createEl('code', { text: SUPABASE_RPC_SCHEMA_SQL });
+
+    const buttonRow = banner.createDiv({ cls: 'ani-rpc-setup-actions' });
+
+    const copyBtn = buttonRow.createEl('button', { text: 'Copy SQL', cls: 'mod-cta' });
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(SUPABASE_RPC_SCHEMA_SQL);
+        new Notice('Auto Note Importer: SQL copied to clipboard.');
+      } catch {
+        new Notice('Auto Note Importer: Could not access clipboard — select + copy the SQL block manually.');
+      }
+    });
+
+    const refreshBtn = buttonRow.createEl('button', { text: 'I’ve run it — Refresh' });
+    refreshBtn.addEventListener('click', () => {
+      this.supabaseMetadataCache.clearForCred(credential.id);
+      this.debounceDisplay(0);
+    });
+
+    // Manual-entry escape hatch — same fallback rendered for missing-credential case.
+    banner.createEl('p', { cls: 'ani-credential-desc' })
+      .setText('Or enter table/column names manually below:');
+    this.renderSupabaseTextFallback(banner, config);
   }
 
   // STUBS - filled in by T22 and T23
