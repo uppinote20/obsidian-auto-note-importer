@@ -10,7 +10,7 @@
  * @tested tests/services/supabase-credential-form.test.ts
  */
 
-import { Setting, requestUrl } from 'obsidian';
+import { Setting, requestUrl, type RequestUrlResponse } from 'obsidian';
 import type {
   ConnectionTestResult,
   Credential,
@@ -78,6 +78,26 @@ export function detectKeyType(key: string): KeyTypeInfo {
 
 const PROJECT_URL_KEY = 'projectUrl';
 const API_KEY_KEY = 'apiKey';
+
+/**
+ * Detects whether a non-200 PostgREST RPC response indicates the
+ * `ani_supabase_schema` function is not installed.
+ *
+ * Guards against non-JSON response bodies (HTML proxy errors, empty
+ * 502 pages) by checking that `rpc.json` is a plain object before
+ * reading `.code` / `.message`. Without this guard, a `rpc.json` of
+ * `null` / `string` / `array` (Obsidian's requestUrl returns parsed
+ * JSON or undefined; some self-hosted PostgREST setups behind a
+ * misconfigured proxy return HTML 502) would slip through the
+ * `code === 'PGRST202'` check as false and miscategorize the error.
+ */
+function isRpcMissingResponse(rpc: RequestUrlResponse): boolean {
+  const json: unknown = rpc.json;
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return false;
+  const body = json as { code?: string; message?: string };
+  return body.code === 'PGRST202' ||
+    (typeof body.message === 'string' && /function .* does not exist/i.test(body.message));
+}
 
 class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
   readonly type = 'supabase' as const;
@@ -205,10 +225,7 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
         const tableCount = defs && typeof defs === 'object' && !Array.isArray(defs) ? Object.keys(defs).length : 0;
         return { success: true, detail: `Connected via RPC - ${tableCount} endpoints visible` };
       }
-      const body = rpc.json as { code?: string; message?: string } | undefined;
-      const rpcMissing = body?.code === 'PGRST202' ||
-        (typeof body?.message === 'string' && /function .* does not exist/i.test(body.message));
-      if (rpcMissing) {
+      if (isRpcMissingResponse(rpc)) {
         return {
           success: true,
           detail: 'Publishable key authenticates.',
@@ -243,13 +260,10 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
       });
 
       if (rpc.status === 200) {
-        return { success: true };
+        return { success: true, detail: 'RPC reachable.' };
       }
 
-      const body = rpc.json as { code?: string; message?: string } | undefined;
-      const rpcMissing = body?.code === 'PGRST202' ||
-        (typeof body?.message === 'string' && /function .* does not exist/i.test(body.message));
-      if (rpcMissing) {
+      if (isRpcMissingResponse(rpc)) {
         return { success: true, needsSetup: { kind: 'supabase-rpc' } };
       }
 
