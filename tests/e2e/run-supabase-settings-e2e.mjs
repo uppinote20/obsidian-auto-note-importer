@@ -266,6 +266,163 @@ const { results, log, run, test } = createTestHarness({ getTargetId: () => targe
       };
     });
 
+    // ════════════════════════════════════════════════════════════════
+    // Issue #91 — Supabase RPC setup inline banner (state ↔ DOM)
+    // ════════════════════════════════════════════════════════════════
+
+    // RPC branch logic is covered by 28 unit tests in
+    // tests/services/supabase-credential-form.test.ts (testConnection +
+    // verifySetup). These e2e scenarios verify the integration: state
+    // injection → DOM mutation → banner removal on input event. Real
+    // publishable-key + missing-RPC flow validation lives in the PR
+    // manual checklist (must run against a live Supabase project).
+
+    await test('credential form / setupRequirement injection renders inline banner (#91)', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const tab = app.setting.activeTab;
+
+        // Open the Add Credential form with Supabase pre-selected so
+        // renderCredentialAddDetails initializes credentialFormUi.
+        tab.addingCredential = true;
+        tab.addingCredentialType = 'supabase';
+        tab.display();
+        await new Promise(r => setTimeout(r, 200));
+
+        const c = getContainer();
+        const formHost = c.querySelector('.ani-credential-add-details');
+        if (!formHost) return JSON.stringify({ noFormHost: true });
+        if (!tab.credentialFormUi) return JSON.stringify({ noUiState: true });
+
+        const cred = {
+          id: 'e2e-rpc-banner',
+          name: 'E2E RPC Banner',
+          type: 'supabase',
+          projectUrl: 'https://example.supabase.co',
+          apiKey: 'sb_publishable_e2e',
+        };
+
+        // Invoke the same helper testConnection / Save handlers use to
+        // surface the banner; bypass the actual RPC by going through
+        // the render path directly.
+        const host = tab.ensureFormBannerHost(formHost);
+        const banner = tab.renderRpcSetupBannerInForm(host, cred, () => {});
+        tab.credentialFormUi.setupRequirement = { kind: 'supabase-rpc' };
+        tab.credentialFormUi.bannerHost = banner;
+
+        await new Promise(r => setTimeout(r, 100));
+
+        const rendered = formHost.querySelector('.ani-rpc-setup-banner');
+        const sqlBlock = rendered ? rendered.querySelector('.ani-rpc-setup-sql code') : null;
+        const buttons = rendered ? Array.from(rendered.querySelectorAll('button')) : [];
+        const buttonTexts = buttons.map(b => b.textContent || '');
+        const result = {
+          bannerVisible: !!rendered,
+          sqlPresent: !!sqlBlock && (sqlBlock.textContent || '').includes('CREATE OR REPLACE FUNCTION'),
+          buttonTexts,
+          setupKind: tab.credentialFormUi.setupRequirement.kind,
+        };
+
+        // Cleanup form
+        tab.addingCredential = false;
+        tab.display();
+
+        return JSON.stringify(result);
+      })()`, 15000);
+
+      if (r.noFormHost) return { pass: false, detail: 'add-form host not found' };
+      if (r.noUiState) return { pass: false, detail: 'credentialFormUi not initialized on form render' };
+      const hasCopy = (r.buttonTexts || []).some(t => /Copy SQL/i.test(t));
+      const hasVerify = (r.buttonTexts || []).some(t => /Verify/i.test(t));
+      const pass = r.bannerVisible && r.sqlPresent && hasCopy && hasVerify && r.setupKind === 'supabase-rpc';
+      return {
+        pass,
+        detail: `banner=${r.bannerVisible} sql=${r.sqlPresent} buttons=[${(r.buttonTexts || []).join(' | ')}] kind=${r.setupKind}`,
+      };
+    });
+
+    await test('credential form / field input auto-resets banner + re-enables save (#91)', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const p = getPlugin();
+        const tab = app.setting.activeTab;
+
+        tab.addingCredential = true;
+        tab.addingCredentialType = 'supabase';
+        tab.display();
+        await new Promise(r => setTimeout(r, 200));
+
+        const c = getContainer();
+        const formHost = c.querySelector('.ani-credential-add-details');
+        if (!formHost) return JSON.stringify({ noFormHost: true });
+        if (!tab.credentialFormUi) return JSON.stringify({ noUiState: true });
+
+        // Locate the API Key input (password type per renderFields).
+        const apiKeyInput = formHost.querySelector('input[type="password"]');
+        if (!apiKeyInput) return JSON.stringify({ noApiKeyInput: true });
+
+        // Locate the Save button (the only .mod-cta in the form).
+        const saveBtn = formHost.querySelector('button.mod-cta');
+        if (!saveBtn) return JSON.stringify({ noSaveBtn: true });
+
+        const cred = {
+          id: 'e2e-rpc-reset',
+          name: 'E2E Reset',
+          type: 'supabase',
+          projectUrl: 'https://example.supabase.co',
+          apiKey: 'sb_publishable_e2e',
+        };
+
+        // Set up the banner + setupRequirement + saveButton reference.
+        const host = tab.ensureFormBannerHost(formHost);
+        const banner = tab.renderRpcSetupBannerInForm(host, cred, () => {});
+        tab.credentialFormUi.setupRequirement = { kind: 'supabase-rpc' };
+        tab.credentialFormUi.bannerHost = banner;
+        tab.credentialFormUi.saveButton = saveBtn;
+        saveBtn.disabled = true;
+
+        await new Promise(r => setTimeout(r, 50));
+        const beforeReset = {
+          bannerInDom: !!formHost.querySelector('.ani-rpc-setup-banner'),
+          saveDisabled: saveBtn.disabled,
+          kind: tab.credentialFormUi.setupRequirement?.kind || null,
+        };
+
+        // Simulate user typing in the API Key field — dispatch 'input'.
+        const proto = Object.getPrototypeOf(apiKeyInput);
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+        setter.call(apiKeyInput, 'sb_publishable_e2e_changed');
+        apiKeyInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+        await new Promise(r => setTimeout(r, 100));
+        const afterReset = {
+          bannerInDom: !!formHost.querySelector('.ani-rpc-setup-banner'),
+          saveDisabled: saveBtn.disabled,
+          kind: tab.credentialFormUi.setupRequirement || null,
+        };
+
+        // Cleanup form
+        tab.addingCredential = false;
+        tab.display();
+
+        return JSON.stringify({ beforeReset, afterReset });
+      })()`, 15000);
+
+      if (r.noFormHost) return { pass: false, detail: 'add-form host not found' };
+      if (r.noUiState) return { pass: false, detail: 'credentialFormUi not initialized' };
+      if (r.noApiKeyInput) return { pass: false, detail: 'API Key input not found' };
+      if (r.noSaveBtn) return { pass: false, detail: 'Save button not found' };
+
+      const beforeOk = r.beforeReset.bannerInDom && r.beforeReset.saveDisabled && r.beforeReset.kind === 'supabase-rpc';
+      const afterOk = !r.afterReset.bannerInDom && !r.afterReset.saveDisabled && r.afterReset.kind === null;
+      const pass = beforeOk && afterOk;
+      return {
+        pass,
+        detail: `before={banner=${r.beforeReset.bannerInDom} disabled=${r.beforeReset.saveDisabled} kind=${r.beforeReset.kind}} after={banner=${r.afterReset.bannerInDom} disabled=${r.afterReset.saveDisabled} kind=${JSON.stringify(r.afterReset.kind)}}`,
+      };
+    });
+
     // ── Cleanup ──────────────────────────────────────────────────
 
     log('\n=== Cleanup ===');
