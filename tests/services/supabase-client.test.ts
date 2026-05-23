@@ -496,3 +496,72 @@ describe('SupabaseClient.batchUpdate body composition (G1: #1+#2+#5)', () => {
     expect(result[0]).toMatchObject({ success: true, recordId: 'r1' });
   });
 });
+
+describe('SupabaseClient.batchUpdate type-aware coercion (Path A — frontmatter "" → typed empty)', () => {
+  function specWithTypes(): SupabaseMetadataCache {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:       { type: 'string', description: '<pk/>' },
+            title:    { type: 'string' },
+            tags:     { type: 'array', items: { type: 'string' } },
+            meta:     { type: 'string', format: 'jsonb' },
+            count:    { type: 'integer' },
+            active:   { type: 'boolean' },
+            ref:      { type: 'string', format: 'uuid' },
+          },
+          required: ['id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+    return cache;
+  }
+
+  it('coerces frontmatter "" to [] for PostgreSQL array columns (text[], etc.)', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), specWithTypes());
+    await c.batchUpdate([{ recordId: 'r1', fields: { tags: '' } }]);
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0].tags).toEqual([]);
+  });
+
+  it('coerces frontmatter "" to null for jsonb / json columns', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), specWithTypes());
+    await c.batchUpdate([{ recordId: 'r1', fields: { meta: '' } }]);
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0].meta).toBeNull();
+  });
+
+  it('drops frontmatter "" for numeric / boolean / uuid columns (PostgREST would 400)', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), specWithTypes());
+    await c.batchUpdate([{ recordId: 'r1', fields: { count: '', active: '', ref: '' } }]);
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0]).not.toHaveProperty('count');
+    expect(body[0]).not.toHaveProperty('active');
+    expect(body[0]).not.toHaveProperty('ref');
+  });
+
+  it('keeps legitimate "" for text/string columns (user-intended empty string)', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), specWithTypes());
+    await c.batchUpdate([{ recordId: 'r1', fields: { title: '' } }]);
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0].title).toBe('');
+  });
+
+  it('passes non-empty values through unchanged regardless of type', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), specWithTypes());
+    await c.batchUpdate([{ recordId: 'r1', fields: { tags: ['a', 'b'], count: 5, active: true } }]);
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0].tags).toEqual(['a', 'b']);
+    expect(body[0].count).toBe(5);
+    expect(body[0].active).toBe(true);
+  });
+});

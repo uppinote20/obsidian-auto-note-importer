@@ -121,19 +121,43 @@ export class SupabaseClient implements DatabaseProvider {
     return normalizeServerUrl(this.credential.projectUrl, '');
   }
 
-  private async loadWritableColumns(tableName: string, schema: string): Promise<Set<string> | null> {
+  private async loadWritableColumns(tableName: string, schema: string): Promise<Map<string, string> | null> {
     try {
       const spec = await this.metadataCache.getSpec(this.credential, schema);
       const columns = this.metadataCache.getColumns(spec, tableName);
-      return new Set(
-        columns
-          .filter(c => !supabaseFieldMapper.isReadOnly(c.providerType))
-          .map(c => c.name),
-      );
+      const m = new Map<string, string>();
+      for (const c of columns) {
+        if (!supabaseFieldMapper.isReadOnly(c.providerType)) {
+          m.set(c.name, c.providerType);
+        }
+      }
+      return m;
     } catch {
       return null;
     }
   }
+
+  /**
+   * Coerce a frontmatter value into something PostgREST accepts for the
+   * column's type. `note-builder` writes null → '""' (so the field stays
+   * visible in Obsidian frontmatter), but PostgREST rejects empty strings
+   * for non-text columns (text[], jsonb, integer, boolean, etc.).
+   *
+   * Returns the symbol `SKIP_FIELD` when the field should be dropped from
+   * the upsert body entirely (e.g. empty string for a numeric column).
+   */
+  private coerceForSupabase(value: unknown, providerType: string | undefined): unknown {
+    if (value !== '') return value;  // only "" is the problem case
+    if (!providerType) return value;
+    if (providerType.startsWith('array:')) return [];      // empty PostgreSQL array
+    if (providerType.includes(':jsonb') || providerType.includes(':json')) return null;
+    // string/text columns legitimately accept "" — keep it.
+    if (providerType.startsWith('string') && !providerType.includes(':uuid')) return value;
+    // Numeric/boolean/uuid/date/timestamp/etc. can't accept "" — drop the field.
+    return SupabaseClient.SKIP_FIELD;
+  }
+
+  private static readonly SKIP_FIELD = Symbol('skip');
 
   private buildHeaders(opts: { write?: boolean } = {}): Record<string, string> {
     const headers: Record<string, string> = {
@@ -289,10 +313,11 @@ export class SupabaseClient implements DatabaseProvider {
       const schema = this.getSchema();
       const url = `${projectUrl}/rest/v1/${encodeURIComponent(tableName)}?on_conflict=${encodeURIComponent(pk)}`;
 
-      // Base-table column set (writable only) lets us filter out GENERATED
-      // columns and view-derived joins that frontmatter may carry but the
-      // base table either rejects or doesn't have. Metadata fetch is
-      // best-effort — failures fall through to "send everything".
+      // Base-table column type map (writable only) lets us filter out GENERATED
+      // columns + view-derived joins AND coerce frontmatter "" placeholders
+      // (which note-builder emits for null values) back into PostgreSQL-valid
+      // empty values per column type. Metadata fetch is best-effort — failures
+      // fall through to "send everything".
       const writableColumns = await this.loadWritableColumns(tableName, schema);
 
       const body = updates.map(u => {
@@ -300,7 +325,9 @@ export class SupabaseClient implements DatabaseProvider {
         for (const [k, v] of Object.entries(u.fields)) {
           if (k === pk) continue;
           if (writableColumns && !writableColumns.has(k)) continue;
-          filtered[k] = v;
+          const coerced = this.coerceForSupabase(v, writableColumns?.get(k));
+          if (coerced === SupabaseClient.SKIP_FIELD) continue;
+          filtered[k] = coerced;
         }
         return { ...filtered, [pk]: u.recordId };
       });
