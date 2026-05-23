@@ -383,6 +383,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             new Notice(`Auto Note Importer: ${result.error}`);
             return;
           }
+          const gate = await this.verifyCredentialBeforeSave(renderer, result.credential, containerEl);
+          if (gate !== 'proceed') return;
           // Replace the existing credential in-place
           const idx = this.plugin.settings.credentials.findIndex(c => c.id === cred.id);
           if (idx >= 0) {
@@ -494,6 +496,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               new Notice(`Auto Note Importer: ${result.error}`);
               return;
             }
+            const gate = await this.verifyCredentialBeforeSave(renderer, result.credential, containerEl);
+            if (gate !== 'proceed') return;
             this.plugin.settings.credentials.push(result.credential);
             await this.plugin.saveSettings();
             this.addingCredential = false;
@@ -1214,6 +1218,51 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       host = formHostEl.createDiv({ cls: 'ani-rpc-setup-host' });
     }
     return host;
+  }
+
+  /**
+   * Pre-save gate. Calls verifySetup on the credential and returns
+   * - 'proceed' if the credential is ready to persist
+   * - 'blocked' if needsSetup or verify failure — the banner / Notice
+   *   has been surfaced and the caller MUST NOT persist.
+   *
+   * Fails closed: any network failure during verify blocks the save
+   * with a Notice. Silently saving a credential that cannot sync is
+   * worse than a one-extra-click retry.
+   */
+  private async verifyCredentialBeforeSave(
+    renderer: CredentialFormRenderer,
+    credential: Credential,
+    formHostEl: HTMLElement,
+  ): Promise<'proceed' | 'blocked'> {
+    if (!renderer.verifySetup) return 'proceed';
+    try {
+      const result = await renderer.verifySetup(credential);
+      if (!result.success) {
+        new Notice(`Auto Note Importer: Could not verify setup before save — ${result.error}`);
+        return 'blocked';
+      }
+      if (result.needsSetup && credential.type === 'supabase') {
+        const banner = this.renderRpcSetupBannerInForm(
+          this.ensureFormBannerHost(formHostEl),
+          credential,
+          () => this.clearFormSetupRequirement(),
+        );
+        if (this.credentialFormUi) {
+          this.credentialFormUi.setupRequirement = result.needsSetup;
+          this.credentialFormUi.bannerHost = banner;
+          if (this.credentialFormUi.saveButton) {
+            this.credentialFormUi.saveButton.disabled = true;
+          }
+        }
+        return 'blocked';
+      }
+      return 'proceed';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Auto Note Importer: Could not verify setup before save — ${message}`);
+      return 'blocked';
+    }
   }
 
   /**
