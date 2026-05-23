@@ -211,7 +211,8 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
       if (rpcMissing) {
         return {
           success: true,
-          detail: 'Publishable key authenticates — run the setup SQL (settings card) to enable schema introspection.',
+          detail: 'Publishable key authenticates.',
+          needsSetup: { kind: 'supabase-rpc' },
         };
       }
       return { success: false, error: `HTTP ${rpc.status}: ${extractApiErrorMessage(rpc)}` };

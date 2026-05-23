@@ -143,14 +143,38 @@ describe('supabaseCredentialFormRenderer.testConnection', () => {
     expect(r.detail).toContain('RPC');
   });
 
-  it('treats OpenAPI 401 + RPC PGRST202 (missing) as authenticated-but-setup-required success', async () => {
+  it('returns needsSetup on OpenAPI 401 + RPC PGRST202 (publishable + missing RPC)', async () => {
     mockRequestUrl
       .mockResolvedValueOnce({ status: 401, json: {} })
       .mockResolvedValueOnce({ status: 404, json: { code: 'PGRST202', message: 'function ani_supabase_schema does not exist' } });
     const r = await supabaseCredentialFormRenderer.testConnection!(cred);
     expect(r.success).toBe(true);
     if (!r.success) return;
-    expect(r.detail).toContain('setup SQL');
+    expect(r.needsSetup).toEqual({ kind: 'supabase-rpc' });
+    // Detail no longer references "(settings card)" — the UI renders the
+    // inline banner in-place, so the location hint is redundant.
+    expect(r.detail).not.toMatch(/settings card/i);
+  });
+
+  it('omits needsSetup when OpenAPI returns 200 (legacy anon JWT / secret key)', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200,
+      json: { definitions: { notes: {} } },
+    });
+    const r = await supabaseCredentialFormRenderer.testConnection!(cred);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.needsSetup).toBeUndefined();
+  });
+
+  it('omits needsSetup when OpenAPI 401 + RPC 200 (publishable + installed RPC)', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({ status: 200, json: { notes: {} } });
+    const r = await supabaseCredentialFormRenderer.testConnection!(cred);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.needsSetup).toBeUndefined();
   });
 
   it('returns failure on non-401 OpenAPI status (e.g., 500)', async () => {
