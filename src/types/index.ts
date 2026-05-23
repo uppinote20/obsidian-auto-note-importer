@@ -39,6 +39,7 @@ export type {
   CredentialBuildResult,
   ConnectionTestResult,
   CredentialFormRenderer,
+  SetupRequirement,
 } from './provider-settings.types';
 
 export type {
