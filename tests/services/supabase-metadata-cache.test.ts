@@ -375,3 +375,88 @@ describe('SupabaseMetadataCache invalidation', () => {
     expect(mockRequestUrl).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('SupabaseMetadataCache.detectPrimaryKey — RPC x-primary-key extension', () => {
+  it('returns x-primary-key[0] for single-column PK (RPC path)', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        t: { 'x-primary-key': ['tenant_id'], properties: { tenant_id: { type: 'string' } } },
+      },
+    } as never;
+    expect(cache.detectPrimaryKey(spec, 't')).toBe('tenant_id');
+  });
+
+  it('comma-joins x-primary-key for composite PKs (ordered by kcu.ordinal_position)', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        t: {
+          'x-primary-key': ['org_id', 'item_id'],
+          properties: { org_id: { type: 'string' }, item_id: { type: 'string' } },
+        },
+      },
+    } as never;
+    expect(cache.detectPrimaryKey(spec, 't')).toBe('org_id,item_id');
+  });
+
+  it('ignores empty x-primary-key array and falls through to <pk/> marker', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        t: {
+          'x-primary-key': [],
+          properties: { id: { type: 'string', description: '<pk/>' } },
+        },
+      },
+    } as never;
+    expect(cache.detectPrimaryKey(spec, 't')).toBe('id');
+  });
+
+  it('OpenAPI path: comma-joins multiple <pk/> markers in document order (composite PK)', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        t: {
+          properties: {
+            org_id:  { type: 'string', description: '<pk/>' },
+            item_id: { type: 'string', description: '<pk/>' },
+          },
+        },
+      },
+    } as never;
+    expect(cache.detectPrimaryKey(spec, 't')).toBe('org_id,item_id');
+  });
+});
+
+describe('SupabaseMetadataCache.getTables/getViews — RPC x-table-type extension', () => {
+  it('classifies PK-less BASE TABLE via x-table-type (audit/queue tables)', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        audit_log: {
+          'x-table-type': 'BASE TABLE',
+          'x-primary-key': [],
+          properties: { action: { type: 'string' } },  // no <pk/> marker
+        },
+      },
+    } as never;
+    expect(cache.getTables(spec).map((t: { name: string }) => t.name)).toContain('audit_log');
+    expect(cache.getViews(spec).map((v: { name: string }) => v.name)).not.toContain('audit_log');
+  });
+
+  it('classifies VIEW via x-table-type even when properties carry a <pk/> marker', () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        active_notes: {
+          'x-table-type': 'VIEW',
+          'x-primary-key': [],
+          properties: { id: { type: 'string', description: '<pk/>' } },
+        },
+      },
+    } as never;
+    expect(cache.getViews(spec).map((v: { name: string }) => v.name)).toContain('active_notes');
+    expect(cache.getTables(spec).map((t: { name: string }) => t.name)).not.toContain('active_notes');
+  });
+});

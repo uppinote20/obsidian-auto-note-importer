@@ -110,6 +110,17 @@ AS $$
               WHEN c.data_type = 'json' THEN 'json'
               ELSE NULL
             END,
+            -- information_schema.columns.data_type returns the literal
+            -- string 'ARRAY' for every array column regardless of element
+            -- type, so element type isn't recoverable here without joining
+            -- information_schema.element_types. Every array column reports
+            -- providerType 'array:string' through the RPC path; the native
+            -- OpenAPI path emits element-typed variants (array:integer,
+            -- array:boolean, etc.) when available. The mapper handles
+            -- 'array:string' as multi-select and PostgREST parses the wire
+            -- JSON back to the real element type, so upsert correctness is
+            -- unaffected. If filename-safe array types are added later,
+            -- factor this in.
             'items', CASE
               WHEN c.data_type = 'ARRAY' THEN jsonb_build_object('type', 'string')
               ELSE NULL
