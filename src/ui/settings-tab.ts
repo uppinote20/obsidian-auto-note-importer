@@ -25,7 +25,7 @@ import {
   hasCredentialFormRenderer,
 } from '../services';
 import type { SeaTableTable } from '../services';
-import type { CredentialFormState, CredentialFormRenderer } from '../types';
+import type { CredentialFormState, CredentialFormRenderer, SetupRequirement } from '../types';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, SupabaseCredential, SupabaseOpenApiSpec, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { SUPABASE_DEFAULT_SCHEMA, SUPABASE_RPC_SCHEMA_SQL } from '../constants';
@@ -40,6 +40,20 @@ import { debounce } from '../utils/debounce';
 export interface SettingsPlugin extends Plugin {
   settings: AutoNoteImporterSettings;
   saveSettings(): Promise<void>;
+}
+
+/**
+ * Transient UI state for the credential add/edit form. Tracks whether
+ * the active form has a pending setup requirement (e.g. Supabase RPC
+ * not installed), plus references to the banner host and Save button so
+ * handlers can clear them when the user edits a field (auto-reset) or
+ * verifies the setup. Owned by the settings tab; reset on display()
+ * and re-initialized when a credential form opens.
+ */
+interface CredentialFormUiState {
+  setupRequirement: SetupRequirement | null;
+  bannerHost: HTMLElement | null;
+  saveButton: HTMLButtonElement | null;
 }
 
 /**
@@ -68,6 +82,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection', 'supabase-connection']);
   private pendingDeleteConfigId: string | null = null;
   private pendingDeleteCredentialId: string | null = null;
+  private credentialFormUi: CredentialFormUiState | null = null;
 
   constructor(
     app: App,
@@ -138,6 +153,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
   display(): void {
     this.renderGeneration++;
+    this.credentialFormUi = null;
     const { containerEl } = this;
     containerEl.empty();
 
