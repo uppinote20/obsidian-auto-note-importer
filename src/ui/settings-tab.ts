@@ -45,15 +45,21 @@ export interface SettingsPlugin extends Plugin {
 /**
  * Transient UI state for the credential add/edit form. Tracks whether
  * the active form has a pending setup requirement (e.g. Supabase RPC
- * not installed), plus references to the banner host and Save button so
- * handlers can clear them when the user edits a field (auto-reset) or
- * verifies the setup. Owned by the settings tab; reset on display()
- * and re-initialized when a credential form opens.
+ * not installed), references to the banner host element and Save button,
+ * in-flight guards to prevent concurrent click races, and a cleanups
+ * array for any event listeners that must be detached when the form is
+ * disposed or re-rendered (prevents listener accumulation across
+ * type-switches and re-displays). Owned by the settings tab; reset via
+ * resetCredentialFormUi() when a credential form opens, and torn down
+ * (cleanups invoked) by display().
  */
 interface CredentialFormUiState {
   setupRequirement: SetupRequirement | null;
   bannerHost: HTMLElement | null;
   saveButton: HTMLButtonElement | null;
+  isTesting: boolean;
+  isSaving: boolean;
+  cleanups: Array<() => void>;
 }
 
 /**
@@ -153,7 +159,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
   display(): void {
     this.renderGeneration++;
-    this.credentialFormUi = null;
+    this.tearDownCredentialFormUi();
     const { containerEl } = this;
     containerEl.empty();
 
@@ -359,7 +365,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       return;
     }
     const renderer = getCredentialFormRenderer(cred.type);
-    this.credentialFormUi = { setupRequirement: null, bannerHost: null, saveButton: null };
+    this.resetCredentialFormUi();
     const state: CredentialFormState = {};
     let nameValue = cred.name;
 
@@ -376,11 +382,20 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Any field edit invalidates a prior setup verification. Auto-clear
     // the banner + re-enable Save so a stale RPC-missing diagnosis can't
     // outlive the inputs it was diagnosed against.
-    containerEl.addEventListener('input', () => {
+    //
+    // Register the handler reference in credentialFormUi.cleanups so the
+    // next form render / display() detaches it — otherwise add-mode
+    // type-switches (which re-call renderCredentialAddDetails on the
+    // same containerEl) would accumulate listeners.
+    const inputResetHandler = (): void => {
       if (this.credentialFormUi?.setupRequirement) {
         this.clearFormSetupRequirement();
       }
-    });
+    };
+    containerEl.addEventListener('input', inputResetHandler);
+    this.credentialFormUi?.cleanups.push(() =>
+      containerEl.removeEventListener('input', inputResetHandler),
+    );
 
     new Setting(containerEl)
       .addButton(button => {
@@ -491,7 +506,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     const renderer = getCredentialFormRenderer(type);
-    this.credentialFormUi = { setupRequirement: null, bannerHost: null, saveButton: null };
+    this.resetCredentialFormUi();
     if (renderer.description) {
       containerEl.createEl('p', { cls: 'ani-credential-desc', text: renderer.description });
     }
@@ -500,11 +515,20 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Any field edit invalidates a prior setup verification. Auto-clear
     // the banner + re-enable Save so a stale RPC-missing diagnosis can't
     // outlive the inputs it was diagnosed against.
-    containerEl.addEventListener('input', () => {
+    //
+    // Register the handler reference in credentialFormUi.cleanups so the
+    // next form render / display() detaches it — otherwise add-mode
+    // type-switches (which re-call renderCredentialAddDetails on the
+    // same containerEl) would accumulate listeners.
+    const inputResetHandler = (): void => {
       if (this.credentialFormUi?.setupRequirement) {
         this.clearFormSetupRequirement();
       }
-    });
+    };
+    containerEl.addEventListener('input', inputResetHandler);
+    this.credentialFormUi?.cleanups.push(() =>
+      containerEl.removeEventListener('input', inputResetHandler),
+    );
 
     new Setting(containerEl)
       .addButton(button => {
@@ -555,6 +579,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     formHostEl: HTMLElement,
   ): Promise<void> {
     if (!renderer.testConnection) return;
+    if (this.credentialFormUi?.isTesting) return;   // re-entry guard
+    if (this.credentialFormUi) this.credentialFormUi.isTesting = true;
     new Notice('Auto Note Importer: Testing connection\u2026');
     try {
       const result = await renderer.testConnection(credential);
@@ -562,22 +588,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         new Notice(`Auto Note Importer: Connection failed \u2014 ${result.error}`);
         return;
       }
-      if (result.needsSetup && credential.type === 'supabase') {
+      if (result.needsSetup) {
         // Suppress the "Connection OK" Notice \u2014 the inline banner is the
         // contextual surface. Render banner inside form host, disable
         // Save until verify succeeds.
-        const banner = this.renderRpcSetupBannerInForm(
-          this.ensureFormBannerHost(formHostEl),
-          credential,
-          () => this.clearFormSetupRequirement(),
-        );
-        if (this.credentialFormUi) {
-          this.credentialFormUi.setupRequirement = result.needsSetup;
-          this.credentialFormUi.bannerHost = banner;
-          if (this.credentialFormUi.saveButton) {
-            this.credentialFormUi.saveButton.disabled = true;
-          }
-        }
+        this.renderSetupBannerForRequirement(result.needsSetup, credential, formHostEl);
         return;
       }
       const detail = result.detail ? ` ${result.detail}` : '';
@@ -585,6 +600,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Connection test errored \u2014 ${message}`);
+    } finally {
+      if (this.credentialFormUi) this.credentialFormUi.isTesting = false;
     }
   }
 
@@ -1188,13 +1205,13 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
    * Credential-form variant of the RPC setup banner. Unlike the
    * connection-card variant, this one does NOT include the manual-entry
    * text fallback (the credential is still being authored — no config
-   * exists yet). On verify success the banner removes itself, calls the
-   * caller's onSuccess (to re-enable Save), and emits a one-line
-   * confirmation Notice. On verify failure it surfaces the error inline
-   * inside the banner.
+   * exists yet). On verify success the caller's onSuccess fires
+   * (which calls clearFormSetupRequirement → removes the host); on
+   * verify failure the error is surfaced inline inside the banner.
    *
-   * Returns the banner element so callers can stash it for later
-   * removal on field-change auto-reset.
+   * Returns the host element (outer `.ani-rpc-setup-host`) so callers
+   * can stash it as the cleanup target — removing the host wipes the
+   * inner banner + buttons + error in one DOM op.
    */
   private renderRpcSetupBannerInForm(
     host: HTMLElement,
@@ -1217,8 +1234,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       credential,
       () => {
         new Notice('Auto Note Importer: Setup confirmed — you can save now.');
-        banner.remove();
-        onSuccess();
+        onSuccess();   // clearFormSetupRequirement removes the host (covers banner)
       },
       (error) => {
         errorHost.empty();
@@ -1226,7 +1242,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       },
     );
 
-    return banner;
+    return host;
   }
 
   /**
@@ -1240,6 +1256,82 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       host = formHostEl.createDiv({ cls: 'ani-rpc-setup-host' });
     }
     return host;
+  }
+
+  /**
+   * Runs all pending cleanups (e.g. removeEventListener handles) and
+   * drops the credential form UI state. Called from display() and
+   * before initializing a fresh form via resetCredentialFormUi() so
+   * type-switches in the add-mode form do not leak listeners.
+   */
+  private tearDownCredentialFormUi(): void {
+    if (!this.credentialFormUi) return;
+    for (const cleanup of this.credentialFormUi.cleanups) {
+      try { cleanup(); } catch { /* listener removal must not throw */ }
+    }
+    this.credentialFormUi = null;
+  }
+
+  /**
+   * Tears down any prior form state then initializes a fresh
+   * CredentialFormUiState. Both renderCredentialEditRow and
+   * renderCredentialAddDetails call this at their entry point.
+   */
+  private resetCredentialFormUi(): void {
+    this.tearDownCredentialFormUi();
+    this.credentialFormUi = {
+      setupRequirement: null,
+      bannerHost: null,
+      saveButton: null,
+      isTesting: false,
+      isSaving: false,
+      cleanups: [],
+    };
+  }
+
+  /**
+   * Renders the inline RPC setup banner for the given requirement and
+   * wires it to the form-scoped UI state (setupRequirement + bannerHost
+   * + saveButton.disabled). Uses an exhaustive switch on
+   * SetupRequirement.kind so future widening of the union fails at
+   * compile time until a handler is added.
+   *
+   * Returns true if a banner was rendered (caller should skip the
+   * usual success Notice), false otherwise.
+   */
+  private renderSetupBannerForRequirement(
+    needsSetup: SetupRequirement,
+    credential: Credential,
+    formHostEl: HTMLElement,
+  ): boolean {
+    switch (needsSetup.kind) {
+      case 'supabase-rpc': {
+        if (credential.type !== 'supabase') {
+          // Shouldn't happen — registry only maps supabase-rpc to
+          // Supabase. Surface as an internal error rather than silently
+          // skipping the banner.
+          new Notice(`Auto Note Importer: Internal error — supabase-rpc setup requested for ${credential.type} credential.`);
+          return false;
+        }
+        const host = this.renderRpcSetupBannerInForm(
+          this.ensureFormBannerHost(formHostEl),
+          credential,
+          () => this.clearFormSetupRequirement(),
+        );
+        if (this.credentialFormUi) {
+          this.credentialFormUi.setupRequirement = needsSetup;
+          this.credentialFormUi.bannerHost = host;
+          if (this.credentialFormUi.saveButton) {
+            this.credentialFormUi.saveButton.disabled = true;
+          }
+        }
+        return true;
+      }
+      default: {
+        const _exhaustive: never = needsSetup.kind;
+        throw new Error(`Unhandled setup requirement kind: ${String(_exhaustive)}`);
+      }
+    }
   }
 
   /**
@@ -1258,25 +1350,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     formHostEl: HTMLElement,
   ): Promise<'proceed' | 'blocked'> {
     if (!renderer.verifySetup) return 'proceed';
+    if (this.credentialFormUi?.isSaving) return 'blocked';   // re-entry guard
+    if (this.credentialFormUi) this.credentialFormUi.isSaving = true;
     try {
       const result = await renderer.verifySetup(credential);
       if (!result.success) {
         new Notice(`Auto Note Importer: Could not verify setup before save — ${result.error}`);
         return 'blocked';
       }
-      if (result.needsSetup && credential.type === 'supabase') {
-        const banner = this.renderRpcSetupBannerInForm(
-          this.ensureFormBannerHost(formHostEl),
-          credential,
-          () => this.clearFormSetupRequirement(),
-        );
-        if (this.credentialFormUi) {
-          this.credentialFormUi.setupRequirement = result.needsSetup;
-          this.credentialFormUi.bannerHost = banner;
-          if (this.credentialFormUi.saveButton) {
-            this.credentialFormUi.saveButton.disabled = true;
-          }
-        }
+      if (result.needsSetup) {
+        this.renderSetupBannerForRequirement(result.needsSetup, credential, formHostEl);
         return 'blocked';
       }
       return 'proceed';
@@ -1284,6 +1367,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Could not verify setup before save — ${message}`);
       return 'blocked';
+    } finally {
+      if (this.credentialFormUi) this.credentialFormUi.isSaving = false;
     }
   }
 
