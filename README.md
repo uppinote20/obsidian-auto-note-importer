@@ -51,6 +51,17 @@ Import and sync notes bidirectionally between **Airtable**, **SeaTable**, and yo
 3. Copy the API Token (it is base-specific)
 4. Note your server URL (default: `https://cloud.seatable.io`; self-hosted users use their own host)
 
+#### Supabase
+
+1. In your Supabase project, open **Project Settings → API**
+2. Copy the **Project URL** (e.g. `https://abc.supabase.co`)
+3. Copy an **API Key**:
+   - **Publishable** (`sb_publishable_…`) — RLS-protected, safe for client-side use. Recommended.
+   - **Legacy `anon`** (JWT) — RLS-protected, also fine but deprecated by Supabase
+   - **Secret** (`sb_secret_…`) or **service_role** (JWT) — bypasses RLS; only use if you understand the implications. The plugin auto-detects key type and warns when a secret key is entered.
+4. Ensure the schema you want to sync is in **Settings → API → Exposed schemas** (default `public` is already exposed)
+5. **Publishable key users**: Supabase's new key system blocks schema introspection (OpenAPI) for publishable keys. The first time you open the Supabase connection card the plugin shows a one-time setup banner with a SECURITY DEFINER SQL function — click **Copy SQL**, paste it into your Supabase SQL Editor, Run once, then click **I've run it — Refresh**. Re-running is safe. Legacy `anon` JWT and secret keys don't need this step.
+
 ### 2. Configure the Plugin
 
 1. Open **Settings → Auto Note Importer**
@@ -129,6 +140,14 @@ The plugin maps each provider's native types to a normalized taxonomy (`text` / 
 **✅ Safe for Filenames & Subfolders:** `text`, `single-select`, `number`, `auto-number`, `formula`
 
 **🔒 Read-only (synced from SeaTable only):** `formula`, `link-formula`, `button`, `ctime`, `mtime`, `creator`, `last-modifier`, `auto-number`
+
+#### Supabase
+
+**✅ Safe for Filenames & Subfolders:** `string`, `string:uuid`, `integer`, `integer:int64` (and their `:readonly` variants — typical for PostgreSQL primary keys)
+
+**🔒 Read-only (synced from Supabase only):** any column flagged `readOnly: true` in the PostgREST OpenAPI spec — typically `GENERATED ALWAYS AS ...` columns and view-derived columns
+
+PostgreSQL type → standard mapping summary: `text`/`varchar`/`uuid` → text · `integer`/`numeric`/`real` → number · `boolean` → boolean · `date`/`timestamp`/`timestamptz` → date · `json`/`jsonb` → text (raw JSON string) · `text[]`/`int[]` → multi-select · `bytea` → unknown (skipped)
 
 Unsupported / read-only fields are automatically hidden in dropdowns to prevent push errors.
 
@@ -233,6 +252,55 @@ This plugin emits Bases-compatible YAML frontmatter with proper data types for s
 - **Bidirectional sync not working**: ensure write permissions (Airtable PAT `data.records:write`; SeaTable token "Read and write")
 - **Formulas not updating**: increase the computed-field sync delay
 - **Conflicts detected**: check conflict resolution mode
+- **Supabase: RLS denial / empty result**: anon/publishable key respects RLS policies. Ensure your table has the right SELECT/INSERT/UPDATE policies, or temporarily test with a secret key to confirm permissions are the issue.
+
+## 🧪 Development — Supabase E2E Setup
+
+Contributors running the Supabase e2e suite (`npm run test:e2e:supabase:full`) need a demo Supabase project. Create a free project at [supabase.com](https://supabase.com), open the SQL Editor, and run:
+
+```sql
+CREATE TYPE note_status AS ENUM ('draft', 'published', 'archived');
+
+CREATE TABLE notes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  content text,
+  status note_status DEFAULT 'draft',
+  tags text[],
+  meta jsonb,
+  archived boolean DEFAULT false,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  full_text text GENERATED ALWAYS AS (title || ' ' || coalesce(content, '')) STORED
+);
+
+CREATE VIEW active_notes AS
+  SELECT * FROM notes WHERE archived = false;
+
+ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_all" ON notes FOR ALL USING (true);
+```
+
+If you'll run e2e (or the plugin itself) with a **publishable key** (`sb_publishable_…`), also install the schema-introspection RPC fallback — Supabase's new key system blocks the OpenAPI endpoint for publishable keys, and the plugin reads schema through this RPC instead.
+
+Easiest path: build + load the plugin once, open Settings → Supabase Connection, and click **Copy SQL** in the "One-time setup required" banner. Paste into Supabase SQL Editor and Run.
+
+For automated environments where you can't open the UI, extract the SQL with `tsx` (Node alone can't `require` a `.ts` file on every release):
+
+```bash
+npx tsx -e "import('./src/constants/supabase-rpc.ts').then(m => console.log(m.SUPABASE_RPC_SCHEMA_SQL))"
+```
+
+Re-running is safe (`CREATE OR REPLACE`). This step is unnecessary for legacy `anon` JWTs — those still receive OpenAPI directly.
+
+Add to `.env` at the project root:
+
+```ini
+SUPABASE_URL=https://<your-ref>.supabase.co
+SUPABASE_KEY=sb_publishable_xxxxxxxxxxxxxxxx
+```
+
+Then `npm run test:e2e:supabase:full` runs the full build + deploy + e2e flow.
 
 **Provider-specific Tips:**
 - **Airtable**: read-only fields (formulas, rollups) are auto-excluded from push. Use **Obsidian wins** for faster sync (skips conflict detection).

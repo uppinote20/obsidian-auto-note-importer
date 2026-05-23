@@ -16,7 +16,10 @@
 		"test:e2e:full": "bash tests/e2e/start-e2e.sh --cleanup",
 		"test:e2e:seatable": "node tests/e2e/run-seatable-e2e.mjs --cleanup",
 		"test:e2e:seatable:settings": "node tests/e2e/run-seatable-settings-e2e.mjs",
-		"test:e2e:seatable:full": "E2E_RUNNER=tests/e2e/run-seatable-e2e.mjs bash tests/e2e/start-e2e.sh --cleanup"
+		"test:e2e:seatable:full": "E2E_RUNNER=tests/e2e/run-seatable-e2e.mjs bash tests/e2e/start-e2e.sh --cleanup",
+		"test:e2e:supabase": "node tests/e2e/run-supabase-e2e.mjs --cleanup",
+		"test:e2e:supabase:settings": "node tests/e2e/run-supabase-settings-e2e.mjs",
+		"test:e2e:supabase:full": "E2E_RUNNER=tests/e2e/run-supabase-e2e.mjs bash tests/e2e/start-e2e.sh --cleanup"
 	},
 	"keywords": [
 		"obsidian-plugin",

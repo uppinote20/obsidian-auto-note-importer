@@ -8,12 +8,14 @@ import type { ConflictResolutionMode, BasesFileLocation } from './settings.types
 import type { RateLimiter } from '../services/rate-limiter';
 import type { FieldCache } from '../services/field-cache';
 import type { SeaTableMetadataCache } from '../services/seatable-metadata-cache';
+import type { SupabaseMetadataCache } from '../services/supabase-metadata-cache';
 import type { FrontmatterParser } from '../file-operations/frontmatter-parser';
 
 export interface SharedServices {
   rateLimiters: Map<string, RateLimiter>;
   fieldCache: FieldCache;
   seatableMetadataCache: SeaTableMetadataCache;
+  supabaseMetadataCache: SupabaseMetadataCache;
   frontmatterParser: FrontmatterParser;
   statusBarFactory: () => HTMLElement;
   getDebugMode: () => boolean;
@@ -28,6 +30,14 @@ export interface ConfigEntry {
   baseId: string;
   tableId: string;
   viewId: string;
+
+  /**
+   * Primary key column name (Supabase provider only).
+   * Airtable/SeaTable encode the PK as the immutable record id and ignore
+   * this field. Default empty; settings UI auto-fills from OpenAPI on
+   * connect, user can override.
+   */
+  primaryKeyColumn: string;
 
   folderPath: string;
   templatePath: string;
@@ -54,6 +64,7 @@ export const DEFAULT_CONFIG_ENTRY: Omit<ConfigEntry, 'id' | 'name' | 'credential
   baseId: '',
   tableId: '',
   viewId: '',
+  primaryKeyColumn: '',
   folderPath: '',
   templatePath: '',
   filenameFieldName: '',

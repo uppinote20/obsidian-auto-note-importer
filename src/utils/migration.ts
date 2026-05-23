@@ -85,6 +85,7 @@ function buildConfigFromRecord(
     baseId: typeof raw['baseId'] === 'string' ? raw['baseId'] : '',
     tableId: typeof raw['tableId'] === 'string' ? raw['tableId'] : '',
     viewId: typeof raw['viewId'] === 'string' ? raw['viewId'] : '',
+    primaryKeyColumn: typeof raw['primaryKeyColumn'] === 'string' ? raw['primaryKeyColumn'] : '',
     folderPath: typeof raw['folderPath'] === 'string' ? raw['folderPath'] : '',
     templatePath: typeof raw['templatePath'] === 'string' ? raw['templatePath'] : '',
     filenameFieldName: typeof raw['filenameFieldName'] === 'string' ? raw['filenameFieldName'] : '',

@@ -9,6 +9,7 @@
  * @handbook 4.4-provider-abstraction
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
+ * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
  */
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
@@ -16,6 +17,8 @@ import type { ExtraButtonComponent, Plugin } from "obsidian";
 import {
   FieldCache,
   SeaTableMetadataCache,
+  SupabaseMetadataCache,
+  SupabaseSchemaRpcMissingError,
   getFieldTypeMapper,
   hasFieldTypeMapper,
   getCredentialFormRenderer,
@@ -23,11 +26,13 @@ import {
 } from '../services';
 import type { SeaTableTable } from '../services';
 import type { CredentialFormState, CredentialFormRenderer } from '../types';
-import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
+import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, SupabaseCredential, SupabaseOpenApiSpec, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
+import { SUPABASE_DEFAULT_SCHEMA, SUPABASE_RPC_SCHEMA_SQL } from '../constants';
 import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
 import { validateFolderPath } from '../utils/validation';
+import { debounce } from '../utils/debounce';
 
 /**
  * Interface for the plugin that the settings tab needs.
@@ -44,6 +49,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   plugin: SettingsPlugin;
   private fieldCache: FieldCache;
   private seatableMetadataCache: SeaTableMetadataCache;
+  private supabaseMetadataCache: SupabaseMetadataCache;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -59,7 +65,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   // Both connection-card ids are seeded so whichever provider's card
   // renders for the active credential starts expanded; the inactive one
   // is harmless (no card = no element to apply the class to).
-  private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection']);
+  private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection', 'supabase-connection']);
   private pendingDeleteConfigId: string | null = null;
   private pendingDeleteCredentialId: string | null = null;
 
@@ -68,11 +74,13 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     plugin: SettingsPlugin,
     fieldCache: FieldCache,
     seatableMetadataCache: SeaTableMetadataCache,
+    supabaseMetadataCache: SupabaseMetadataCache,
   ) {
     super(app, plugin);
     this.plugin = plugin;
     this.fieldCache = fieldCache;
     this.seatableMetadataCache = seatableMetadataCache;
+    this.supabaseMetadataCache = supabaseMetadataCache;
   }
 
   /**
@@ -99,6 +107,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     this.debounceTimer = setTimeout(() => {
       this.display();
     }, delay);
+  }
+
+  /**
+   * Returns a debouncer that saves plugin settings after `delay` ms of input
+   * inactivity. Use for text-input handlers where saving on every keystroke
+   * triggers heavy work (provider reconfigure, command re-register).
+   */
+  private makeFieldDebouncer(delay = 400): () => void {
+    return debounce(() => { void this.plugin.saveSettings(); }, delay);
   }
 
   private configureRefreshButton(button: ExtraButtonComponent, tooltip: string, clearCache: () => void): ExtraButtonComponent {
@@ -177,6 +194,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         summary: this.getConnectionSummary(config),
         badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
         renderContent: (c) => this.renderSeaTableConnection(c, config, seatableCred),
+      });
+    } else if (credential.type === 'supabase') {
+      const supabaseCred = credential;
+      const connected = !!(supabaseCred.apiKey && supabaseCred.projectUrl && config.tableId);
+      this.renderSummaryCard(cardStack, {
+        sectionId: 'supabase-connection', icon: '\u{1F4E1}', title: 'Supabase Connection',
+        summary: this.getConnectionSummary(config),
+        badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
+        renderContent: (c) => { void this.renderSupabaseConnection(c, config, supabaseCred); },
       });
     }
 
@@ -261,6 +287,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const keyCell = row.createEl('td');
     const authValue = cred.type === 'airtable' ? cred.apiKey
       : cred.type === 'seatable' ? cred.apiToken
+      : cred.type === 'supabase' ? cred.apiKey
       : null;
     if (authValue) {
       keyCell.createSpan({ cls: 'ani-cred-key', text: this.maskApiKey(authValue) });
@@ -984,6 +1011,317 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           config.subfolderFieldName = value.trim();
           await this.plugin.saveSettings();
+        }));
+  }
+
+  // ─── Supabase Connection ───────────────────────────────────────────
+
+  private async renderSupabaseConnection(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SupabaseCredential,
+  ): Promise<void> {
+    // Read defaults at render time; do NOT persist 'public' as a side effect of
+    // rendering. The schema input's onChange handler is the only place that
+    // writes baseId — opening the settings tab is read-only.
+    const schema = (config.baseId?.trim() || SUPABASE_DEFAULT_SCHEMA);
+
+    if (!credential.apiKey?.trim() || !credential.projectUrl?.trim()) {
+      this.renderSupabaseTextFallback(containerEl, config);
+      return;
+    }
+
+    containerEl.empty();
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Loading Supabase schema…',
+    });
+
+    // Capture the current render generation so a subsequent display() (tab
+    // switch, cred edit) can mark our callback as stale and skip populating
+    // a now-detached containerEl. Same guard SeaTable uses (line ~843).
+    const gen = this.renderGeneration;
+    try {
+      const spec = await this.supabaseMetadataCache.getSpec(credential, schema);
+      if (this.renderGeneration !== gen) return;
+      this.renderSupabaseDropdowns(containerEl, config, credential, spec);
+    } catch (error) {
+      if (this.renderGeneration !== gen) return;
+      // The RPC-missing case has its own banner with one-time setup SQL; every
+      // other failure (network, project URL typo, etc.) falls through to the
+      // generic text-input fallback with a Notice.
+      if (error instanceof SupabaseSchemaRpcMissingError) {
+        this.renderSupabaseRpcSetupBanner(containerEl, config, credential);
+        return;
+      }
+      const message = error instanceof Error ? error.message : 'Check API key or network.';
+      new Notice(`Auto Note Importer: Failed to load Supabase schema. ${message}`);
+      this.renderSupabaseTextFallback(containerEl, config);
+    }
+  }
+
+  /**
+   * Rendered when the publishable key can read /rest/v1/<table> for data but
+   * cannot read /rest/v1/ for schema introspection (Supabase new key policy)
+   * AND the user has not yet installed the SECURITY DEFINER RPC fallback.
+   *
+   * Shows the one-time setup SQL with a Copy button + a Refresh action that
+   * clears the cache and re-runs the fetch chain. Settled, the card flips
+   * to renderSupabaseDropdowns automatically.
+   */
+  private renderSupabaseRpcSetupBanner(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SupabaseCredential,
+  ): void {
+    containerEl.empty();
+    const banner = containerEl.createDiv({ cls: 'ani-rpc-setup-banner' });
+    banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
+    const desc = banner.createEl('p');
+    desc.setText(
+      'Supabase’s new key system blocks publishable keys from reading the ' +
+      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
+      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
+    );
+
+    const codeBlock = banner.createEl('pre', { cls: 'ani-rpc-setup-sql' });
+    codeBlock.createEl('code', { text: SUPABASE_RPC_SCHEMA_SQL });
+
+    const buttonRow = banner.createDiv({ cls: 'ani-rpc-setup-actions' });
+
+    const copyBtn = buttonRow.createEl('button', { text: 'Copy SQL', cls: 'mod-cta' });
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(SUPABASE_RPC_SCHEMA_SQL);
+        new Notice('Auto Note Importer: SQL copied to clipboard.');
+      } catch {
+        new Notice('Auto Note Importer: Could not access clipboard — select + copy the SQL block manually.');
+      }
+    });
+
+    const refreshBtn = buttonRow.createEl('button', { text: 'I’ve run it — Refresh' });
+    refreshBtn.addEventListener('click', () => {
+      this.supabaseMetadataCache.clearForCred(credential.id);
+      this.debounceDisplay(0);
+    });
+
+    // Manual-entry escape hatch — render into a fresh sub-container so the
+    // fallback's containerEl.empty() can't wipe the banner above it.
+    banner.createEl('p', { cls: 'ani-credential-desc' })
+      .setText('Or enter table/column names manually below:');
+    const fallbackHost = banner.createDiv({ cls: 'ani-rpc-setup-fallback' });
+    this.renderSupabaseTextFallback(fallbackHost, config);
+  }
+
+  // STUBS - filled in by T22 and T23
+  private renderSupabaseDropdowns(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SupabaseCredential,
+    spec: SupabaseOpenApiSpec,
+  ): void {
+    const mapper = getFieldTypeMapper(credential.type);
+    containerEl.empty();
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Pick the schema, table, view, and columns to sync. Dropdowns are populated from your Supabase OpenAPI spec.',
+    });
+
+    const tables = this.supabaseMetadataCache.getTables(spec);
+    const views = this.supabaseMetadataCache.getViews(spec);
+
+    // Schema (text input + Refresh)
+    new Setting(containerEl)
+      .setName('Schema')
+      .setDesc('PostgreSQL schema name. Default is "public".')
+      .addText(text => text
+        .setValue(config.baseId || SUPABASE_DEFAULT_SCHEMA)
+        .setPlaceholder(SUPABASE_DEFAULT_SCHEMA)
+        .onChange(async value => {
+          const trimmed = value.trim() || SUPABASE_DEFAULT_SCHEMA;
+          if (trimmed === config.baseId) return;
+          config.baseId = trimmed;
+          config.tableId = '';
+          config.viewId = '';
+          config.primaryKeyColumn = '';
+          config.filenameFieldName = '';
+          config.subfolderFieldName = '';
+          await this.plugin.saveSettings();
+          this.supabaseMetadataCache.clearForCred(credential.id);
+          this.debounceDisplay();
+        }))
+      .addExtraButton(button => this.configureRefreshButton(button, 'Refresh schema', () => {
+        this.supabaseMetadataCache.clearForCred(credential.id);
+      }));
+
+    // Table dropdown
+    const selectedTable = tables.find(t => t.name === config.tableId);
+    new Setting(containerEl)
+      .setName('Table')
+      .setDesc('Required. PostgreSQL table to sync.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- Select table --');
+        for (const t of tables) dropdown.addOption(t.name, t.name);
+        dropdown.setValue(config.tableId);
+        dropdown.onChange(async value => {
+          config.tableId = value;
+          config.viewId = '';
+          config.filenameFieldName = '';
+          config.subfolderFieldName = '';
+          config.primaryKeyColumn = this.supabaseMetadataCache.detectPrimaryKey(spec, value) ?? '';
+          await this.plugin.saveSettings();
+          this.debounceDisplay();
+        });
+      });
+
+    // View dropdown (optional)
+    new Setting(containerEl)
+      .setName('View (optional)')
+      .setDesc('Filter synced rows by a PostgreSQL view. Leave empty to sync the entire table.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- All rows (no view filter) --');
+        for (const v of views) dropdown.addOption(v.name, v.name);
+        dropdown.setValue(config.viewId);
+        dropdown.setDisabled(!selectedTable);
+        dropdown.onChange(async value => {
+          config.viewId = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    // Primary key (text input, auto-filled + editable)
+    new Setting(containerEl)
+      .setName('Primary key column')
+      .setDesc('Auto-detected from OpenAPI. Override for views or non-standard names. Single column only — composite primary keys are not supported for sync (pick one unique column).')
+      .addText(text => text
+        .setValue(config.primaryKeyColumn || '')
+        .setPlaceholder('id')
+        .onChange(async value => {
+          config.primaryKeyColumn = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    // Filename / Subfolder field dropdowns
+    const activeEndpoint = config.viewId || config.tableId;
+    const columns = activeEndpoint ? this.supabaseMetadataCache.getColumns(spec, activeEndpoint) : [];
+    const safeTypes = new Set(mapper.getFilenameSafeTypes());
+    const filenameCandidates = columns.filter(c => safeTypes.has(c.providerType));
+    const safeTypesList = mapper.getFilenameSafeTypes().join(', ');
+
+    new Setting(containerEl)
+      .setName('Filename field')
+      .setDesc(`Column whose value becomes the note filename. Filtered to: ${safeTypesList}.`)
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- Select filename column --');
+        for (const c of filenameCandidates) dropdown.addOption(c.name, c.name);
+        dropdown.setValue(config.filenameFieldName);
+        dropdown.setDisabled(columns.length === 0);
+        dropdown.onChange(async value => {
+          config.filenameFieldName = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName('Subfolder field (optional)')
+      .setDesc('Column used for subfolder organization. Leave empty for flat layout.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- No subfolder column --');
+        for (const c of columns) dropdown.addOption(c.name, c.name);
+        dropdown.setValue(config.subfolderFieldName);
+        dropdown.setDisabled(columns.length === 0);
+        dropdown.onChange(async value => {
+          config.subfolderFieldName = value;
+          await this.plugin.saveSettings();
+        });
+      });
+  }
+
+  private renderSupabaseTextFallback(containerEl: HTMLElement, config: ConfigEntry): void {
+    containerEl.empty();
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Enter Supabase config manually. Once an API key + project URL are saved and reachable, this card switches to dropdowns automatically.',
+    });
+
+    // Debounced save to avoid disk write + provider reconfigure on every
+    // keystroke (fallback path is a raw text input — no dropdown coalescing).
+    const debouncedSave = this.makeFieldDebouncer();
+
+    new Setting(containerEl)
+      .setName('Schema')
+      .setDesc('PostgreSQL schema name. Default "public".')
+      .addText(text => text
+        .setValue(config.baseId || SUPABASE_DEFAULT_SCHEMA)
+        .setPlaceholder(SUPABASE_DEFAULT_SCHEMA)
+        .onChange(value => {
+          const trimmed = value.trim() || SUPABASE_DEFAULT_SCHEMA;
+          if (trimmed === config.baseId) return;
+          // Schema change invalidates every dependent selection — same
+          // cascade reset as the dropdown path so a half-switched config
+          // can't target the wrong table under the new schema.
+          config.baseId = trimmed;
+          config.tableId = '';
+          config.viewId = '';
+          config.primaryKeyColumn = '';
+          config.filenameFieldName = '';
+          config.subfolderFieldName = '';
+          debouncedSave();
+        }));
+
+    new Setting(containerEl)
+      .setName('Table')
+      .setDesc('Required. PostgreSQL table name.')
+      .addText(text => text
+        .setValue(config.tableId)
+        .setPlaceholder('notes')
+        .onChange(value => {
+          config.tableId = value.trim();
+          debouncedSave();
+        }));
+
+    new Setting(containerEl)
+      .setName('View (optional)')
+      .setDesc('PostgreSQL view to sync. Leave empty for the full table.')
+      .addText(text => text
+        .setValue(config.viewId)
+        .setPlaceholder('active_notes')
+        .onChange(value => {
+          config.viewId = value.trim();
+          debouncedSave();
+        }));
+
+    new Setting(containerEl)
+      .setName('Primary key column')
+      .setDesc('Required for updates. e.g. "id" or "uuid". Single column only — composite PKs not supported.')
+      .addText(text => text
+        .setValue(config.primaryKeyColumn || '')
+        .setPlaceholder('id')
+        .onChange(value => {
+          config.primaryKeyColumn = value.trim();
+          debouncedSave();
+        }));
+
+    new Setting(containerEl)
+      .setName('Filename field')
+      .setDesc('Column whose value becomes the note filename.')
+      .addText(text => text
+        .setValue(config.filenameFieldName)
+        .setPlaceholder('title')
+        .onChange(value => {
+          config.filenameFieldName = value.trim();
+          debouncedSave();
+        }));
+
+    new Setting(containerEl)
+      .setName('Subfolder field (optional)')
+      .setDesc('Column used for subfolder organization. Leave empty for flat layout.')
+      .addText(text => text
+        .setValue(config.subfolderFieldName)
+        .setPlaceholder('category')
+        .onChange(value => {
+          config.subfolderFieldName = value.trim();
+          debouncedSave();
         }));
   }
 

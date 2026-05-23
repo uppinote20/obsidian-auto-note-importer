@@ -73,6 +73,7 @@ export class ConfigInstance {
       config,
       this.rateLimiter,
       shared.getDebugMode(),
+      shared,
     );
     this.providerType = this.databaseProvider.providerType;
 

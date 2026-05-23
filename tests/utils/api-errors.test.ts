@@ -155,3 +155,58 @@ describe('buildBatchFailures', () => {
     }
   });
 });
+
+describe('PostgREST error format', () => {
+  it('extracts message + code + hint', () => {
+    const response = {
+      status: 403,
+      json: {
+        code: '42501',
+        message: 'permission denied for table notes',
+        details: null,
+        hint: 'Check RLS policies',
+      },
+    };
+    const result = extractApiErrorDetails(response);
+    expect(result).toContain('permission denied for table notes');
+    expect(result).toContain('42501');
+    expect(result).toContain('Check RLS policies');
+  });
+
+  it('handles message-only PostgREST error (no hint)', () => {
+    const response = {
+      status: 409,
+      json: { code: '23505', message: 'duplicate key value' },
+    };
+    expect(extractApiErrorDetails(response)).toContain('duplicate key value');
+    expect(extractApiErrorDetails(response)).toContain('23505');
+  });
+
+  it('does not collide with airtable/seatable format when keys overlap', () => {
+    const response = {
+      status: 400,
+      json: { error: { message: 'Airtable error' } },
+    };
+    expect(extractApiErrorDetails(response)).toContain('Airtable error');
+  });
+
+  // Kong / GoTrue auth-gateway shape: `message` (and optionally `hint`) with NO `code`.
+  // PostgREST proper always sends `code`+`message`; Supabase's auth proxy doesn't.
+  it('extracts message from Kong-style auth errors (message only, no code)', () => {
+    const response = {
+      status: 401,
+      json: { message: 'Invalid API key', hint: "Double-check your Supabase 'anon' key." },
+    };
+    const result = extractApiErrorMessage(response);
+    expect(result).toContain('Invalid API key');
+    expect(result).toContain('anon');
+  });
+
+  it('still prefers structured PostgREST format when both code and message are present', () => {
+    const response = {
+      status: 409,
+      json: { code: 'PGRST116', message: 'No rows returned' },
+    };
+    expect(extractApiErrorMessage(response)).toContain('PGRST116');
+  });
+});

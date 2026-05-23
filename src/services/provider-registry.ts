@@ -21,6 +21,7 @@ import type {
   DatabaseProvider,
   FieldTypeMapper,
   CredentialFormRenderer,
+  SharedServices,
 } from '../types';
 import { buildLegacySettings } from '../utils';
 import type { RateLimiter } from './rate-limiter';
@@ -30,6 +31,9 @@ import { airtableCredentialFormRenderer } from './airtable-credential-form';
 import { SeaTableClient } from './seatable-client';
 import { seatableFieldMapper } from './seatable-field-mapper';
 import { seatableCredentialFormRenderer } from './seatable-credential-form';
+import { SupabaseClient } from './supabase-client';
+import { supabaseFieldMapper } from './supabase-field-mapper';
+import { supabaseCredentialFormRenderer } from './supabase-credential-form';
 
 /**
  * Factory signature for creating a provider instance.
@@ -39,6 +43,7 @@ export type ProviderFactory = (
   config: ConfigEntry,
   rateLimiter: RateLimiter,
   debugMode: boolean,
+  sharedServices: SharedServices,
 ) => DatabaseProvider;
 
 const factories = new Map<CredentialType, ProviderFactory>();
@@ -121,12 +126,13 @@ export function createProvider(
   config: ConfigEntry,
   rateLimiter: RateLimiter,
   debugMode: boolean,
+  sharedServices: SharedServices,
 ): DatabaseProvider {
   const factory = factories.get(credential.type);
   if (!factory) {
     throw new Error(`No provider registered for credential type: ${credential.type}`);
   }
-  return factory(credential, config, rateLimiter, debugMode);
+  return factory(credential, config, rateLimiter, debugMode, sharedServices);
 }
 
 /**
@@ -138,7 +144,7 @@ export function hasProvider(type: CredentialType): boolean {
 
 // ─── Built-in provider registrations ─────────────────────────────────
 
-registerProvider('airtable', (credential, config, rateLimiter, debugMode) => {
+registerProvider('airtable', (credential, config, rateLimiter, debugMode, _shared) => {
   return new AirtableClient(buildLegacySettings(config, credential, debugMode), rateLimiter);
 });
 
@@ -148,7 +154,7 @@ registerCredentialFormRenderer('airtable', airtableCredentialFormRenderer);
 // SeaTable providers read auth fields directly from their narrowed credential
 // (per handbook §4.4 step 6) — they bypass buildLegacySettings's `apiKey`
 // reservation entirely.
-registerProvider('seatable', (credential, config, rateLimiter, _debugMode) => {
+registerProvider('seatable', (credential, config, rateLimiter, _debugMode, _shared) => {
   if (credential.type !== 'seatable') {
     throw new Error(`SeaTable factory received non-seatable credential: ${credential.type}`);
   }
@@ -157,3 +163,15 @@ registerProvider('seatable', (credential, config, rateLimiter, _debugMode) => {
 
 registerFieldTypeMapper('seatable', seatableFieldMapper);
 registerCredentialFormRenderer('seatable', seatableCredentialFormRenderer);
+
+// Supabase providers use SharedServices.supabaseMetadataCache for OpenAPI
+// schema caching — the factory is registered here alongside mapper and renderer.
+registerProvider('supabase', (credential, config, rateLimiter, _debugMode, shared) => {
+  if (credential.type !== 'supabase') {
+    throw new Error(`Supabase factory received non-supabase credential: ${credential.type}`);
+  }
+  return new SupabaseClient(credential, config, rateLimiter, shared.supabaseMetadataCache);
+});
+
+registerFieldTypeMapper('supabase', supabaseFieldMapper);
+registerCredentialFormRenderer('supabase', supabaseCredentialFormRenderer);
