@@ -337,8 +337,11 @@ export class SupabaseClient implements DatabaseProvider {
   }
 
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult> {
-    this.validateConfig();
     if (!recordId) return { success: false, recordId, error: 'Record ID cannot be empty.' };
+    // batchUpdate validates config itself and surfaces any failure as a
+    // SyncResult — delegating keeps the failure surface consistent (no
+    // unhandled throw on composite PK / missing fields here, SyncResult
+    // there).
     const [result] = await this.batchUpdate([{ recordId, fields }]);
     return result;
   }

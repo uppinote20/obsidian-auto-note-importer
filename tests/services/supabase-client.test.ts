@@ -298,6 +298,25 @@ describe('SupabaseClient.batchUpdate (upsert)', () => {
     const result = await c.updateRecord('r1', { title: 'foo' });
     expect(result).toMatchObject({ success: true, recordId: 'r1' });
   });
+
+  it('updateRecord surfaces composite-PK config failure as SyncResult (delegates to batchUpdate validate)', async () => {
+    // Prior to this change, updateRecord called validateConfig() itself and
+    // threw on composite PKs, while batchUpdate caught the same error and
+    // returned a SyncResult — inconsistent surface. Delegating keeps it
+    // uniform: no unhandled throw on either path.
+    const c = new SupabaseClient(
+      cred,
+      makeConfig({ primaryKeyColumn: 'tenant_id,item_id' }),
+      new RateLimiter(),
+      defaultSpecCache(),
+    );
+    const result = await c.updateRecord('r1', { title: 'foo' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/composite primary key/i);
+    }
+    expect(mockRequestUrl).not.toHaveBeenCalled();
+  });
 });
 
 describe('SupabaseClient.fetchNotes Range pagination edge cases (G5: #10+#14)', () => {
