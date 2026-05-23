@@ -373,6 +373,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     renderer.renderFields(containerEl, state, cred);
 
+    // Any field edit invalidates a prior setup verification. Auto-clear
+    // the banner + re-enable Save so a stale RPC-missing diagnosis can't
+    // outlive the inputs it was diagnosed against.
+    containerEl.addEventListener('input', () => {
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
+      }
+    });
+
     new Setting(containerEl)
       .addButton(button => {
         button.setButtonText('Save').setCta();
@@ -487,6 +496,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       containerEl.createEl('p', { cls: 'ani-credential-desc', text: renderer.description });
     }
     renderer.renderFields(containerEl, context.state);
+
+    // Any field edit invalidates a prior setup verification. Auto-clear
+    // the banner + re-enable Save so a stale RPC-missing diagnosis can't
+    // outlive the inputs it was diagnosed against.
+    containerEl.addEventListener('input', () => {
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
+      }
+    });
 
     new Setting(containerEl)
       .addButton(button => {
