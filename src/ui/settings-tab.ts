@@ -374,10 +374,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     renderer.renderFields(containerEl, state, cred);
 
     new Setting(containerEl)
-      .addButton(button => button
-        .setButtonText('Save')
-        .setCta()
-        .onClick(async () => {
+      .addButton(button => {
+        button.setButtonText('Save').setCta();
+        if (this.credentialFormUi) {
+          this.credentialFormUi.saveButton = button.buttonEl;
+        }
+        button.onClick(async () => {
           const result = renderer.build(nameValue, state, cred.id);
           if (!result.ok) {
             new Notice(`Auto Note Importer: ${result.error}`);
@@ -393,7 +395,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           this.editingCredentialId = null;
           this.display();
-        }))
+        });
+      })
       .addButton(button => {
         button
           .setButtonText('Test')
@@ -487,23 +490,24 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .addButton(button => {
-        button
-          .setButtonText('Save')
-          .setCta()
-          .onClick(async () => {
-            const result = renderer.build(context.name, context.state, generateId());
-            if (!result.ok) {
-              new Notice(`Auto Note Importer: ${result.error}`);
-              return;
-            }
-            const gate = await this.verifyCredentialBeforeSave(renderer, result.credential, containerEl);
-            if (gate !== 'proceed') return;
-            this.plugin.settings.credentials.push(result.credential);
-            await this.plugin.saveSettings();
-            this.addingCredential = false;
-            this.addingCredentialType = 'airtable';
-            this.display();
-          });
+        button.setButtonText('Save').setCta();
+        if (this.credentialFormUi) {
+          this.credentialFormUi.saveButton = button.buttonEl;
+        }
+        button.onClick(async () => {
+          const result = renderer.build(context.name, context.state, generateId());
+          if (!result.ok) {
+            new Notice(`Auto Note Importer: ${result.error}`);
+            return;
+          }
+          const gate = await this.verifyCredentialBeforeSave(renderer, result.credential, containerEl);
+          if (gate !== 'proceed') return;
+          this.plugin.settings.credentials.push(result.credential);
+          await this.plugin.saveSettings();
+          this.addingCredential = false;
+          this.addingCredentialType = 'airtable';
+          this.display();
+        });
       })
       .addButton(button => {
         button
