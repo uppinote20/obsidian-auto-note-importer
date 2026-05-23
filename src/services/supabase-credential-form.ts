@@ -8,6 +8,7 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 5.1-ui-components
  * @tested tests/services/supabase-credential-form.test.ts
+ * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
  */
 
 import { Setting, requestUrl, type RequestUrlResponse } from 'obsidian';
