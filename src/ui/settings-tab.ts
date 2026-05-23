@@ -1061,33 +1061,28 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   /**
-   * Rendered when the publishable key can read /rest/v1/<table> for data but
-   * cannot read /rest/v1/ for schema introspection (Supabase new key policy)
-   * AND the user has not yet installed the SECURITY DEFINER RPC fallback.
+   * Renders the shared parts of the RPC setup banner — SQL code block,
+   * Copy SQL button, and "I've run it — Verify" button — into the given
+   * host. Callers wrap this with banner-specific header/desc/manual-
+   * fallback content. The two callbacks decide what happens after the
+   * Verify RPC call returns; both connection-card and credential-form
+   * contexts share the SQL block + buttons but diverge in post-verify
+   * action.
    *
-   * Shows the one-time setup SQL with a Copy button + a Refresh action that
-   * clears the cache and re-runs the fetch chain. Settled, the card flips
-   * to renderSupabaseDropdowns automatically.
+   * The verify path always bypasses the cache (clearForCred) before
+   * calling verifySetup — the user just ran the SQL, so the previous
+   * 404 is stale by definition.
    */
-  private renderSupabaseRpcSetupBanner(
-    containerEl: HTMLElement,
-    config: ConfigEntry,
+  private renderRpcSetupBannerCore(
+    host: HTMLElement,
     credential: SupabaseCredential,
+    onVerifySuccess: () => void,
+    onVerifyFailure: (error: string) => void,
   ): void {
-    containerEl.empty();
-    const banner = containerEl.createDiv({ cls: 'ani-rpc-setup-banner' });
-    banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
-    const desc = banner.createEl('p');
-    desc.setText(
-      'Supabase’s new key system blocks publishable keys from reading the ' +
-      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
-      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
-    );
-
-    const codeBlock = banner.createEl('pre', { cls: 'ani-rpc-setup-sql' });
+    const codeBlock = host.createEl('pre', { cls: 'ani-rpc-setup-sql' });
     codeBlock.createEl('code', { text: SUPABASE_RPC_SCHEMA_SQL });
 
-    const buttonRow = banner.createDiv({ cls: 'ani-rpc-setup-actions' });
+    const buttonRow = host.createDiv({ cls: 'ani-rpc-setup-actions' });
 
     const copyBtn = buttonRow.createEl('button', { text: 'Copy SQL', cls: 'mod-cta' });
     copyBtn.addEventListener('click', async () => {
@@ -1099,11 +1094,71 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       }
     });
 
-    const refreshBtn = buttonRow.createEl('button', { text: 'I’ve run it — Refresh' });
-    refreshBtn.addEventListener('click', () => {
-      this.supabaseMetadataCache.clearForCred(credential.id);
-      this.debounceDisplay(0);
+    const verifyBtn = buttonRow.createEl('button', { text: 'I’ve run it — Verify' });
+    verifyBtn.addEventListener('click', async () => {
+      verifyBtn.disabled = true;
+      const originalText = verifyBtn.textContent;
+      verifyBtn.textContent = 'Verifying…';
+      try {
+        this.supabaseMetadataCache.clearForCred(credential.id);
+        const renderer = getCredentialFormRenderer('supabase');
+        if (!renderer.verifySetup) {
+          onVerifyFailure('Supabase provider does not implement verifySetup — please report this as a bug.');
+          return;
+        }
+        const result = await renderer.verifySetup(credential);
+        if (result.success && !result.needsSetup) {
+          onVerifySuccess();
+        } else if (result.success && result.needsSetup) {
+          onVerifyFailure('RPC still not installed. Common issues: SQL ran in the wrong schema (try \'public\'); missing GRANT EXECUTE — re-run the SQL fully; different project — verify the Project URL matches.');
+        } else if (!result.success) {
+          onVerifyFailure(result.error);
+        }
+      } finally {
+        verifyBtn.disabled = false;
+        verifyBtn.textContent = originalText;
+      }
     });
+  }
+
+  /**
+   * Rendered when the publishable key can read /rest/v1/<table> for data but
+   * cannot read /rest/v1/ for schema introspection (Supabase new key policy)
+   * AND the user has not yet installed the SECURITY DEFINER RPC fallback.
+   *
+   * Shows the one-time setup SQL with a Copy button + a Verify action via
+   * the shared renderRpcSetupBannerCore. On verify success the cache is
+   * cleared and the settings tab re-renders so the card flips to
+   * renderSupabaseDropdowns automatically. Includes a manual-entry text
+   * fallback for users who want to keep the publishable key without
+   * installing the RPC.
+   */
+  private renderSupabaseRpcSetupBanner(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SupabaseCredential,
+  ): void {
+    containerEl.empty();
+    const banner = containerEl.createDiv({ cls: 'ani-rpc-setup-banner' });
+    banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
+    banner.createEl('p').setText(
+      'Supabase’s new key system blocks publishable keys from reading the ' +
+      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
+      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
+    );
+
+    this.renderRpcSetupBannerCore(
+      banner,
+      credential,
+      () => {
+        // Connection-card success: re-render so the card flips back to
+        // dropdowns (verifySetup already cleared the cache).
+        this.debounceDisplay(0);
+      },
+      (error) => {
+        new Notice(`Auto Note Importer: ${error}`);
+      },
+    );
 
     // Manual-entry escape hatch — render into a fresh sub-container so the
     // fallback's containerEl.empty() can't wipe the banner above it.
