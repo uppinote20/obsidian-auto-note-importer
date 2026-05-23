@@ -202,3 +202,67 @@ describe('supabaseCredentialFormRenderer.testConnection', () => {
     expect(r.success).toBe(false);
   });
 });
+
+describe('supabaseCredentialFormRenderer.verifySetup', () => {
+  beforeEach(() => mockRequestUrl.mockReset());
+
+  const cred: Credential = {
+    id: 'c1', name: 'X', type: 'supabase',
+    projectUrl: 'https://abc.supabase.co', apiKey: 'sb_publishable_xxx',
+  };
+
+  it('returns needsSetup when RPC returns 404/PGRST202', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 404,
+      json: { code: 'PGRST202', message: 'function ani_supabase_schema does not exist' },
+    });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.needsSetup).toEqual({ kind: 'supabase-rpc' });
+  });
+
+  it('returns plain success when RPC returns 200', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { notes: {} } });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.needsSetup).toBeUndefined();
+  });
+
+  it('returns failure on 401', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 401,
+      json: { message: 'Invalid API key' },
+    });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('401');
+  });
+
+  it('returns failure on 5xx', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 503,
+      json: { message: 'service unavailable' },
+    });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('503');
+  });
+
+  it('returns failure on network error', async () => {
+    mockRequestUrl.mockRejectedValueOnce(new Error('network unreachable'));
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('network');
+  });
+
+  it('refuses non-supabase credential', async () => {
+    const wrong: Credential = { id: 'c1', name: 'X', type: 'airtable', apiKey: 'k' };
+    const r = await supabaseCredentialFormRenderer.verifySetup!(wrong);
+    expect(r.success).toBe(false);
+  });
+});

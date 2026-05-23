@@ -220,6 +220,44 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
       return { success: false, error: error instanceof Error ? error.message : 'Network error' };
     }
   }
+
+  async verifySetup(credential: Credential): Promise<ConnectionTestResult> {
+    if (credential.type !== 'supabase') {
+      return { success: false, error: `Expected supabase credential, got ${credential.type}` };
+    }
+    const projectUrl = normalizeServerUrl(credential.projectUrl, '');
+    if (!projectUrl) return { success: false, error: 'Project URL is empty.' };
+
+    try {
+      const rpc = await requestUrl({
+        url: `${projectUrl}/rest/v1/rpc/${SUPABASE_RPC_SCHEMA_FN}`,
+        method: 'POST',
+        headers: {
+          'apikey': credential.apiKey,
+          'Authorization': `Bearer ${credential.apiKey}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ p_schema: 'public' }),
+        throw: false,
+      });
+
+      if (rpc.status === 200) {
+        return { success: true };
+      }
+
+      const body = rpc.json as { code?: string; message?: string } | undefined;
+      const rpcMissing = body?.code === 'PGRST202' ||
+        (typeof body?.message === 'string' && /function .* does not exist/i.test(body.message));
+      if (rpcMissing) {
+        return { success: true, needsSetup: { kind: 'supabase-rpc' } };
+      }
+
+      return { success: false, error: `HTTP ${rpc.status}: ${extractApiErrorMessage(rpc)}` };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
 }
 
 export const supabaseCredentialFormRenderer: CredentialFormRenderer =
