@@ -1105,10 +1105,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       this.debounceDisplay(0);
     });
 
-    // Manual-entry escape hatch — same fallback rendered for missing-credential case.
+    // Manual-entry escape hatch — render into a fresh sub-container so the
+    // fallback's containerEl.empty() can't wipe the banner above it.
     banner.createEl('p', { cls: 'ani-credential-desc' })
       .setText('Or enter table/column names manually below:');
-    this.renderSupabaseTextFallback(banner, config);
+    const fallbackHost = banner.createDiv({ cls: 'ani-rpc-setup-fallback' });
+    this.renderSupabaseTextFallback(fallbackHost, config);
   }
 
   // STUBS - filled in by T22 and T23

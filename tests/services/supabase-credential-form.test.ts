@@ -133,15 +133,35 @@ describe('supabaseCredentialFormRenderer.testConnection', () => {
     expect(r.detail).toContain('3');
   });
 
-  it('returns failure on 401', async () => {
+  it('treats OpenAPI 401 + RPC 200 as success (publishable-key path)', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: { code: 'PGRST301', message: 'JWT expired' } })
+      .mockResolvedValueOnce({ status: 200, json: { notes: {}, active_notes: {} } });
+    const r = await supabaseCredentialFormRenderer.testConnection!(cred);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.detail).toContain('RPC');
+  });
+
+  it('treats OpenAPI 401 + RPC PGRST202 (missing) as authenticated-but-setup-required success', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({ status: 404, json: { code: 'PGRST202', message: 'function ani_supabase_schema does not exist' } });
+    const r = await supabaseCredentialFormRenderer.testConnection!(cred);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.detail).toContain('setup SQL');
+  });
+
+  it('returns failure on non-401 OpenAPI status (e.g., 500)', async () => {
     mockRequestUrl.mockResolvedValueOnce({
-      status: 401,
-      json: { code: 'PGRST301', message: 'JWT expired' },
+      status: 500,
+      json: { message: 'server error' },
     });
     const r = await supabaseCredentialFormRenderer.testConnection!(cred);
     expect(r.success).toBe(false);
     if (r.success) return;
-    expect(r.error).toContain('401');
+    expect(r.error).toContain('500');
   });
 
   it('returns failure on network error', async () => {

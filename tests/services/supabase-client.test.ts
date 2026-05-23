@@ -564,4 +564,105 @@ describe('SupabaseClient.batchUpdate type-aware coercion (Path A — frontmatter
     expect(body[0].count).toBe(5);
     expect(body[0].active).toBe(true);
   });
+
+  it('drops "" for date / date-time / byte columns (string-formatted non-text types)', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:       { type: 'string', description: '<pk/>' },
+            d:        { type: 'string', format: 'date' },
+            ts:       { type: 'string', format: 'date-time' },
+            b:        { type: 'string', format: 'byte' },
+          },
+          required: ['id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+    await c.batchUpdate([{ recordId: 'r1', fields: { d: '', ts: '', b: '' } }]);
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0]).not.toHaveProperty('d');
+    expect(body[0]).not.toHaveProperty('ts');
+    expect(body[0]).not.toHaveProperty('b');
+  });
+
+  it('coerces "" to null for plain `object` providerType (alternate jsonb shape)', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:   { type: 'string', description: '<pk/>' },
+            data: { type: 'object' },  // alternate jsonb representation, no :jsonb format
+          },
+          required: ['id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+    await c.batchUpdate([{ recordId: 'r1', fields: { data: '' } }]);
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0].data).toBeNull();
+  });
+});
+
+describe('SupabaseClient.batchUpdate composite PK + view-as-tableId guards (review followup)', () => {
+  it('encodes composite PK on_conflict with comma preserved (not %2C)', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            tenant_id: { type: 'string', description: '<pk/>' },
+            item_id:   { type: 'string', description: '<pk/>' },
+            title:     { type: 'string' },
+          },
+          required: ['tenant_id', 'item_id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig({ primaryKeyColumn: 'tenant_id,item_id' }), new RateLimiter(), cache);
+    await c.batchUpdate([{ recordId: 'tenant_id,item_id', fields: { title: 't' } }]);
+    const url = mockRequestUrl.mock.calls[0][0].url;
+    expect(url).toContain('on_conflict=tenant_id,item_id');
+    expect(url).not.toContain('on_conflict=tenant_id%2Citem_id');
+  });
+
+  it('returns explicit batch failure when writableColumns is empty (likely a non-updatable view as tableId)', async () => {
+    const cache = new SupabaseMetadataCache();
+    // Every column readOnly — simulates a view configured as tableId.
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:    { type: 'string', readOnly: true },
+            title: { type: 'string', readOnly: true },
+          },
+          required: [],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+    const result = await c.batchUpdate([{ recordId: 'r1', fields: { title: 'x' } }]);
+    expect(result[0].success).toBe(false);
+    expect(result[0]).toHaveProperty('error');
+    if (!result[0].success) {
+      expect(result[0].error).toMatch(/non-updatable view|writable columns/i);
+    }
+    expect(mockRequestUrl).not.toHaveBeenCalled();
+  });
 });

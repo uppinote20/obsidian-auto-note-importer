@@ -48,10 +48,12 @@ AS $$
     SELECT
       c.table_name,
       c.column_name,
+      c.ordinal_position,
       c.data_type,
       c.is_generated,
       c.is_updatable,
-      c.is_nullable
+      c.is_nullable,
+      t.table_type
     FROM information_schema.columns c
     JOIN information_schema.tables t
       ON c.table_catalog = t.table_catalog
@@ -61,7 +63,10 @@ AS $$
       AND t.table_type IN ('BASE TABLE', 'VIEW')
   ),
   pks AS (
-    SELECT kcu.table_name, kcu.column_name
+    SELECT
+      kcu.table_name,
+      kcu.column_name,
+      kcu.ordinal_position
     FROM information_schema.table_constraints tc
     JOIN information_schema.key_column_usage kcu
       ON tc.constraint_schema = kcu.constraint_schema
@@ -121,9 +126,20 @@ AS $$
           ))
         ),
         'required', COALESCE(
-          (SELECT jsonb_agg(c2.column_name)
+          (SELECT jsonb_agg(c2.column_name ORDER BY c2.ordinal_position)
            FROM cols c2 WHERE c2.table_name = c.table_name AND c2.is_nullable = 'NO'),
           '[]'::jsonb
+        ),
+        -- Explicit table_type so SupabaseMetadataCache.classify() doesn't
+        -- have to infer table-vs-view from PK presence (PK-less BASE TABLEs
+        -- like audit logs would otherwise be misclassified as views).
+        'x-table-type', max(c.table_type),
+        -- Ordered PK column list — the plugin uses this to detect composite
+        -- PKs (multi-entry list) and avoid picking an arbitrary column via
+        -- jsonb_object_agg's non-deterministic hash order.
+        'x-primary-key', (
+          SELECT COALESCE(jsonb_agg(p.column_name ORDER BY p.ordinal_position), '[]'::jsonb)
+          FROM pks p WHERE p.table_name = c.table_name
         )
       ) AS table_def
     FROM cols c

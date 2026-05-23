@@ -160,19 +160,23 @@ export class SupabaseMetadataCache {
     projectUrl: string,
   ): Promise<SupabaseOpenApiSpec> {
     const rpcUrl = `${projectUrl}/rest/v1/rpc/${SUPABASE_RPC_SCHEMA_FN}`;
+    // Schema is conveyed via the body parameter `p_schema`; the function
+    // itself lives in `public`, so no Accept-Profile / Content-Profile is
+    // needed. Avoid spreading buildHeaders here (which would set
+    // Accept-Profile = schema for non-public schemas and route the function
+    // lookup wrong on deployments with a non-default db-schemas order).
+    const rpcHeaders: Record<string, string> = {
+      'apikey': credential.apiKey,
+      'Authorization': `Bearer ${credential.apiKey}`,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
     let rpcResponse: Awaited<ReturnType<typeof requestUrl>>;
     try {
       rpcResponse = await requestUrl({
         url: rpcUrl,
         method: 'POST',
-        headers: {
-          // Reuse the apikey/Authorization/Accept-Profile from buildHeaders
-          // but override Accept — RPC returns plain JSON, not the OpenAPI
-          // media type, and PostgREST returns 406 PGRST107 otherwise.
-          ...buildHeaders(credential, schema),
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
+        headers: rpcHeaders,
         body: JSON.stringify({ p_schema: schema }),
         throw: false,
       });
@@ -188,9 +192,16 @@ export class SupabaseMetadataCache {
       } as Awaited<ReturnType<typeof requestUrl>>;
     }
 
-    if (rpcResponse.status === 404 || rpcResponse.status === 400) {
-      // 404 = function not yet installed in this project.
-      // 400 = some Supabase deployments surface "function does not exist" as 400.
+    // PostgREST signals "function does not exist" specifically with code
+    // PGRST202 (HTTP 404). Other 400s/404s (parameter type mismatch, body
+    // parse failure, function-internal SQL error after a PG upgrade, etc.)
+    // are NOT setup problems — surfacing them as "Run this SQL" would loop
+    // users through pointless re-installs. Match on the PostgREST code first.
+    const rpcBody = rpcResponse.json as { code?: string; message?: string } | undefined;
+    const isPgrstFunctionMissing =
+      rpcBody?.code === 'PGRST202' ||
+      (typeof rpcBody?.message === 'string' && /function .* does not exist/i.test(rpcBody.message));
+    if (isPgrstFunctionMissing) {
       throw new SupabaseSchemaRpcMissingError(
         `Supabase schema introspection unavailable. Run the one-time setup SQL ` +
         `(Settings → Supabase Connection → "Copy SQL") in your Supabase SQL Editor.`,
@@ -201,11 +212,14 @@ export class SupabaseMetadataCache {
       throw new Error(`Failed to fetch Supabase schema via RPC: ${extractApiErrorDetails(rpcResponse)}`);
     }
 
-    const definitions = rpcResponse.json as Record<string, unknown> | undefined;
-    if (!definitions || typeof definitions !== 'object') {
+    const definitions = rpcResponse.json;
+    // `typeof [] === 'object'` so we must reject arrays explicitly — a
+    // malformed RPC or proxy mangling that returns `[]` would otherwise
+    // pass the guard and propagate as a silent "every table has 0 columns".
+    if (definitions === null || typeof definitions !== 'object' || Array.isArray(definitions)) {
       throw new Error('Supabase RPC schema response was not a JSON object.');
     }
-    return { definitions } as SupabaseOpenApiSpec;
+    return { definitions: definitions as Record<string, SupabaseOpenApiSpec['definitions'][string]> } as SupabaseOpenApiSpec;
   }
 
   async refresh(credential: SupabaseCredential, schema: string): Promise<void> {
@@ -240,14 +254,32 @@ export class SupabaseMetadataCache {
   }
 
   detectPrimaryKey(spec: SupabaseOpenApiSpec, table: string): string | null {
-    const def = spec.definitions?.[table];
+    const def = spec.definitions?.[table] as
+      | (SupabaseOpenApiSpec['definitions'][string] & {
+          ['x-primary-key']?: string[];
+        })
+      | undefined;
     if (!def) return null;
 
+    // RPC fallback path: trust the ordered x-primary-key list. For composite
+    // PKs (length > 1), return them comma-joined — SupabaseClient.batchUpdate
+    // and the settings UI text input both accept that form.
+    const xPk = def['x-primary-key'];
+    if (Array.isArray(xPk) && xPk.length > 0) {
+      return xPk.join(',');
+    }
+
+    // OpenAPI path: PostgREST marks PK columns with <pk/> in the description.
+    // Single-marker tables resolve cleanly; composite PKs would emit multiple
+    // markers — collect them in document order and join.
+    const markers: string[] = [];
     for (const [name, col] of Object.entries(def.properties ?? {})) {
       if (typeof col.description === 'string' && col.description.includes(PK_MARKER)) {
-        return name;
+        markers.push(name);
       }
     }
+    if (markers.length > 0) return markers.join(',');
+
     // No `required[0]` fallback: OpenAPI `required` is an unordered set of
     // NOT NULL columns, not an ordered PK list. Views never have <pk/>
     // markers, so trusting `required[0]` would auto-save a wrong PK and
@@ -260,7 +292,12 @@ export class SupabaseMetadataCache {
   private classify(spec: SupabaseOpenApiSpec, want: 'table' | 'view'): SupabaseTable[] {
     const out: SupabaseTable[] = [];
     for (const [name, def] of Object.entries(spec.definitions ?? {})) {
-      const isTable = hasPkColumn(def);
+      // RPC fallback path emits an explicit x-table-type so PK-less BASE
+      // TABLEs (audit/queue/landing tables) aren't misclassified as views.
+      // Fall back to hasPkColumn for OpenAPI paths that don't include the
+      // extension.
+      const xType = (def as unknown as { ['x-table-type']?: string })['x-table-type'];
+      const isTable = xType ? xType === 'BASE TABLE' : hasPkColumn(def);
       if ((want === 'table') === isTable) {
         out.push({ name, columns: extractColumns(def) });
       }

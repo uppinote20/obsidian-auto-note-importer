@@ -13,7 +13,7 @@
  * @tested e2e:tests/e2e/run-supabase-e2e.mjs
  */
 
-import { requestUrl } from 'obsidian';
+import { requestUrl, type RequestUrlParam } from 'obsidian';
 import {
   SUPABASE_DEFAULT_BATCH_SIZE,
   SUPABASE_DEFAULT_SCHEMA,
@@ -33,6 +33,7 @@ import type {
 } from '../types';
 import { normalizeServerUrl, extractApiErrorDetails, buildBatchFailures, formatBatchLimitError } from '../utils';
 import { supabaseFieldMapper } from './supabase-field-mapper';
+import { SupabaseSchemaRpcMissingError } from './supabase-metadata-cache';
 import { SupabaseMetadataCache } from './supabase-metadata-cache';
 import { RateLimiter } from './rate-limiter';
 
@@ -121,6 +122,29 @@ export class SupabaseClient implements DatabaseProvider {
     return normalizeServerUrl(this.credential.projectUrl, '');
   }
 
+  /**
+   * Wraps `requestUrl({...opts, throw: false})` with a fallback for older
+   * Obsidian builds that ignore `throw: false` and reject on 4xx/5xx. Without
+   * this wrapper, the status-driven branches in fetchNotes (e.g. 416 = EOF),
+   * fetchRecord (404 → null), and batchUpdate (non-2xx → buildBatchFailures)
+   * are dead code under default Obsidian behavior.
+   */
+  private async request(opts: RequestUrlParam) {
+    try {
+      return await requestUrl({ ...opts, throw: false });
+    } catch (e) {
+      const err = e as { status?: number; headers?: Record<string, string>; json?: unknown; text?: string };
+      if (typeof err.status !== 'number') throw e;
+      return {
+        status: err.status,
+        headers: err.headers ?? {},
+        json: err.json,
+        text: err.text ?? '',
+        arrayBuffer: new ArrayBuffer(0),
+      } as Awaited<ReturnType<typeof requestUrl>>;
+    }
+  }
+
   private async loadWritableColumns(tableName: string, schema: string): Promise<Map<string, string> | null> {
     try {
       const spec = await this.metadataCache.getSpec(this.credential, schema);
@@ -132,7 +156,12 @@ export class SupabaseClient implements DatabaseProvider {
         }
       }
       return m;
-    } catch {
+    } catch (error) {
+      // SupabaseSchemaRpcMissingError is a setup-required signal — re-throw
+      // so batchUpdate can surface a clear "install the RPC SQL" failure
+      // instead of falling through to "send everything raw" and getting
+      // a cryptic PostgREST 400.
+      if (error instanceof SupabaseSchemaRpcMissingError) throw error;
       return null;
     }
   }
@@ -150,14 +179,28 @@ export class SupabaseClient implements DatabaseProvider {
     if (value !== '') return value;  // only "" is the problem case
     if (!providerType) return value;
     if (providerType.startsWith('array:')) return [];      // empty PostgreSQL array
-    if (providerType.includes(':jsonb') || providerType.includes(':json')) return null;
-    // string/text columns legitimately accept "" — keep it.
-    if (providerType.startsWith('string') && !providerType.includes(':uuid')) return value;
-    // Numeric/boolean/uuid/date/timestamp/etc. can't accept "" — drop the field.
+    // jsonb/json — emitted as `string:jsonb` by the RPC fallback OR plain
+    // `object` by PostgREST's own OpenAPI for some configurations.
+    if (providerType === 'object' || /(:|^)json[b]?$/.test(providerType)) return null;
+    // Only PLAIN `string` accepts "" legitimately (text/varchar/citext/etc).
+    // Every formatted string variant (`string:date`, `string:date-time`,
+    // `string:byte`, `string:uuid`) maps to a PG type that rejects ""  drop.
+    if (providerType === 'string') return value;
     return SupabaseClient.SKIP_FIELD;
   }
 
   private static readonly SKIP_FIELD = Symbol('skip');
+
+  /**
+   * Encode a PostgREST column-list (`pk` may be `"col_a,col_b"` for composite
+   * PKs per the settings UI). Comma is the column separator on the wire and
+   * must NOT be percent-encoded — encoding each segment individually
+   * preserves the separator while still escaping any unusual identifier
+   * characters within a column name.
+   */
+  private static encodeColumnList(pkList: string): string {
+    return pkList.split(',').map(p => encodeURIComponent(p.trim())).join(',');
+  }
 
   private buildHeaders(opts: { write?: boolean } = {}): Record<string, string> {
     const headers: Record<string, string> = {
@@ -186,7 +229,7 @@ export class SupabaseClient implements DatabaseProvider {
     while (allNotes.length < MAX_FETCH_ROWS) {
       const end = start + SUPABASE_PAGE_SIZE - 1;
       const response = await this.rateLimiter.execute(() =>
-        requestUrl({
+        this.request({
           url,
           method: 'GET',
           headers: {
@@ -210,8 +253,15 @@ export class SupabaseClient implements DatabaseProvider {
       // Fail fast on the first page when the configured PK column doesn't
       // appear in the endpoint's rows. Otherwise the loop silently produces
       // [] and the user sees "0 notes synced" with no hint that the view
-      // is the wrong shape for this PK.
-      if (start === 0 && rows.length > 0 && !(pk in rows[0])) {
+      // is the wrong shape for this PK. Guard against rows[0] being a
+      // non-object — `in` operator throws TypeError on null/undefined.
+      if (
+        start === 0 &&
+        rows.length > 0 &&
+        rows[0] !== null &&
+        typeof rows[0] === 'object' &&
+        !(pk in rows[0])
+      ) {
         throw new Error(
           `Supabase primaryKeyColumn "${pk}" not found in endpoint "${endpoint}". ` +
           `The configured view/table does not expose that column — pick a different PK or endpoint in settings.`,
@@ -259,7 +309,7 @@ export class SupabaseClient implements DatabaseProvider {
     const url = `${projectUrl}/rest/v1/${encodeURIComponent(endpoint)}?${encodeURIComponent(pk)}=eq.${encodeURIComponent(recordId)}&limit=1`;
 
     const response = await this.rateLimiter.execute(() =>
-      requestUrl({ url, method: 'GET', headers: this.buildHeaders() }),
+      this.request({ url, method: 'GET', headers: this.buildHeaders() }),
     );
 
     if (response.status === 404) return null;
@@ -311,7 +361,7 @@ export class SupabaseClient implements DatabaseProvider {
       const tableName = this.config.tableId;  // upsert always targets base table, not view
       const pk = this.config.primaryKeyColumn;
       const schema = this.getSchema();
-      const url = `${projectUrl}/rest/v1/${encodeURIComponent(tableName)}?on_conflict=${encodeURIComponent(pk)}`;
+      const url = `${projectUrl}/rest/v1/${encodeURIComponent(tableName)}?on_conflict=${SupabaseClient.encodeColumnList(pk)}`;
 
       // Base-table column type map (writable only) lets us filter out GENERATED
       // columns + view-derived joins AND coerce frontmatter "" placeholders
@@ -319,6 +369,18 @@ export class SupabaseClient implements DatabaseProvider {
       // empty values per column type. Metadata fetch is best-effort — failures
       // fall through to "send everything".
       const writableColumns = await this.loadWritableColumns(tableName, schema);
+
+      // Guard: if metadata is available AND no column is writable, the user
+      // has likely pointed `tableId` at a non-updatable view. Without this
+      // guard the upsert body would contain only the PK and PostgREST would
+      // either silent no-op (INSTEAD OF triggers) or corrupt base table data
+      // via rewrite rules — fail fast with an actionable message instead.
+      if (writableColumns !== null && writableColumns.size === 0) {
+        return buildBatchFailures(
+          updates,
+          `No writable columns found for "${tableName}" — is this a non-updatable view? Set tableId to a base table; use viewId for read-only filtering.`,
+        );
+      }
 
       const body = updates.map(u => {
         const filtered: Record<string, unknown> = {};
@@ -339,7 +401,7 @@ export class SupabaseClient implements DatabaseProvider {
       // require plumbing the orchestrator mode through to the provider and
       // is tracked separately rather than here.
       const response = await this.rateLimiter.execute(() =>
-        requestUrl({
+        this.request({
           url,
           method: 'POST',
           headers: {

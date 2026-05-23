@@ -146,13 +146,27 @@ describe('SupabaseMetadataCache RPC fallback (publishable-key path)', () => {
     await expect(cache.getSpec(cred, 'public')).rejects.toBeInstanceOf(SupabaseSchemaRpcMissingError);
   });
 
-  it('throws SupabaseSchemaRpcMissingError when RPC returns 400 (function does not exist surfaced as 400)', async () => {
+  it('throws SupabaseSchemaRpcMissingError when RPC body indicates the function is missing (PGRST202)', async () => {
     mockRequestUrl
       .mockResolvedValueOnce({ status: 401, json: {}, text: '' })
-      .mockResolvedValueOnce({ status: 400, json: { message: 'function does not exist' }, text: '' });
+      .mockResolvedValueOnce({ status: 404, json: { code: 'PGRST202', message: 'function ani_supabase_schema does not exist' }, text: '' });
 
     const cache = new SupabaseMetadataCache();
     await expect(cache.getSpec(cred, 'public')).rejects.toBeInstanceOf(SupabaseSchemaRpcMissingError);
+  });
+
+  it('does NOT classify generic 400 as SupabaseSchemaRpcMissingError (only PGRST202 / "function does not exist")', async () => {
+    // A PG upgrade that changed information_schema column types can make the
+    // RPC body return 400 with a totally different error — must not loop the
+    // user through the "Run this SQL" banner.
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {}, text: '' })
+      .mockResolvedValueOnce({ status: 400, json: { code: '42703', message: 'column "x" does not exist' }, text: '' });
+
+    const cache = new SupabaseMetadataCache();
+    const err = await cache.getSpec(cred, 'public').catch(e => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(SupabaseSchemaRpcMissingError);
   });
 
   it('throws a plain Error when RPC fails for other reasons (e.g., 500)', async () => {
@@ -167,7 +181,10 @@ describe('SupabaseMetadataCache RPC fallback (publishable-key path)', () => {
     expect(String(err.message)).toMatch(/500|internal/i);
   });
 
-  it('forwards Accept-Profile to the RPC call for non-public schemas', async () => {
+  it('conveys the target schema via the p_schema body parameter only (no Accept-Profile/Content-Profile on RPC POST)', async () => {
+    // The RPC function lives in public; routing it through Accept-Profile or
+    // Content-Profile would mis-route on deployments with a non-default
+    // db-schemas order. The body parameter `p_schema` is the source of truth.
     mockRequestUrl
       .mockResolvedValueOnce({ status: 401, json: {}, text: '' })
       .mockResolvedValueOnce({ status: 200, json: { notes: { properties: { id: { type: 'string', description: '<pk/>' } }, required: ['id'] } }, text: '' });
@@ -175,7 +192,8 @@ describe('SupabaseMetadataCache RPC fallback (publishable-key path)', () => {
     const cache = new SupabaseMetadataCache();
     await cache.getSpec(cred, 'app');
     const rpcCall = mockRequestUrl.mock.calls[1][0];
-    expect(rpcCall.headers['Accept-Profile']).toBe('app');
+    expect(rpcCall.headers['Accept-Profile']).toBeUndefined();
+    expect(rpcCall.headers['Content-Profile']).toBeUndefined();
     expect(JSON.parse(rpcCall.body)).toEqual({ p_schema: 'app' });
   });
 });

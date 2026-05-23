@@ -19,6 +19,7 @@ import type {
   CredentialFormState,
 } from '../types';
 import { extractApiErrorMessage, normalizeServerUrl } from '../utils';
+import { SUPABASE_RPC_SCHEMA_FN } from '../constants';
 
 export type KeyKind =
   | 'publishable-new'
@@ -154,22 +155,66 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
     }
     const projectUrl = normalizeServerUrl(credential.projectUrl, '');
     if (!projectUrl) return { success: false, error: 'Project URL is empty.' };
+    const baseHeaders = {
+      'apikey': credential.apiKey,
+      'Authorization': `Bearer ${credential.apiKey}`,
+    };
+
+    // Step 1: prefer the native OpenAPI endpoint (legacy anon JWT / secret).
     try {
       const response = await requestUrl({
         url: `${projectUrl}/rest/v1/`,
         method: 'GET',
-        headers: {
-          'apikey': credential.apiKey,
-          'Authorization': `Bearer ${credential.apiKey}`,
-          'Accept': 'application/openapi+json',
-        },
+        headers: { ...baseHeaders, 'Accept': 'application/openapi+json' },
+        throw: false,
       });
-      if (response.status !== 200) {
+      if (response.status === 200) {
+        const spec = response.json as { definitions?: Record<string, unknown> } | undefined;
+        const tableCount = spec?.definitions ? Object.keys(spec.definitions).length : 0;
+        return { success: true, detail: `Connected - ${tableCount} endpoints visible` };
+      }
+      if (response.status !== 401) {
         return { success: false, error: `HTTP ${response.status}: ${extractApiErrorMessage(response)}` };
       }
-      const spec = response.json as { definitions?: Record<string, unknown> } | undefined;
-      const tableCount = spec?.definitions ? Object.keys(spec.definitions).length : 0;
-      return { success: true, detail: `Connected - ${tableCount} endpoints visible` };
+      // 401 → fall through to RPC fallback (publishable-key path).
+    } catch (error) {
+      // Older Obsidian builds reject on 4xx ignoring throw:false. Fall
+      // through to RPC unless it's clearly a non-HTTP failure.
+      const err = error as { status?: number; message?: string };
+      if (typeof err.status !== 'number') {
+        return { success: false, error: err.message ?? 'Network error' };
+      }
+      if (err.status !== 401) {
+        return { success: false, error: `HTTP ${err.status}: ${err.message ?? 'unknown'}` };
+      }
+    }
+
+    // Step 2: publishable-key path — call the RPC fallback. 200 = installed,
+    // 4xx with PGRST202 / "function does not exist" = key works but RPC not
+    // installed yet (still a successful auth test).
+    try {
+      const rpc = await requestUrl({
+        url: `${projectUrl}/rest/v1/rpc/${SUPABASE_RPC_SCHEMA_FN}`,
+        method: 'POST',
+        headers: { ...baseHeaders, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_schema: 'public' }),
+        throw: false,
+      });
+      if (rpc.status === 200) {
+        const defs = rpc.json as Record<string, unknown> | undefined;
+        const tableCount = defs && typeof defs === 'object' && !Array.isArray(defs) ? Object.keys(defs).length : 0;
+        return { success: true, detail: `Connected via RPC - ${tableCount} endpoints visible` };
+      }
+      const body = rpc.json as { code?: string; message?: string } | undefined;
+      const rpcMissing = body?.code === 'PGRST202' ||
+        (typeof body?.message === 'string' && /function .* does not exist/i.test(body.message));
+      if (rpcMissing) {
+        return {
+          success: true,
+          detail: 'Publishable key authenticates — run the setup SQL (settings card) to enable schema introspection.',
+        };
+      }
+      return { success: false, error: `HTTP ${rpc.status}: ${extractApiErrorMessage(rpc)}` };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Network error' };
     }

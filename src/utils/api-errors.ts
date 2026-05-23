@@ -43,6 +43,13 @@ export function extractApiErrorMessage(response: ApiErrorResponse): string {
       const hint = typeof body.hint === 'string' && body.hint ? ` (hint: ${body.hint})` : '';
       return `${body.message}${hint} [${body.code}]`;
     }
+    // Provider-specific shapes go before the generic `message` fallback so
+    // a proxy that wraps a SeaTable / Airtable error in {message: 'OK', error_msg: '...'}
+    // keeps surfacing the actionable inner message.
+    if (typeof body.error_msg === 'string' && body.error_msg) return body.error_msg;
+    if (typeof body.error_message === 'string' && body.error_message) return body.error_message;
+    if (typeof body.error === 'string' && body.error) return body.error;
+    if (body.error && typeof body.error === 'object' && body.error.message) return body.error.message;
     // Kong / GoTrue auth-gateway proxy: top-level `message` (and optional hint) WITHOUT a `code`.
     // Without this branch, Supabase auth failures fall through to raw response.text
     // or doubled "HTTP 401" output, hiding the actionable hint.
@@ -50,10 +57,6 @@ export function extractApiErrorMessage(response: ApiErrorResponse): string {
       const hint = typeof body.hint === 'string' && body.hint ? ` (hint: ${body.hint})` : '';
       return `${body.message}${hint}`;
     }
-    if (typeof body.error_msg === 'string' && body.error_msg) return body.error_msg;
-    if (typeof body.error_message === 'string' && body.error_message) return body.error_message;
-    if (typeof body.error === 'string' && body.error) return body.error;
-    if (body.error && typeof body.error === 'object' && body.error.message) return body.error.message;
   }
   if (response.text) return response.text;
   return response.status !== undefined ? `HTTP ${response.status}` : 'Unknown error';
