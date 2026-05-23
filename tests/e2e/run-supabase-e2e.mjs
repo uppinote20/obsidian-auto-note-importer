@@ -37,6 +37,12 @@
  *        CREATE VIEW active_notes AS SELECT * FROM notes WHERE archived = false;
  *        ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
  *        CREATE POLICY "anon_all" ON notes FOR ALL USING (true);
+ *   5. If you're using a publishable key (sb_publishable_...) — Supabase's
+ *      new key system blocks OpenAPI schema access for publishable keys, so
+ *      the harness needs the RPC fallback installed. Print the SQL with:
+ *        node -e "console.log(require('./src/constants/supabase-rpc.ts').SUPABASE_RPC_SCHEMA_SQL)"
+ *      paste it into Supabase SQL Editor, and Run. Skip this step if you're
+ *      using a legacy anon JWT — those still get OpenAPI directly.
  *
  * What the harness does:
  *   - Adds (or reuses) a dedicated Supabase credential + ConfigEntry
@@ -541,11 +547,21 @@ async function cleanup() {
       // deduped by PostgREST merge-duplicates. SupabaseClient.batchUpdate
       // detects the collision and rejects the whole batch with an explicit
       // 'Duplicate recordId' error so the user can clean up the vault.
+      //
+      // Requires obsidian-wins so the conflict resolver lets both modified
+      // notes through to the batch (manual mode would block them upstream
+      // and the duplicate check would never run).
+      //
+      // We spy on provider.batchUpdate rather than capturing Notice because
+      // esbuild's `external: ['obsidian']` CJS bundling locks the Notice
+      // reference at build time — a window.Notice monkey-patch can't intercept
+      // it. Asserting against the SyncResult.error is the durable check.
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
-        setMode('obsidian-wins');
+        setMode('obsidian-wins', false);
         const cfg = getConfig();
+        const inst = getInstance(cfg);
         const dupTitle = 'E2E-SB-Dup-Copy';
         const dupPath = cfg.folderPath + '/' + dupTitle + '.md';
 
@@ -557,34 +573,36 @@ async function cleanup() {
         const newFile = app.vault.getAbstractFileByPath(dupPath);
         await modifyField(newFile, 'content', 'duplicate-attempt');
 
-        // Capture Notices emitted during push so we can spot the 'Duplicate' message.
-        const notices = [];
-        const origNotice = window.Notice;
-        // @ts-ignore Notice may be patched in dev/test
-        window.Notice = function(text, timeout) {
-          notices.push(typeof text === 'string' ? text : (text?.textContent || ''));
-          return new origNotice(text, timeout);
+        // Spy on batchUpdate to capture the SyncResult[] verbatim.
+        const provider = inst.databaseProvider;
+        const origBatch = provider.batchUpdate.bind(provider);
+        const seenResults = [];
+        provider.batchUpdate = async (updates) => {
+          const res = await origBatch(updates);
+          seenResults.push(res);
+          return res;
         };
 
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
 
-        // Restore
-        // @ts-ignore
-        window.Notice = origNotice;
+        provider.batchUpdate = origBatch;
         await app.vault.delete(newFile);
         setMode('manual');
 
         const remote = await fetchRowFromSupabase(${JSON.stringify(testRowIds[0])});
         return JSON.stringify({
-          notices,
+          seenResults,
           remoteContent: remote?.content,
         });
       })()`, 25000);
-      const sawDuplicateNotice = (r.notices || []).some(n => /duplicate/i.test(n));
+      const allResults = (r.seenResults || []).flat();
+      const sawDuplicateError = allResults.some(
+        x => x.success === false && /duplicate/i.test(x.error || ''),
+      );
       const remoteUnchanged = r.remoteContent === 'pull row';  // initial value from doReset
-      const pass = sawDuplicateNotice && remoteUnchanged;
-      return { pass, detail: `sawDup=${sawDuplicateNotice} remote="${r.remoteContent}"` };
+      const pass = sawDuplicateError && remoteUnchanged;
+      return { pass, detail: `sawDup=${sawDuplicateError} remote="${r.remoteContent}"` };
     });
 
     await test('push / view-only columns are dropped before reaching the base table (G1 #2)', async () => {

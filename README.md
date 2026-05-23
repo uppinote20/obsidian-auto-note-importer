@@ -60,6 +60,7 @@ Import and sync notes bidirectionally between **Airtable**, **SeaTable**, and yo
    - **Legacy `anon`** (JWT) — RLS-protected, also fine but deprecated by Supabase
    - **Secret** (`sb_secret_…`) or **service_role** (JWT) — bypasses RLS; only use if you understand the implications. The plugin auto-detects key type and warns when a secret key is entered.
 4. Ensure the schema you want to sync is in **Settings → API → Exposed schemas** (default `public` is already exposed)
+5. **Publishable key users**: Supabase's new key system blocks schema introspection (OpenAPI) for publishable keys. The first time you open the Supabase connection card the plugin shows a one-time setup banner with a SECURITY DEFINER SQL function — click **Copy SQL**, paste it into your Supabase SQL Editor, Run once, then click **I've run it — Refresh**. Re-running is safe. Legacy `anon` JWT and secret keys don't need this step.
 
 ### 2. Configure the Plugin
 
@@ -279,6 +280,14 @@ CREATE VIEW active_notes AS
 ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "anon_all" ON notes FOR ALL USING (true);
 ```
+
+If you'll run e2e (or the plugin itself) with a **publishable key** (`sb_publishable_…`), also install the schema-introspection RPC fallback — Supabase's new key system blocks the OpenAPI endpoint for publishable keys, and the plugin reads schema through this RPC instead:
+
+```bash
+node -e "console.log(require('./src/constants/supabase-rpc.ts').SUPABASE_RPC_SCHEMA_SQL)"
+```
+
+Paste the output into Supabase SQL Editor and Run. Re-running is safe (`CREATE OR REPLACE`). This step is unnecessary for legacy `anon` JWTs — those still receive OpenAPI directly.
 
 Add to `.env` at the project root:
 
