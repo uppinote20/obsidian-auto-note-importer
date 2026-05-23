@@ -359,6 +359,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       return;
     }
     const renderer = getCredentialFormRenderer(cred.type);
+    this.credentialFormUi = { setupRequirement: null, bannerHost: null, saveButton: null };
     const state: CredentialFormState = {};
     let nameValue = cred.name;
 
@@ -401,7 +402,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               new Notice(`Auto Note Importer: ${result.error}`);
               return;
             }
-            void this.runConnectionTest(renderer, result.credential);
+            void this.runConnectionTest(renderer, result.credential, containerEl);
           });
       })
       .addButton(button => button
@@ -476,6 +477,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     const renderer = getCredentialFormRenderer(type);
+    this.credentialFormUi = { setupRequirement: null, bannerHost: null, saveButton: null };
     if (renderer.description) {
       containerEl.createEl('p', { cls: 'ani-credential-desc', text: renderer.description });
     }
@@ -509,7 +511,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               new Notice(`Auto Note Importer: ${result.error}`);
               return;
             }
-            void this.runConnectionTest(renderer, result.credential);
+            void this.runConnectionTest(renderer, result.credential, containerEl);
           });
       })
       .addButton(button => button
@@ -524,17 +526,36 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private async runConnectionTest(
     renderer: CredentialFormRenderer,
     credential: Credential,
+    formHostEl: HTMLElement,
   ): Promise<void> {
     if (!renderer.testConnection) return;
     new Notice('Auto Note Importer: Testing connection\u2026');
     try {
       const result = await renderer.testConnection(credential);
-      if (result.success) {
-        const detail = result.detail ? ` ${result.detail}` : '';
-        new Notice(`Auto Note Importer: Connection OK.${detail}`);
-      } else {
+      if (!result.success) {
         new Notice(`Auto Note Importer: Connection failed \u2014 ${result.error}`);
+        return;
       }
+      if (result.needsSetup && credential.type === 'supabase') {
+        // Suppress the "Connection OK" Notice \u2014 the inline banner is the
+        // contextual surface. Render banner inside form host, disable
+        // Save until verify succeeds.
+        const banner = this.renderRpcSetupBannerInForm(
+          this.ensureFormBannerHost(formHostEl),
+          credential,
+          () => this.clearFormSetupRequirement(),
+        );
+        if (this.credentialFormUi) {
+          this.credentialFormUi.setupRequirement = result.needsSetup;
+          this.credentialFormUi.bannerHost = banner;
+          if (this.credentialFormUi.saveButton) {
+            this.credentialFormUi.saveButton.disabled = true;
+          }
+        }
+        return;
+      }
+      const detail = result.detail ? ` ${result.detail}` : '';
+      new Notice(`Auto Note Importer: Connection OK.${detail}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Connection test errored \u2014 ${message}`);
@@ -1135,6 +1156,79 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         verifyBtn.textContent = originalText;
       }
     });
+  }
+
+  /**
+   * Credential-form variant of the RPC setup banner. Unlike the
+   * connection-card variant, this one does NOT include the manual-entry
+   * text fallback (the credential is still being authored — no config
+   * exists yet). On verify success the banner removes itself, calls the
+   * caller's onSuccess (to re-enable Save), and emits a one-line
+   * confirmation Notice. On verify failure it surfaces the error inline
+   * inside the banner.
+   *
+   * Returns the banner element so callers can stash it for later
+   * removal on field-change auto-reset.
+   */
+  private renderRpcSetupBannerInForm(
+    host: HTMLElement,
+    credential: SupabaseCredential,
+    onSuccess: () => void,
+  ): HTMLElement {
+    host.empty();
+    const banner = host.createDiv({ cls: 'ani-rpc-setup-banner' });
+    banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
+    banner.createEl('p').setText(
+      'Supabase’s new key system blocks publishable keys from reading the ' +
+      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
+      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
+    );
+
+    const errorHost = banner.createDiv({ cls: 'ani-rpc-setup-error' });
+
+    this.renderRpcSetupBannerCore(
+      banner,
+      credential,
+      () => {
+        new Notice('Auto Note Importer: Setup confirmed — you can save now.');
+        banner.remove();
+        onSuccess();
+      },
+      (error) => {
+        errorHost.empty();
+        errorHost.createEl('p', { cls: 'ani-rpc-setup-error-msg', text: `⚠ ${error}` });
+      },
+    );
+
+    return banner;
+  }
+
+  /**
+   * Returns (creating if needed) the dedicated banner host inside the
+   * credential form. Reusing one host means consecutive Test/Save
+   * cycles replace the previous banner instead of stacking.
+   */
+  private ensureFormBannerHost(formHostEl: HTMLElement): HTMLElement {
+    let host = formHostEl.querySelector<HTMLElement>(':scope > .ani-rpc-setup-host');
+    if (!host) {
+      host = formHostEl.createDiv({ cls: 'ani-rpc-setup-host' });
+    }
+    return host;
+  }
+
+  /**
+   * Clears the form-scoped setup requirement: removes the banner from
+   * the DOM and re-enables Save. Called when the user verifies setup
+   * successfully or edits a credential field (Task 9 auto-reset).
+   */
+  private clearFormSetupRequirement(): void {
+    if (!this.credentialFormUi) return;
+    this.credentialFormUi.setupRequirement = null;
+    this.credentialFormUi.bannerHost?.remove();
+    this.credentialFormUi.bannerHost = null;
+    if (this.credentialFormUi.saveButton) {
+      this.credentialFormUi.saveButton.disabled = false;
+    }
   }
 
   /**
