@@ -1236,15 +1236,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
    * (which calls clearFormSetupRequirement → removes the host); on
    * verify failure the error is surfaced inline inside the banner.
    *
-   * Returns the host element (outer `.ani-rpc-setup-host`) so callers
-   * can stash it as the cleanup target — removing the host wipes the
-   * inner banner + buttons + error in one DOM op.
+   * Returns void — the caller already holds the host from
+   * `ensureFormBannerHost`. Removing that host wipes the inner banner +
+   * buttons + error in one DOM op (claude bot round 2 PR #92 review:
+   * the prior `return host` was redundant API surface noise).
    */
   private renderRpcSetupBannerInForm(
     host: HTMLElement,
     credential: SupabaseCredential,
     onSuccess: () => void,
-  ): HTMLElement {
+  ): void {
     host.empty();
     const banner = host.createDiv({ cls: 'ani-rpc-setup-banner' });
     banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
@@ -1268,8 +1269,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         errorHost.createEl('p', { cls: 'ani-rpc-setup-error-msg', text: `⚠ ${error}` });
       },
     );
-
-    return host;
   }
 
   /**
@@ -1341,8 +1340,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           new Notice(`Auto Note Importer: Internal error — supabase-rpc setup requested for ${credential.type} credential.`);
           return false;
         }
-        const host = this.renderRpcSetupBannerInForm(
-          this.ensureFormBannerHost(formHostEl),
+        const host = this.ensureFormBannerHost(formHostEl);
+        this.renderRpcSetupBannerInForm(
+          host,
           credential,
           () => this.clearFormSetupRequirement(),
         );
@@ -1380,6 +1380,19 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     if (!renderer.verifySetup) return 'proceed';
     if (this.credentialFormUi?.isSaving) return 'blocked';   // re-entry guard
     if (this.credentialFormUi) this.credentialFormUi.isSaving = true;
+
+    // Visual loading state on the Save button — symmetric with the
+    // Test button pattern in runConnectionTest (claude bot round 2
+    // PR #92 review). verifySetup is a 2-step network probe and can
+    // take 1-3s; silent re-entry drops with no UI feedback would
+    // confuse users.
+    const saveBtn = this.credentialFormUi?.saveButton ?? null;
+    const originalSaveText = saveBtn?.textContent ?? null;
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+    }
+
     try {
       const result = await renderer.verifySetup(credential);
       if (!result.success) {
@@ -1403,6 +1416,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       return 'blocked';
     } finally {
       if (this.credentialFormUi) this.credentialFormUi.isSaving = false;
+      if (saveBtn) {
+        // Only restore disabled=false if the banner didn't take over the
+        // disable state. renderSetupBannerForRequirement sets
+        // saveButton.disabled=true when needsSetup is rendered — we must
+        // not clobber that here.
+        if (!this.credentialFormUi?.setupRequirement) {
+          saveBtn.disabled = false;
+        }
+        saveBtn.textContent = originalSaveText ?? 'Save';
+      }
     }
   }
 
