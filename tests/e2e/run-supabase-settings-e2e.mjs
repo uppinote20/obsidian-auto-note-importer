@@ -15,6 +15,18 @@
  *
  * Usage:
  *   node tests/e2e/run-supabase-settings-e2e.mjs
+ *
+ * IMPORTANT — TypeScript `private` access at runtime:
+ *   Scenarios under "Issue #91" (RPC setup banner) intentionally call
+ *   TypeScript `private` members on the settings tab at runtime —
+ *   `tab.ensureFormBannerHost`, `tab.renderRpcSetupBannerInForm`,
+ *   `tab.credentialFormUi`. JS has no enforcement so this works, but the
+ *   bindings MUST be kept in sync with the settings-tab implementation.
+ *   A rename or signature change to any of those without updating these
+ *   scenarios will silently break the e2e without a compile error.
+ *   This is acknowledged in PR #92 review (claude #3) — the trade-off
+ *   is faster + less flaky than driving the full Test/Save button flow
+ *   via CDP clicks for state↔DOM integration verification.
  */
 
 import { findPageTarget } from './cdp-helpers.mjs';
