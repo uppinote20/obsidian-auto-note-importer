@@ -57,6 +57,7 @@ interface CredentialFormUiState {
   setupRequirement: SetupRequirement | null;
   bannerHost: HTMLElement | null;
   saveButton: HTMLButtonElement | null;
+  testButton: HTMLButtonElement | null;
   isTesting: boolean;
   isSaving: boolean;
   cleanups: Array<() => void>;
@@ -422,17 +423,18 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         });
       })
       .addButton(button => {
-        button
-          .setButtonText('Test')
-          .setDisabled(!renderer.testConnection)
-          .onClick(() => {
-            const result = renderer.build(nameValue, state, cred.id);
-            if (!result.ok) {
-              new Notice(`Auto Note Importer: ${result.error}`);
-              return;
-            }
-            void this.runConnectionTest(renderer, result.credential, containerEl);
-          });
+        button.setButtonText('Test').setDisabled(!renderer.testConnection);
+        if (this.credentialFormUi) {
+          this.credentialFormUi.testButton = button.buttonEl;
+        }
+        button.onClick(() => {
+          const result = renderer.build(nameValue, state, cred.id);
+          if (!result.ok) {
+            new Notice(`Auto Note Importer: ${result.error}`);
+            return;
+          }
+          void this.runConnectionTest(renderer, result.credential, containerEl);
+        });
       })
       .addButton(button => button
         .setButtonText('Cancel')
@@ -552,17 +554,18 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         });
       })
       .addButton(button => {
-        button
-          .setButtonText('Test')
-          .setDisabled(!renderer.testConnection)
-          .onClick(() => {
-            const result = renderer.build(context.name, context.state, 'test-only');
-            if (!result.ok) {
-              new Notice(`Auto Note Importer: ${result.error}`);
-              return;
-            }
-            void this.runConnectionTest(renderer, result.credential, containerEl);
-          });
+        button.setButtonText('Test').setDisabled(!renderer.testConnection);
+        if (this.credentialFormUi) {
+          this.credentialFormUi.testButton = button.buttonEl;
+        }
+        button.onClick(() => {
+          const result = renderer.build(context.name, context.state, 'test-only');
+          if (!result.ok) {
+            new Notice(`Auto Note Importer: ${result.error}`);
+            return;
+          }
+          void this.runConnectionTest(renderer, result.credential, containerEl);
+        });
       })
       .addButton(button => button
         .setButtonText('Cancel')
@@ -581,6 +584,17 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     if (!renderer.testConnection) return;
     if (this.credentialFormUi?.isTesting) return;   // re-entry guard
     if (this.credentialFormUi) this.credentialFormUi.isTesting = true;
+
+    // Visual loading state on the Test button itself \u2014 re-entry guard
+    // silently drops rapid double-clicks, but without UI feedback the
+    // user has no idea the second click was ignored.
+    const testBtn = this.credentialFormUi?.testButton ?? null;
+    const originalTestText = testBtn?.textContent ?? null;
+    if (testBtn) {
+      testBtn.disabled = true;
+      testBtn.textContent = 'Testing\u2026';
+    }
+
     new Notice('Auto Note Importer: Testing connection\u2026');
     try {
       const result = await renderer.testConnection(credential);
@@ -595,6 +609,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         this.renderSetupBannerForRequirement(result.needsSetup, credential, formHostEl);
         return;
       }
+      // Success without needsSetup \u2014 if a prior probe set the banner
+      // (e.g. user installed the RPC externally between Test clicks),
+      // clear it now so Save isn't stuck disabled (Codex P2, PR #92).
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
+      }
       const detail = result.detail ? ` ${result.detail}` : '';
       new Notice(`Auto Note Importer: Connection OK.${detail}`);
     } catch (error) {
@@ -602,6 +622,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       new Notice(`Auto Note Importer: Connection test errored \u2014 ${message}`);
     } finally {
       if (this.credentialFormUi) this.credentialFormUi.isTesting = false;
+      if (testBtn) {
+        testBtn.disabled = false;
+        testBtn.textContent = originalTestText ?? 'Test';
+      }
     }
   }
 
@@ -1196,7 +1220,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }
       } finally {
         verifyBtn.disabled = false;
-        verifyBtn.textContent = originalText;
+        // `textContent` is `string | null`; restore the literal default
+        // if the original was somehow null (e.g. detached node) so the
+        // button never goes blank (claude #1, PR #92).
+        verifyBtn.textContent = originalText ?? 'I’ve run it — Verify';
       }
     });
   }
@@ -1283,6 +1310,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       setupRequirement: null,
       bannerHost: null,
       saveButton: null,
+      testButton: null,
       isTesting: false,
       isSaving: false,
       cleanups: [],
@@ -1361,6 +1389,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       if (result.needsSetup) {
         this.renderSetupBannerForRequirement(result.needsSetup, credential, formHostEl);
         return 'blocked';
+      }
+      // Save-time verify can also clear a stale banner — e.g. user
+      // installed the RPC externally then clicked Save without Verify
+      // first (Codex P2, PR #92).
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
       }
       return 'proceed';
     } catch (error) {
