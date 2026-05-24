@@ -18,6 +18,7 @@ import type {
   CredentialBuildResult,
   CredentialFormRenderer,
   CredentialFormState,
+  SupabaseCredential,
 } from '../types';
 import { extractApiErrorMessage, normalizeServerUrl } from '../utils';
 import { SUPABASE_RPC_SCHEMA_FN } from '../constants';
@@ -170,10 +171,21 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
     };
   }
 
-  async testConnection(credential: Credential): Promise<ConnectionTestResult> {
-    if (credential.type !== 'supabase') {
-      return { success: false, error: `Expected supabase credential, got ${credential.type}` };
-    }
+  /**
+   * Probes the Supabase project for reachability + key authority +
+   * schema-introspection access. Single source of truth for the
+   * 2-step probe shared by testConnection and verifySetup — see the
+   * "verifySetup duplicates the RPC call" PR review (PR #92) for why
+   * this is shared instead of duplicated.
+   *
+   * Returns ConnectionTestResult with the same semantics as
+   * testConnection / verifySetup: success without needsSetup means the
+   * key can read schema natively (legacy anon JWT / secret) OR the RPC
+   * is installed; success with needsSetup means the key is publishable
+   * AND the RPC is missing; failure means the key itself is invalid or
+   * the network is unreachable.
+   */
+  private async probeRpc(credential: SupabaseCredential): Promise<ConnectionTestResult> {
     const projectUrl = normalizeServerUrl(credential.projectUrl, '');
     if (!projectUrl) return { success: false, error: 'Project URL is empty.' };
     const baseHeaders = {
@@ -182,6 +194,10 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
     };
 
     // Step 1: prefer the native OpenAPI endpoint (legacy anon JWT / secret).
+    // 200 here means the key reads schema directly — no RPC fallback needed,
+    // and crucially no needsSetup signal (Codex P1 regression: previously,
+    // verifySetup skipped this step and blocked save for secret/anon keys
+    // whenever the RPC was missing).
     try {
       const response = await requestUrl({
         url: `${projectUrl}/rest/v1/`,
@@ -213,6 +229,10 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
     // Step 2: publishable-key path — call the RPC fallback. 200 = installed,
     // 4xx with PGRST202 / "function does not exist" = key works but RPC not
     // installed yet (still a successful auth test).
+    //
+    // p_schema: 'public' — the RPC itself is always installed in the
+    // public schema regardless of which schema the user's data lives in;
+    // we only need to confirm the function exists.
     try {
       const rpc = await requestUrl({
         url: `${projectUrl}/rest/v1/rpc/${SUPABASE_RPC_SCHEMA_FN}`,
@@ -239,39 +259,18 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
     }
   }
 
+  async testConnection(credential: Credential): Promise<ConnectionTestResult> {
+    if (credential.type !== 'supabase') {
+      return { success: false, error: `Expected supabase credential, got ${credential.type}` };
+    }
+    return this.probeRpc(credential);
+  }
+
   async verifySetup(credential: Credential): Promise<ConnectionTestResult> {
     if (credential.type !== 'supabase') {
       return { success: false, error: `Expected supabase credential, got ${credential.type}` };
     }
-    const projectUrl = normalizeServerUrl(credential.projectUrl, '');
-    if (!projectUrl) return { success: false, error: 'Project URL is empty.' };
-
-    try {
-      const rpc = await requestUrl({
-        url: `${projectUrl}/rest/v1/rpc/${SUPABASE_RPC_SCHEMA_FN}`,
-        method: 'POST',
-        headers: {
-          'apikey': credential.apiKey,
-          'Authorization': `Bearer ${credential.apiKey}`,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ p_schema: 'public' }),
-        throw: false,
-      });
-
-      if (rpc.status === 200) {
-        return { success: true, detail: 'RPC reachable.' };
-      }
-
-      if (isRpcMissingResponse(rpc)) {
-        return { success: true, needsSetup: { kind: 'supabase-rpc' } };
-      }
-
-      return { success: false, error: `HTTP ${rpc.status}: ${extractApiErrorMessage(rpc)}` };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Network error' };
-    }
+    return this.probeRpc(credential);
   }
 }
 

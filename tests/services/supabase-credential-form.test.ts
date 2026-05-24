@@ -228,38 +228,54 @@ describe('supabaseCredentialFormRenderer.verifySetup', () => {
     projectUrl: 'https://abc.supabase.co', apiKey: 'sb_publishable_xxx',
   };
 
-  it('returns needsSetup when RPC returns 404/PGRST202', async () => {
-    mockRequestUrl.mockResolvedValueOnce({
-      status: 404,
-      json: { code: 'PGRST202', message: 'function ani_supabase_schema does not exist' },
-    });
+  it('returns needsSetup when publishable key + OpenAPI 401 + RPC PGRST202', async () => {
+    // verifySetup now mirrors testConnection's 2-step probe — OpenAPI
+    // first, RPC fallback on 401.
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({ status: 404, json: { code: 'PGRST202', message: 'function ani_supabase_schema does not exist' } });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(r.needsSetup).toEqual({ kind: 'supabase-rpc' });
   });
 
-  it('returns plain success with detail when RPC returns 200', async () => {
-    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { notes: {} } });
+  // Codex P1 (PR #92) regression coverage: prior to the probeRpc
+  // refactor, verifySetup skipped the OpenAPI step and went straight to
+  // the RPC. A secret/anon-JWT user with a project missing the RPC
+  // would be wrongly blocked from saving even though OpenAPI 200 means
+  // the key reads schema natively — no RPC needed.
+  it('returns success WITHOUT needsSetup when OpenAPI 200 (secret / anon JWT)', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200,
+      json: { definitions: { notes: {}, tags: {} } },
+    });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(r.needsSetup).toBeUndefined();
-    expect(r.detail).toBe('RPC reachable.');
+    expect(r.detail).toContain('2');
   });
 
-  it('does NOT miscategorize non-JSON body (HTML 502) as rpc-missing', async () => {
-    // Self-hosted PostgREST behind a misconfigured proxy may return
-    // HTML 502 with no JSON body — without isRpcMissingResponse's type
-    // guard, the .code check would silently fall through to "not
-    // missing" and we'd return a generic HTTP error (still correct here)
-    // — but with `rpc.json === undefined` we MUST NOT throw or
-    // miscategorize as success.
-    mockRequestUrl.mockResolvedValueOnce({
-      status: 502,
-      json: undefined,
-      text: () => '<html>502 Bad Gateway</html>',
-    });
+  it('returns success WITHOUT needsSetup when OpenAPI 401 + RPC 200 (publishable + installed)', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({ status: 200, json: { notes: {}, tags: {} } });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.needsSetup).toBeUndefined();
+    expect(r.detail).toContain('RPC');
+  });
+
+  it('does NOT miscategorize non-JSON body (HTML 502) on RPC step as rpc-missing', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({
+        status: 502,
+        json: undefined,
+        text: () => '<html>502 Bad Gateway</html>',
+      });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(false);
     if (r.success) return;
@@ -267,46 +283,55 @@ describe('supabaseCredentialFormRenderer.verifySetup', () => {
   });
 
   it('does NOT miscategorize null rpc.json as rpc-missing', async () => {
-    mockRequestUrl.mockResolvedValueOnce({ status: 500, json: null });
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({ status: 500, json: null });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(false);
   });
 
   it('does NOT miscategorize array rpc.json as rpc-missing', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({ status: 404, json: ['unexpected', 'shape'] });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('404');
+  });
+
+  it('returns failure on OpenAPI non-401 / non-200 (e.g. 500)', async () => {
     mockRequestUrl.mockResolvedValueOnce({
-      status: 404,
-      json: ['unexpected', 'shape'],
+      status: 500,
+      json: { message: 'server error' },
     });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(false);
     if (r.success) return;
-    // Critical: must surface as failure, NOT as `success: true, needsSetup`.
-    expect(r.error).toContain('404');
+    expect(r.error).toContain('500');
   });
 
-  it('returns failure on 401', async () => {
-    mockRequestUrl.mockResolvedValueOnce({
-      status: 401,
-      json: { message: 'Invalid API key' },
-    });
+  it('returns failure on RPC 401 (publishable key revoked between OpenAPI and RPC)', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({ status: 401, json: { message: 'Invalid API key' } });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(false);
     if (r.success) return;
     expect(r.error).toContain('401');
   });
 
-  it('returns failure on 5xx', async () => {
-    mockRequestUrl.mockResolvedValueOnce({
-      status: 503,
-      json: { message: 'service unavailable' },
-    });
+  it('returns failure on RPC 5xx', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({ status: 503, json: { message: 'service unavailable' } });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(false);
     if (r.success) return;
     expect(r.error).toContain('503');
   });
 
-  it('returns failure on network error', async () => {
+  it('returns failure on network error during OpenAPI step', async () => {
     mockRequestUrl.mockRejectedValueOnce(new Error('network unreachable'));
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(false);
