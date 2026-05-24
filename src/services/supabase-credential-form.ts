@@ -8,15 +8,17 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 5.1-ui-components
  * @tested tests/services/supabase-credential-form.test.ts
+ * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
  */
 
-import { Setting, requestUrl } from 'obsidian';
+import { Setting, requestUrl, type RequestUrlResponse } from 'obsidian';
 import type {
   ConnectionTestResult,
   Credential,
   CredentialBuildResult,
   CredentialFormRenderer,
   CredentialFormState,
+  SupabaseCredential,
 } from '../types';
 import { extractApiErrorMessage, normalizeServerUrl } from '../utils';
 import { SUPABASE_RPC_SCHEMA_FN } from '../constants';
@@ -78,6 +80,32 @@ export function detectKeyType(key: string): KeyTypeInfo {
 
 const PROJECT_URL_KEY = 'projectUrl';
 const API_KEY_KEY = 'apiKey';
+
+/**
+ * Detects whether a non-200 PostgREST RPC response indicates the
+ * `ani_supabase_schema` function is not installed.
+ *
+ * Status anchor (PR #92 sweep follow-up): PostgREST issues PGRST202
+ * "function not found" with a 4xx status (typically 404 / 400 / 406),
+ * never 401/403 — those are auth families with PGRST301-style codes.
+ * A proxy / Cloudflare / WAF in front of the user's project could
+ * inject a stale or wrong body into an auth response; without a status
+ * check, a 401 with body `code: 'PGRST202'` would be silently routed
+ * to the setup banner instead of the auth error, masking the actual
+ * problem.
+ *
+ * Body shape guard: also rejects non-JSON bodies (HTML proxy errors,
+ * empty 502 pages, null, arrays) before reading `.code` / `.message`.
+ */
+function isRpcMissingResponse(rpc: RequestUrlResponse): boolean {
+  if (rpc.status < 400 || rpc.status >= 500) return false;
+  if (rpc.status === 401 || rpc.status === 403) return false;
+  const json: unknown = rpc.json;
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return false;
+  const body = json as { code?: string; message?: string };
+  return body.code === 'PGRST202' ||
+    (typeof body.message === 'string' && /function .* does not exist/i.test(body.message));
+}
 
 class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
   readonly type = 'supabase' as const;
@@ -149,10 +177,21 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
     };
   }
 
-  async testConnection(credential: Credential): Promise<ConnectionTestResult> {
-    if (credential.type !== 'supabase') {
-      return { success: false, error: `Expected supabase credential, got ${credential.type}` };
-    }
+  /**
+   * Probes the Supabase project for reachability + key authority +
+   * schema-introspection access. Single source of truth for the
+   * 2-step probe shared by testConnection and verifySetup — see the
+   * "verifySetup duplicates the RPC call" PR review (PR #92) for why
+   * this is shared instead of duplicated.
+   *
+   * Returns ConnectionTestResult with the same semantics as
+   * testConnection / verifySetup: success without needsSetup means the
+   * key can read schema natively (legacy anon JWT / secret) OR the RPC
+   * is installed; success with needsSetup means the key is publishable
+   * AND the RPC is missing; failure means the key itself is invalid or
+   * the network is unreachable.
+   */
+  private async probeRpc(credential: SupabaseCredential): Promise<ConnectionTestResult> {
     const projectUrl = normalizeServerUrl(credential.projectUrl, '');
     if (!projectUrl) return { success: false, error: 'Project URL is empty.' };
     const baseHeaders = {
@@ -161,6 +200,10 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
     };
 
     // Step 1: prefer the native OpenAPI endpoint (legacy anon JWT / secret).
+    // 200 here means the key reads schema directly — no RPC fallback needed,
+    // and crucially no needsSetup signal (Codex P1 regression: previously,
+    // verifySetup skipped this step and blocked save for secret/anon keys
+    // whenever the RPC was missing).
     try {
       const response = await requestUrl({
         url: `${projectUrl}/rest/v1/`,
@@ -192,6 +235,10 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
     // Step 2: publishable-key path — call the RPC fallback. 200 = installed,
     // 4xx with PGRST202 / "function does not exist" = key works but RPC not
     // installed yet (still a successful auth test).
+    //
+    // p_schema: 'public' — the RPC itself is always installed in the
+    // public schema regardless of which schema the user's data lives in;
+    // we only need to confirm the function exists.
     try {
       const rpc = await requestUrl({
         url: `${projectUrl}/rest/v1/rpc/${SUPABASE_RPC_SCHEMA_FN}`,
@@ -205,19 +252,31 @@ class SupabaseCredentialFormRendererImpl implements CredentialFormRenderer {
         const tableCount = defs && typeof defs === 'object' && !Array.isArray(defs) ? Object.keys(defs).length : 0;
         return { success: true, detail: `Connected via RPC - ${tableCount} endpoints visible` };
       }
-      const body = rpc.json as { code?: string; message?: string } | undefined;
-      const rpcMissing = body?.code === 'PGRST202' ||
-        (typeof body?.message === 'string' && /function .* does not exist/i.test(body.message));
-      if (rpcMissing) {
+      if (isRpcMissingResponse(rpc)) {
         return {
           success: true,
-          detail: 'Publishable key authenticates — run the setup SQL (settings card) to enable schema introspection.',
+          detail: 'Publishable key authenticates.',
+          needsSetup: { kind: 'supabase-rpc' },
         };
       }
       return { success: false, error: `HTTP ${rpc.status}: ${extractApiErrorMessage(rpc)}` };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Network error' };
     }
+  }
+
+  async testConnection(credential: Credential): Promise<ConnectionTestResult> {
+    if (credential.type !== 'supabase') {
+      return { success: false, error: `Expected supabase credential, got ${credential.type}` };
+    }
+    return this.probeRpc(credential);
+  }
+
+  async verifySetup(credential: Credential): Promise<ConnectionTestResult> {
+    if (credential.type !== 'supabase') {
+      return { success: false, error: `Expected supabase credential, got ${credential.type}` };
+    }
+    return this.probeRpc(credential);
   }
 }
 

@@ -28,10 +28,24 @@ export type CredentialBuildResult =
   | { ok: false; error: string };
 
 /**
- * Result of testing a credential against the remote service.
+ * Describes a one-time setup action the user must perform before the
+ * credential can be used. Surfaced from testConnection / verifySetup so
+ * the settings UI can render contextual setup instructions instead of a
+ * blind error toast.
+ */
+export interface SetupRequirement {
+  /** Discriminator for the setup kind. Widened as more providers need it. */
+  kind: 'supabase-rpc';
+}
+
+/**
+ * Result of testing a credential against the remote service. A
+ * `success: true` result MAY also carry `needsSetup` to signal that the
+ * credential authenticates but cannot complete its job until the user
+ * performs a one-time setup action.
  */
 export type ConnectionTestResult =
-  | { success: true; detail?: string }
+  | { success: true; detail?: string; needsSetup?: SetupRequirement }
   | { success: false; error: string };
 
 /**
@@ -80,4 +94,15 @@ export interface CredentialFormRenderer {
    * without a cheap auth probe can omit this.
    */
   testConnection?(credential: Credential): Promise<ConnectionTestResult>;
+
+  /**
+   * Verifies a credential is ready to be saved. Distinct from
+   * testConnection in intent: testConnection answers "does this key
+   * work?", verifySetup answers "can the user save right now, or do they
+   * need a setup step first?". Providers that gate save behind a
+   * one-time setup (e.g. Supabase publishable key + ani_supabase_schema
+   * RPC) implement this; others omit it and the settings tab skips the
+   * pre-save check.
+   */
+  verifySetup?(credential: Credential): Promise<ConnectionTestResult>;
 }

@@ -25,7 +25,7 @@ import {
   hasCredentialFormRenderer,
 } from '../services';
 import type { SeaTableTable } from '../services';
-import type { CredentialFormState, CredentialFormRenderer } from '../types';
+import type { CredentialFormState, CredentialFormRenderer, SetupRequirement } from '../types';
 import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, SupabaseCredential, SupabaseOpenApiSpec, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { SUPABASE_DEFAULT_SCHEMA, SUPABASE_RPC_SCHEMA_SQL } from '../constants';
@@ -40,6 +40,27 @@ import { debounce } from '../utils/debounce';
 export interface SettingsPlugin extends Plugin {
   settings: AutoNoteImporterSettings;
   saveSettings(): Promise<void>;
+}
+
+/**
+ * Transient UI state for the credential add/edit form. Tracks whether
+ * the active form has a pending setup requirement (e.g. Supabase RPC
+ * not installed), references to the banner host element and Save button,
+ * in-flight guards to prevent concurrent click races, and a cleanups
+ * array for any event listeners that must be detached when the form is
+ * disposed or re-rendered (prevents listener accumulation across
+ * type-switches and re-displays). Owned by the settings tab; reset via
+ * resetCredentialFormUi() when a credential form opens, and torn down
+ * (cleanups invoked) by display().
+ */
+interface CredentialFormUiState {
+  setupRequirement: SetupRequirement | null;
+  bannerHost: HTMLElement | null;
+  saveButton: HTMLButtonElement | null;
+  testButton: HTMLButtonElement | null;
+  isTesting: boolean;
+  isSaving: boolean;
+  cleanups: Array<() => void>;
 }
 
 /**
@@ -68,6 +89,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection', 'supabase-connection']);
   private pendingDeleteConfigId: string | null = null;
   private pendingDeleteCredentialId: string | null = null;
+  private credentialFormUi: CredentialFormUiState | null = null;
 
   constructor(
     app: App,
@@ -138,6 +160,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
   display(): void {
     this.renderGeneration++;
+    this.tearDownCredentialFormUi();
     const { containerEl } = this;
     containerEl.empty();
 
@@ -343,6 +366,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       return;
     }
     const renderer = getCredentialFormRenderer(cred.type);
+    this.resetCredentialFormUi();
     const state: CredentialFormState = {};
     let nameValue = cred.name;
 
@@ -356,16 +380,38 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     renderer.renderFields(containerEl, state, cred);
 
+    // Any field edit invalidates a prior setup verification. Auto-clear
+    // the banner + re-enable Save so a stale RPC-missing diagnosis can't
+    // outlive the inputs it was diagnosed against.
+    //
+    // Register the handler reference in credentialFormUi.cleanups so the
+    // next form render / display() detaches it — otherwise add-mode
+    // type-switches (which re-call renderCredentialAddDetails on the
+    // same containerEl) would accumulate listeners.
+    const inputResetHandler = (): void => {
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
+      }
+    };
+    containerEl.addEventListener('input', inputResetHandler);
+    this.credentialFormUi?.cleanups.push(() =>
+      containerEl.removeEventListener('input', inputResetHandler),
+    );
+
     new Setting(containerEl)
-      .addButton(button => button
-        .setButtonText('Save')
-        .setCta()
-        .onClick(async () => {
+      .addButton(button => {
+        button.setButtonText('Save').setCta();
+        if (this.credentialFormUi) {
+          this.credentialFormUi.saveButton = button.buttonEl;
+        }
+        button.onClick(async () => {
           const result = renderer.build(nameValue, state, cred.id);
           if (!result.ok) {
             new Notice(`Auto Note Importer: ${result.error}`);
             return;
           }
+          const gate = await this.verifyCredentialBeforeSave(renderer, result.credential, containerEl);
+          if (gate !== 'proceed') return;
           // Replace the existing credential in-place
           const idx = this.plugin.settings.credentials.findIndex(c => c.id === cred.id);
           if (idx >= 0) {
@@ -374,19 +420,21 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           this.editingCredentialId = null;
           this.display();
-        }))
+        });
+      })
       .addButton(button => {
-        button
-          .setButtonText('Test')
-          .setDisabled(!renderer.testConnection)
-          .onClick(() => {
-            const result = renderer.build(nameValue, state, cred.id);
-            if (!result.ok) {
-              new Notice(`Auto Note Importer: ${result.error}`);
-              return;
-            }
-            void this.runConnectionTest(renderer, result.credential);
-          });
+        button.setButtonText('Test').setDisabled(!renderer.testConnection);
+        if (this.credentialFormUi) {
+          this.credentialFormUi.testButton = button.buttonEl;
+        }
+        button.onClick(() => {
+          const result = renderer.build(nameValue, state, cred.id);
+          if (!result.ok) {
+            new Notice(`Auto Note Importer: ${result.error}`);
+            return;
+          }
+          void this.runConnectionTest(renderer, result.credential, containerEl);
+        });
       })
       .addButton(button => button
         .setButtonText('Cancel')
@@ -460,41 +508,64 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
 
     const renderer = getCredentialFormRenderer(type);
+    this.resetCredentialFormUi();
     if (renderer.description) {
       containerEl.createEl('p', { cls: 'ani-credential-desc', text: renderer.description });
     }
     renderer.renderFields(containerEl, context.state);
 
+    // Any field edit invalidates a prior setup verification. Auto-clear
+    // the banner + re-enable Save so a stale RPC-missing diagnosis can't
+    // outlive the inputs it was diagnosed against.
+    //
+    // Register the handler reference in credentialFormUi.cleanups so the
+    // next form render / display() detaches it — otherwise add-mode
+    // type-switches (which re-call renderCredentialAddDetails on the
+    // same containerEl) would accumulate listeners.
+    const inputResetHandler = (): void => {
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
+      }
+    };
+    containerEl.addEventListener('input', inputResetHandler);
+    this.credentialFormUi?.cleanups.push(() =>
+      containerEl.removeEventListener('input', inputResetHandler),
+    );
+
     new Setting(containerEl)
       .addButton(button => {
-        button
-          .setButtonText('Save')
-          .setCta()
-          .onClick(async () => {
-            const result = renderer.build(context.name, context.state, generateId());
-            if (!result.ok) {
-              new Notice(`Auto Note Importer: ${result.error}`);
-              return;
-            }
-            this.plugin.settings.credentials.push(result.credential);
-            await this.plugin.saveSettings();
-            this.addingCredential = false;
-            this.addingCredentialType = 'airtable';
-            this.display();
-          });
+        button.setButtonText('Save').setCta();
+        if (this.credentialFormUi) {
+          this.credentialFormUi.saveButton = button.buttonEl;
+        }
+        button.onClick(async () => {
+          const result = renderer.build(context.name, context.state, generateId());
+          if (!result.ok) {
+            new Notice(`Auto Note Importer: ${result.error}`);
+            return;
+          }
+          const gate = await this.verifyCredentialBeforeSave(renderer, result.credential, containerEl);
+          if (gate !== 'proceed') return;
+          this.plugin.settings.credentials.push(result.credential);
+          await this.plugin.saveSettings();
+          this.addingCredential = false;
+          this.addingCredentialType = 'airtable';
+          this.display();
+        });
       })
       .addButton(button => {
-        button
-          .setButtonText('Test')
-          .setDisabled(!renderer.testConnection)
-          .onClick(() => {
-            const result = renderer.build(context.name, context.state, 'test-only');
-            if (!result.ok) {
-              new Notice(`Auto Note Importer: ${result.error}`);
-              return;
-            }
-            void this.runConnectionTest(renderer, result.credential);
-          });
+        button.setButtonText('Test').setDisabled(!renderer.testConnection);
+        if (this.credentialFormUi) {
+          this.credentialFormUi.testButton = button.buttonEl;
+        }
+        button.onClick(() => {
+          const result = renderer.build(context.name, context.state, 'test-only');
+          if (!result.ok) {
+            new Notice(`Auto Note Importer: ${result.error}`);
+            return;
+          }
+          void this.runConnectionTest(renderer, result.credential, containerEl);
+        });
       })
       .addButton(button => button
         .setButtonText('Cancel')
@@ -508,20 +579,53 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private async runConnectionTest(
     renderer: CredentialFormRenderer,
     credential: Credential,
+    formHostEl: HTMLElement,
   ): Promise<void> {
     if (!renderer.testConnection) return;
+    if (this.credentialFormUi?.isTesting) return;   // re-entry guard
+    if (this.credentialFormUi) this.credentialFormUi.isTesting = true;
+
+    // Visual loading state on the Test button itself \u2014 re-entry guard
+    // silently drops rapid double-clicks, but without UI feedback the
+    // user has no idea the second click was ignored.
+    const testBtn = this.credentialFormUi?.testButton ?? null;
+    const originalTestText = testBtn?.textContent ?? null;
+    if (testBtn) {
+      testBtn.disabled = true;
+      testBtn.textContent = 'Testing\u2026';
+    }
+
     new Notice('Auto Note Importer: Testing connection\u2026');
     try {
       const result = await renderer.testConnection(credential);
-      if (result.success) {
-        const detail = result.detail ? ` ${result.detail}` : '';
-        new Notice(`Auto Note Importer: Connection OK.${detail}`);
-      } else {
+      if (!result.success) {
         new Notice(`Auto Note Importer: Connection failed \u2014 ${result.error}`);
+        return;
       }
+      if (result.needsSetup) {
+        // Suppress the "Connection OK" Notice \u2014 the inline banner is the
+        // contextual surface. Render banner inside form host, disable
+        // Save until verify succeeds.
+        this.renderSetupBannerForRequirement(result.needsSetup, credential, formHostEl);
+        return;
+      }
+      // Success without needsSetup \u2014 if a prior probe set the banner
+      // (e.g. user installed the RPC externally between Test clicks),
+      // clear it now so Save isn't stuck disabled (Codex P2, PR #92).
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
+      }
+      const detail = result.detail ? ` ${result.detail}` : '';
+      new Notice(`Auto Note Importer: Connection OK.${detail}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Connection test errored \u2014 ${message}`);
+    } finally {
+      if (this.credentialFormUi) this.credentialFormUi.isTesting = false;
+      if (testBtn) {
+        testBtn.disabled = false;
+        testBtn.textContent = originalTestText ?? 'Test';
+      }
     }
   }
 
@@ -1061,33 +1165,28 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   /**
-   * Rendered when the publishable key can read /rest/v1/<table> for data but
-   * cannot read /rest/v1/ for schema introspection (Supabase new key policy)
-   * AND the user has not yet installed the SECURITY DEFINER RPC fallback.
+   * Renders the shared parts of the RPC setup banner — SQL code block,
+   * Copy SQL button, and "I've run it — Verify" button — into the given
+   * host. Callers wrap this with banner-specific header/desc/manual-
+   * fallback content. The two callbacks decide what happens after the
+   * Verify RPC call returns; both connection-card and credential-form
+   * contexts share the SQL block + buttons but diverge in post-verify
+   * action.
    *
-   * Shows the one-time setup SQL with a Copy button + a Refresh action that
-   * clears the cache and re-runs the fetch chain. Settled, the card flips
-   * to renderSupabaseDropdowns automatically.
+   * The verify path always bypasses the cache (clearForCred) before
+   * calling verifySetup — the user just ran the SQL, so the previous
+   * 404 is stale by definition.
    */
-  private renderSupabaseRpcSetupBanner(
-    containerEl: HTMLElement,
-    config: ConfigEntry,
+  private renderRpcSetupBannerCore(
+    host: HTMLElement,
     credential: SupabaseCredential,
+    onVerifySuccess: () => void,
+    onVerifyFailure: (error: string) => void,
   ): void {
-    containerEl.empty();
-    const banner = containerEl.createDiv({ cls: 'ani-rpc-setup-banner' });
-    banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
-    const desc = banner.createEl('p');
-    desc.setText(
-      'Supabase’s new key system blocks publishable keys from reading the ' +
-      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
-      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
-    );
-
-    const codeBlock = banner.createEl('pre', { cls: 'ani-rpc-setup-sql' });
+    const codeBlock = host.createEl('pre', { cls: 'ani-rpc-setup-sql' });
     codeBlock.createEl('code', { text: SUPABASE_RPC_SCHEMA_SQL });
 
-    const buttonRow = banner.createDiv({ cls: 'ani-rpc-setup-actions' });
+    const buttonRow = host.createDiv({ cls: 'ani-rpc-setup-actions' });
 
     const copyBtn = buttonRow.createEl('button', { text: 'Copy SQL', cls: 'mod-cta' });
     copyBtn.addEventListener('click', async () => {
@@ -1099,11 +1198,291 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       }
     });
 
-    const refreshBtn = buttonRow.createEl('button', { text: 'I’ve run it — Refresh' });
-    refreshBtn.addEventListener('click', () => {
-      this.supabaseMetadataCache.clearForCred(credential.id);
-      this.debounceDisplay(0);
+    const verifyBtn = buttonRow.createEl('button', { text: 'I’ve run it — Verify' });
+    verifyBtn.addEventListener('click', async () => {
+      verifyBtn.disabled = true;
+      const originalText = verifyBtn.textContent;
+      verifyBtn.textContent = 'Verifying…';
+      try {
+        this.supabaseMetadataCache.clearForCred(credential.id);
+        const renderer = getCredentialFormRenderer('supabase');
+        if (!renderer.verifySetup) {
+          onVerifyFailure('Supabase provider does not implement verifySetup — please report this as a bug.');
+          return;
+        }
+        const result = await renderer.verifySetup(credential);
+        if (result.success && !result.needsSetup) {
+          onVerifySuccess();
+        } else if (result.success && result.needsSetup) {
+          onVerifyFailure('RPC still not installed. Common issues: SQL ran in the wrong schema (try \'public\'); missing GRANT EXECUTE — re-run the SQL fully; different project — verify the Project URL matches.');
+        } else if (!result.success) {
+          onVerifyFailure(result.error);
+        }
+      } finally {
+        verifyBtn.disabled = false;
+        // `textContent` is `string | null`; restore the literal default
+        // if the original was somehow null (e.g. detached node) so the
+        // button never goes blank (claude #1, PR #92).
+        verifyBtn.textContent = originalText ?? 'I’ve run it — Verify';
+      }
     });
+  }
+
+  /**
+   * Credential-form variant of the RPC setup banner. Unlike the
+   * connection-card variant, this one does NOT include the manual-entry
+   * text fallback (the credential is still being authored — no config
+   * exists yet). On verify success the caller's onSuccess fires
+   * (which calls clearFormSetupRequirement → removes the host); on
+   * verify failure the error is surfaced inline inside the banner.
+   *
+   * Returns void — the caller already holds the host from
+   * `ensureFormBannerHost`. Removing that host wipes the inner banner +
+   * buttons + error in one DOM op (claude bot round 2 PR #92 review:
+   * the prior `return host` was redundant API surface noise).
+   */
+  private renderRpcSetupBannerInForm(
+    host: HTMLElement,
+    credential: SupabaseCredential,
+    onSuccess: () => void,
+  ): void {
+    host.empty();
+    const banner = host.createDiv({ cls: 'ani-rpc-setup-banner' });
+    banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
+    banner.createEl('p').setText(
+      'Supabase’s new key system blocks publishable keys from reading the ' +
+      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
+      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
+    );
+
+    const errorHost = banner.createDiv({ cls: 'ani-rpc-setup-error' });
+
+    this.renderRpcSetupBannerCore(
+      banner,
+      credential,
+      () => {
+        new Notice('Auto Note Importer: Setup confirmed — you can save now.');
+        onSuccess();   // clearFormSetupRequirement removes the host (covers banner)
+      },
+      (error) => {
+        errorHost.empty();
+        errorHost.createEl('p', { cls: 'ani-rpc-setup-error-msg', text: `⚠ ${error}` });
+      },
+    );
+  }
+
+  /**
+   * Returns (creating if needed) the dedicated banner host inside the
+   * credential form. Reusing one host means consecutive Test/Save
+   * cycles replace the previous banner instead of stacking.
+   */
+  private ensureFormBannerHost(formHostEl: HTMLElement): HTMLElement {
+    let host = formHostEl.querySelector<HTMLElement>(':scope > .ani-rpc-setup-host');
+    if (!host) {
+      host = formHostEl.createDiv({ cls: 'ani-rpc-setup-host' });
+    }
+    return host;
+  }
+
+  /**
+   * Runs all pending cleanups (e.g. removeEventListener handles) and
+   * drops the credential form UI state. Called from display() and
+   * before initializing a fresh form via resetCredentialFormUi() so
+   * type-switches in the add-mode form do not leak listeners.
+   */
+  private tearDownCredentialFormUi(): void {
+    if (!this.credentialFormUi) return;
+    for (const cleanup of this.credentialFormUi.cleanups) {
+      try { cleanup(); } catch { /* listener removal must not throw */ }
+    }
+    this.credentialFormUi = null;
+  }
+
+  /**
+   * Tears down any prior form state then initializes a fresh
+   * CredentialFormUiState. Both renderCredentialEditRow and
+   * renderCredentialAddDetails call this at their entry point.
+   */
+  private resetCredentialFormUi(): void {
+    this.tearDownCredentialFormUi();
+    this.credentialFormUi = {
+      setupRequirement: null,
+      bannerHost: null,
+      saveButton: null,
+      testButton: null,
+      isTesting: false,
+      isSaving: false,
+      cleanups: [],
+    };
+  }
+
+  /**
+   * Renders the inline RPC setup banner for the given requirement and
+   * wires it to the form-scoped UI state (setupRequirement + bannerHost
+   * + saveButton.disabled). Uses an exhaustive switch on
+   * SetupRequirement.kind so future widening of the union fails at
+   * compile time until a handler is added.
+   *
+   * Callers must already have decided to suppress the usual success
+   * Notice / return blocked from the gate — see runConnectionTest and
+   * verifyCredentialBeforeSave for the surrounding flow.
+   */
+  private renderSetupBannerForRequirement(
+    needsSetup: SetupRequirement,
+    credential: Credential,
+    formHostEl: HTMLElement,
+  ): void {
+    switch (needsSetup.kind) {
+      case 'supabase-rpc': {
+        if (credential.type !== 'supabase') {
+          // Shouldn't happen — registry only maps supabase-rpc to
+          // Supabase. Surface as an internal error rather than silently
+          // skipping the banner.
+          new Notice(`Auto Note Importer: Internal error — supabase-rpc setup requested for ${credential.type} credential.`);
+          return;
+        }
+        const host = this.ensureFormBannerHost(formHostEl);
+        this.renderRpcSetupBannerInForm(
+          host,
+          credential,
+          () => this.clearFormSetupRequirement(),
+        );
+        if (this.credentialFormUi) {
+          this.credentialFormUi.setupRequirement = needsSetup;
+          this.credentialFormUi.bannerHost = host;
+          if (this.credentialFormUi.saveButton) {
+            this.credentialFormUi.saveButton.disabled = true;
+          }
+        }
+        return;
+      }
+      default: {
+        const _exhaustive: never = needsSetup.kind;
+        throw new Error(`Unhandled setup requirement kind: ${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  /**
+   * Pre-save gate. Calls verifySetup on the credential and returns
+   * - 'proceed' if the credential is ready to persist
+   * - 'blocked' if needsSetup or verify failure — the banner / Notice
+   *   has been surfaced and the caller MUST NOT persist.
+   *
+   * Fails closed: any network failure during verify blocks the save
+   * with a Notice. Silently saving a credential that cannot sync is
+   * worse than a one-extra-click retry.
+   */
+  private async verifyCredentialBeforeSave(
+    renderer: CredentialFormRenderer,
+    credential: Credential,
+    formHostEl: HTMLElement,
+  ): Promise<'proceed' | 'blocked'> {
+    if (!renderer.verifySetup) return 'proceed';
+    if (this.credentialFormUi?.isSaving) return 'blocked';   // re-entry guard
+    if (this.credentialFormUi) this.credentialFormUi.isSaving = true;
+
+    // Visual loading state on the Save button — symmetric with the
+    // Test button pattern in runConnectionTest (claude bot round 2
+    // PR #92 review). verifySetup is a 2-step network probe and can
+    // take 1-3s; silent re-entry drops with no UI feedback would
+    // confuse users.
+    const saveBtn = this.credentialFormUi?.saveButton ?? null;
+    const originalSaveText = saveBtn?.textContent ?? null;
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+    }
+
+    try {
+      const result = await renderer.verifySetup(credential);
+      if (!result.success) {
+        new Notice(`Auto Note Importer: Could not verify setup before save — ${result.error}`);
+        return 'blocked';
+      }
+      if (result.needsSetup) {
+        this.renderSetupBannerForRequirement(result.needsSetup, credential, formHostEl);
+        return 'blocked';
+      }
+      // Save-time verify can also clear a stale banner — e.g. user
+      // installed the RPC externally then clicked Save without Verify
+      // first (Codex P2, PR #92).
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
+      }
+      return 'proceed';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Auto Note Importer: Could not verify setup before save — ${message}`);
+      return 'blocked';
+    } finally {
+      if (this.credentialFormUi) this.credentialFormUi.isSaving = false;
+      if (saveBtn) {
+        // Only restore disabled=false if the banner didn't take over the
+        // disable state. renderSetupBannerForRequirement sets
+        // saveButton.disabled=true when needsSetup is rendered — we must
+        // not clobber that here.
+        if (!this.credentialFormUi?.setupRequirement) {
+          saveBtn.disabled = false;
+        }
+        saveBtn.textContent = originalSaveText ?? 'Save';
+      }
+    }
+  }
+
+  /**
+   * Clears the form-scoped setup requirement: removes the banner from
+   * the DOM and re-enables Save. Called when the user verifies setup
+   * successfully or edits a credential field (Task 9 auto-reset).
+   */
+  private clearFormSetupRequirement(): void {
+    if (!this.credentialFormUi) return;
+    this.credentialFormUi.setupRequirement = null;
+    this.credentialFormUi.bannerHost?.remove();
+    this.credentialFormUi.bannerHost = null;
+    if (this.credentialFormUi.saveButton) {
+      this.credentialFormUi.saveButton.disabled = false;
+    }
+  }
+
+  /**
+   * Rendered when the publishable key can read /rest/v1/<table> for data but
+   * cannot read /rest/v1/ for schema introspection (Supabase new key policy)
+   * AND the user has not yet installed the SECURITY DEFINER RPC fallback.
+   *
+   * Shows the one-time setup SQL with a Copy button + a Verify action via
+   * the shared renderRpcSetupBannerCore. On verify success the cache is
+   * cleared and the settings tab re-renders so the card flips to
+   * renderSupabaseDropdowns automatically. Includes a manual-entry text
+   * fallback for users who want to keep the publishable key without
+   * installing the RPC.
+   */
+  private renderSupabaseRpcSetupBanner(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: SupabaseCredential,
+  ): void {
+    containerEl.empty();
+    const banner = containerEl.createDiv({ cls: 'ani-rpc-setup-banner' });
+    banner.createEl('h4', { text: 'One-time setup required for publishable keys' });
+    banner.createEl('p').setText(
+      'Supabase’s new key system blocks publishable keys from reading the ' +
+      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
+      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
+    );
+
+    this.renderRpcSetupBannerCore(
+      banner,
+      credential,
+      () => {
+        // Connection-card success: re-render so the card flips back to
+        // dropdowns (verifySetup already cleared the cache).
+        this.debounceDisplay(0);
+      },
+      (error) => {
+        new Notice(`Auto Note Importer: ${error}`);
+      },
+    );
 
     // Manual-entry escape hatch — render into a fresh sub-container so the
     // fallback's containerEl.empty() can't wipe the banner above it.
