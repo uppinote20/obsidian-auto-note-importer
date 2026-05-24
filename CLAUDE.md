@@ -86,7 +86,7 @@ src/
 ### Key Classes
 
 - **`DatabaseProvider`** — Provider-agnostic interface for remote databases (handbook §4.4)
-- **`AirtableClient` / `SeaTableClient`** — Concrete `DatabaseProvider` impls
+- **`AirtableClient` / `SeaTableClient` / `SupabaseClient`** — Concrete `DatabaseProvider` impls
 - **`ProviderRegistry`** — `CredentialType → factory` lookup (`createProvider()` + `getFieldTypeMapper()` + `getCredentialFormRenderer()`)
 - **`ConfigManager` / `ConfigInstance`** — Multi-config orchestration; per-config service stack (handbook §9.8)
 - **`SyncOrchestrator`** — `processSyncRequest(mode, scope)` — central pull/push/bidirectional coordinator

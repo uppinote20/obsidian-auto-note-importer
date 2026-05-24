@@ -60,20 +60,21 @@ Import and sync notes bidirectionally between **Airtable**, **SeaTable**, and yo
    - **Legacy `anon`** (JWT) — RLS-protected, also fine but deprecated by Supabase
    - **Secret** (`sb_secret_…`) or **service_role** (JWT) — bypasses RLS; only use if you understand the implications. The plugin auto-detects key type and warns when a secret key is entered.
 4. Ensure the schema you want to sync is in **Settings → API → Exposed schemas** (default `public` is already exposed)
-5. **Publishable key users**: Supabase's new key system blocks schema introspection (OpenAPI) for publishable keys. The first time you open the Supabase connection card the plugin shows a one-time setup banner with a SECURITY DEFINER SQL function — click **Copy SQL**, paste it into your Supabase SQL Editor, Run once, then click **I've run it — Refresh**. Re-running is safe. Legacy `anon` JWT and secret keys don't need this step.
+5. **Publishable key users**: Supabase's new key system blocks schema introspection (OpenAPI) for publishable keys. The plugin shows a one-time setup banner — either inline inside the **Add credential** form (when you click Test connection or Save) or in the Supabase **Connection card** afterwards — with a SECURITY DEFINER SQL function. Click **Copy SQL**, paste it into your Supabase SQL Editor, Run once, then click **I've run it — Verify**. Re-running is safe. Credential **save is blocked** until the RPC is verified (fail-closed). Legacy `anon` JWT and secret keys don't need this step — the plugin auto-detects and skips the gate.
 
 ### 2. Configure the Plugin
 
 1. Open **Settings → Auto Note Importer**
-2. **Add credential** — pick the provider type (Airtable / SeaTable) and paste your token
+2. **Add credential** — pick the provider type (Airtable / SeaTable / Supabase) and paste your token
 3. The connection card adapts to your selected credential. Fill in:
    - **Airtable**: Base → Table → View (optional) → Filename / Subfolder fields
    - **SeaTable**: Table ID → View ID (optional) → Filename / Subfolder column names
+   - **Supabase**: Schema (default `public`) → Table → View (optional) → Primary key column → Filename / Subfolder columns. Tables/columns are auto-populated from your project's OpenAPI spec; a text-input fallback appears when the schema cannot be reached.
 4. **Destination folder** in your vault
 5. **Template** — optional `{{fieldName}}` template
 6. **Bidirectional sync** — toggle if you want changes flowing both ways
 
-You can have multiple configurations (e.g. one for Airtable, one for SeaTable, or two SeaTable bases) — switch between them with the tab bar at the top of the settings panel.
+You can have multiple configurations (e.g. one Airtable + one SeaTable + one Supabase, or two SeaTable bases) — switch between them with the tab bar at the top of the settings panel.
 
 ### 3. Sync Notes
 
