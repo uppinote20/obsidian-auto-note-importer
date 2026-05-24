@@ -318,8 +318,10 @@ const { results, log, run, test } = createTestHarness({ getTargetId: () => targe
         // Invoke the same helper testConnection / Save handlers use to
         // surface the banner; bypass the actual RPC by going through
         // the render path directly.
-        // NOTE: renderRpcSetupBannerInForm returns void — use `host`
-        // (from ensureFormBannerHost) as bannerHost, not the return value.
+        // NOTE: renderRpcSetupBannerInForm returns void - use the host
+        // variable (from ensureFormBannerHost) as bannerHost.
+        // (No backticks here: the surrounding run(...) is itself a
+        // template literal, and nested backticks break parsing.)
         const host = tab.ensureFormBannerHost(formHost);
         tab.renderRpcSetupBannerInForm(host, cred, () => {});
         tab.credentialFormUi.setupRequirement = { kind: 'supabase-rpc' };
@@ -389,8 +391,10 @@ const { results, log, run, test } = createTestHarness({ getTargetId: () => targe
         };
 
         // Set up the banner + setupRequirement + saveButton reference.
-        // NOTE: renderRpcSetupBannerInForm returns void — use `host`
-        // (from ensureFormBannerHost) as bannerHost, not the return value.
+        // NOTE: renderRpcSetupBannerInForm returns void - use the host
+        // variable (from ensureFormBannerHost) as bannerHost.
+        // (No backticks here: the surrounding run(...) is itself a
+        // template literal, and nested backticks break parsing.)
         const host = tab.ensureFormBannerHost(formHost);
         tab.renderRpcSetupBannerInForm(host, cred, () => {});
         tab.credentialFormUi.setupRequirement = { kind: 'supabase-rpc' };
