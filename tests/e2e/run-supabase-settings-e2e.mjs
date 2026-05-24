@@ -318,10 +318,12 @@ const { results, log, run, test } = createTestHarness({ getTargetId: () => targe
         // Invoke the same helper testConnection / Save handlers use to
         // surface the banner; bypass the actual RPC by going through
         // the render path directly.
+        // NOTE: renderRpcSetupBannerInForm returns void — use `host`
+        // (from ensureFormBannerHost) as bannerHost, not the return value.
         const host = tab.ensureFormBannerHost(formHost);
-        const banner = tab.renderRpcSetupBannerInForm(host, cred, () => {});
+        tab.renderRpcSetupBannerInForm(host, cred, () => {});
         tab.credentialFormUi.setupRequirement = { kind: 'supabase-rpc' };
-        tab.credentialFormUi.bannerHost = banner;
+        tab.credentialFormUi.bannerHost = host;
 
         await new Promise(r => setTimeout(r, 100));
 
@@ -387,10 +389,12 @@ const { results, log, run, test } = createTestHarness({ getTargetId: () => targe
         };
 
         // Set up the banner + setupRequirement + saveButton reference.
+        // NOTE: renderRpcSetupBannerInForm returns void — use `host`
+        // (from ensureFormBannerHost) as bannerHost, not the return value.
         const host = tab.ensureFormBannerHost(formHost);
-        const banner = tab.renderRpcSetupBannerInForm(host, cred, () => {});
+        tab.renderRpcSetupBannerInForm(host, cred, () => {});
         tab.credentialFormUi.setupRequirement = { kind: 'supabase-rpc' };
-        tab.credentialFormUi.bannerHost = banner;
+        tab.credentialFormUi.bannerHost = host;
         tab.credentialFormUi.saveButton = saveBtn;
         saveBtn.disabled = true;
 
