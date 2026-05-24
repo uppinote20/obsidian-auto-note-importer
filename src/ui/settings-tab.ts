@@ -1323,14 +1323,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
    * SetupRequirement.kind so future widening of the union fails at
    * compile time until a handler is added.
    *
-   * Returns true if a banner was rendered (caller should skip the
-   * usual success Notice), false otherwise.
+   * Callers must already have decided to suppress the usual success
+   * Notice / return blocked from the gate — see runConnectionTest and
+   * verifyCredentialBeforeSave for the surrounding flow.
    */
   private renderSetupBannerForRequirement(
     needsSetup: SetupRequirement,
     credential: Credential,
     formHostEl: HTMLElement,
-  ): boolean {
+  ): void {
     switch (needsSetup.kind) {
       case 'supabase-rpc': {
         if (credential.type !== 'supabase') {
@@ -1338,7 +1339,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           // Supabase. Surface as an internal error rather than silently
           // skipping the banner.
           new Notice(`Auto Note Importer: Internal error — supabase-rpc setup requested for ${credential.type} credential.`);
-          return false;
+          return;
         }
         const host = this.ensureFormBannerHost(formHostEl);
         this.renderRpcSetupBannerInForm(
@@ -1353,7 +1354,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             this.credentialFormUi.saveButton.disabled = true;
           }
         }
-        return true;
+        return;
       }
       default: {
         const _exhaustive: never = needsSetup.kind;
