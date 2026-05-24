@@ -85,15 +85,21 @@ const API_KEY_KEY = 'apiKey';
  * Detects whether a non-200 PostgREST RPC response indicates the
  * `ani_supabase_schema` function is not installed.
  *
- * Guards against non-JSON response bodies (HTML proxy errors, empty
- * 502 pages) by checking that `rpc.json` is a plain object before
- * reading `.code` / `.message`. Without this guard, a `rpc.json` of
- * `null` / `string` / `array` (Obsidian's requestUrl returns parsed
- * JSON or undefined; some self-hosted PostgREST setups behind a
- * misconfigured proxy return HTML 502) would slip through the
- * `code === 'PGRST202'` check as false and miscategorize the error.
+ * Status anchor (PR #92 sweep follow-up): PostgREST issues PGRST202
+ * "function not found" with a 4xx status (typically 404 / 400 / 406),
+ * never 401/403 — those are auth families with PGRST301-style codes.
+ * A proxy / Cloudflare / WAF in front of the user's project could
+ * inject a stale or wrong body into an auth response; without a status
+ * check, a 401 with body `code: 'PGRST202'` would be silently routed
+ * to the setup banner instead of the auth error, masking the actual
+ * problem.
+ *
+ * Body shape guard: also rejects non-JSON bodies (HTML proxy errors,
+ * empty 502 pages, null, arrays) before reading `.code` / `.message`.
  */
 function isRpcMissingResponse(rpc: RequestUrlResponse): boolean {
+  if (rpc.status < 400 || rpc.status >= 500) return false;
+  if (rpc.status === 401 || rpc.status === 403) return false;
   const json: unknown = rpc.json;
   if (!json || typeof json !== 'object' || Array.isArray(json)) return false;
   const body = json as { code?: string; message?: string };

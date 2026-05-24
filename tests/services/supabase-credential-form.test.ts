@@ -245,12 +245,21 @@ describe('supabaseCredentialFormRenderer.verifySetup', () => {
   // the RPC. A secret/anon-JWT user with a project missing the RPC
   // would be wrongly blocked from saving even though OpenAPI 200 means
   // the key reads schema natively — no RPC needed.
+  //
+  // Uses a secret-prefixed cred to match the test intent (secret / anon
+  // JWT typically get OpenAPI 200; publishable typically gets 401).
+  // probeRpc doesn't actually branch on key prefix, but matching the
+  // realistic flow makes the regression's failure mode unambiguous.
   it('returns success WITHOUT needsSetup when OpenAPI 200 (secret / anon JWT)', async () => {
+    const credSecret: Credential = {
+      id: 'c1', name: 'X', type: 'supabase',
+      projectUrl: 'https://abc.supabase.co', apiKey: 'sb_secret_xxx',
+    };
     mockRequestUrl.mockResolvedValueOnce({
       status: 200,
       json: { definitions: { notes: {}, tags: {} } },
     });
-    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    const r = await supabaseCredentialFormRenderer.verifySetup!(credSecret);
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(r.needsSetup).toBeUndefined();
@@ -315,6 +324,23 @@ describe('supabaseCredentialFormRenderer.verifySetup', () => {
     mockRequestUrl
       .mockResolvedValueOnce({ status: 401, json: {} })
       .mockResolvedValueOnce({ status: 401, json: { message: 'Invalid API key' } });
+    const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toContain('401');
+  });
+
+  // PR #92 sweep follow-up: isRpcMissingResponse anchors on status to
+  // prevent a 401 auth response with body code='PGRST202' (from a
+  // misconfigured proxy / WAF) from being silently routed to the
+  // setup banner instead of surfacing the auth error.
+  it('does NOT misclassify 401 + PGRST202 body as rpc-missing', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 401, json: {} })
+      .mockResolvedValueOnce({
+        status: 401,
+        json: { code: 'PGRST202', message: 'function ani_supabase_schema does not exist' },
+      });
     const r = await supabaseCredentialFormRenderer.verifySetup!(cred);
     expect(r.success).toBe(false);
     if (r.success) return;
