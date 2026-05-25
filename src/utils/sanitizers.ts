@@ -56,6 +56,20 @@ export function sanitizeFolderPath(path: string): string {
 }
 
 /**
+ * Sanitizes a subfolder field value according to the per-config slash policy.
+ * Dispatches between filename rules (`/` collapses to `-`) and folder-path
+ * rules (`/` splits into nested segments) based on the toggle. Default mode
+ * (`treatSlashAsLiteral=false`) preserves the legacy behavior of nesting on `/`.
+ *
+ * @param value The raw subfolder value from the remote record
+ * @param treatSlashAsLiteral When true, `/` becomes `-`; when false, `/` nests
+ * @returns Sanitized subfolder path string
+ */
+export function sanitizeSubfolderValue(value: string, treatSlashAsLiteral: boolean): string {
+  return treatSlashAsLiteral ? sanitizeFileName(value) : sanitizeFolderPath(value);
+}
+
+/**
  * Validates and sanitizes a value for use as a filename.
  * Returns the sanitized filename if valid, or null if invalid.
  * @param value The value to validate and sanitize

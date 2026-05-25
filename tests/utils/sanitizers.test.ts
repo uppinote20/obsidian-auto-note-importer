@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sanitizeFileName,
   sanitizeFolderPath,
+  sanitizeSubfolderValue,
   validateAndSanitizeFilename
 } from '../../src/utils/sanitizers';
 
@@ -130,6 +131,47 @@ describe('sanitizeFolderPath', () => {
   it('should preserve segments starting with dot', () => {
     expect(sanitizeFolderPath('.obsidian/plugins')).toBe('.obsidian/plugins');
     expect(sanitizeFolderPath('a/.hidden/b')).toBe('a/.hidden/b');
+  });
+});
+
+describe('sanitizeSubfolderValue', () => {
+  it('should split on / when treatSlashAsLiteral is false (nested-folder default)', () => {
+    expect(sanitizeSubfolderValue('2024/Q1', false)).toBe('2024/Q1');
+  });
+
+  it('should replace / with - when treatSlashAsLiteral is true (literal mode)', () => {
+    expect(sanitizeSubfolderValue('AC/DC', true)).toBe('AC-DC');
+  });
+
+  it('should preserve deep nesting in default mode', () => {
+    expect(sanitizeSubfolderValue('a/b/c', false)).toBe('a/b/c');
+  });
+
+  it('should collapse all slashes in literal mode', () => {
+    expect(sanitizeSubfolderValue('a/b/c', true)).toBe('a-b-c');
+  });
+
+  it('should still strip backslash and other unsafe chars in literal mode', () => {
+    expect(sanitizeSubfolderValue('AC\\DC:x', true)).toBe('AC-DC-x');
+  });
+
+  it('should still strip backslash and other unsafe chars in nested mode', () => {
+    expect(sanitizeSubfolderValue('AC\\DC:x', false)).toBe('AC-DC-x');
+  });
+
+  it('should return empty string for empty input regardless of mode', () => {
+    expect(sanitizeSubfolderValue('', false)).toBe('');
+    expect(sanitizeSubfolderValue('', true)).toBe('');
+  });
+
+  it('should still block path traversal in nested mode', () => {
+    expect(sanitizeSubfolderValue('../secret', false)).toBe('secret');
+  });
+
+  it('should sanitize away dot segments via filename rules in literal mode', () => {
+    // In literal mode the value becomes a single segment, so '..' loses its
+    // path-traversal meaning entirely — the slash is replaced with '-'.
+    expect(sanitizeSubfolderValue('../secret', true)).toBe('..-secret');
   });
 });
 

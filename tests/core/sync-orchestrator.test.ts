@@ -135,6 +135,42 @@ describe('SyncOrchestrator', () => {
     });
   });
 
+  describe('processSyncRequest — pull: subfolder slash policy (#96)', () => {
+    function mockNoteWithSubfolder(subfolderValue: string) {
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note', Category: subfolderValue } },
+      ]);
+      mockApp.vault.adapter.exists.mockResolvedValue(true);
+      mockApp.vault.getAbstractFileByPath.mockReturnValue(null);
+    }
+
+    it('nests on slash when subfolderTreatSlashAsLiteral=false (default behavior)', async () => {
+      settings = createSettings({
+        subfolderFieldName: 'Category',
+        subfolderTreatSlashAsLiteral: false,
+      });
+      orchestrator.updateSettings(settings);
+      mockNoteWithSubfolder('2024/Q1');
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/2024/Q1/Note.md', expect.any(String));
+    });
+
+    it('replaces slash with dash when subfolderTreatSlashAsLiteral=true', async () => {
+      settings = createSettings({
+        subfolderFieldName: 'Category',
+        subfolderTreatSlashAsLiteral: true,
+      });
+      orchestrator.updateSettings(settings);
+      mockNoteWithSubfolder('AC/DC');
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/AC-DC/Note.md', expect.any(String));
+    });
+  });
+
   describe('processSyncRequest — push', () => {
     it('should clean up status bar when active file is missing', async () => {
       mockApp.workspace.getActiveViewOfType.mockReturnValue(null);

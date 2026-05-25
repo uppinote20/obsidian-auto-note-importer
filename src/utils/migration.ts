@@ -90,6 +90,7 @@ function buildConfigFromRecord(
     templatePath: typeof raw['templatePath'] === 'string' ? raw['templatePath'] : '',
     filenameFieldName: typeof raw['filenameFieldName'] === 'string' ? raw['filenameFieldName'] : '',
     subfolderFieldName: typeof raw['subfolderFieldName'] === 'string' ? raw['subfolderFieldName'] : '',
+    subfolderTreatSlashAsLiteral: typeof raw['subfolderTreatSlashAsLiteral'] === 'boolean' ? raw['subfolderTreatSlashAsLiteral'] : false,
     syncInterval: typeof raw['syncInterval'] === 'number' ? raw['syncInterval'] : 0,
     allowOverwrite: typeof raw['allowOverwrite'] === 'boolean' ? raw['allowOverwrite'] : true,
     bidirectionalSync: typeof raw['bidirectionalSync'] === 'boolean' ? raw['bidirectionalSync'] : false,

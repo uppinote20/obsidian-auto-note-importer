@@ -1,6 +1,7 @@
 export {
   sanitizeFileName,
   sanitizeFolderPath,
+  sanitizeSubfolderValue,
   validateAndSanitizeFilename,
 } from './sanitizers';
 

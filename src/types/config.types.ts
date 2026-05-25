@@ -44,6 +44,14 @@ export interface ConfigEntry {
   filenameFieldName: string;
   subfolderFieldName: string;
 
+  /**
+   * When `true`, `/` in the subfolder field value is treated as a literal
+   * character (replaced with `-`) instead of as a nested-folder separator.
+   * Default `false` preserves legacy behavior where `2024/Q1` nests into
+   * `2024/Q1/`. See issue #96.
+   */
+  subfolderTreatSlashAsLiteral: boolean;
+
   syncInterval: number;
   allowOverwrite: boolean;
   bidirectionalSync: boolean;
@@ -69,6 +77,7 @@ export const DEFAULT_CONFIG_ENTRY: Omit<ConfigEntry, 'id' | 'name' | 'credential
   templatePath: '',
   filenameFieldName: '',
   subfolderFieldName: '',
+  subfolderTreatSlashAsLiteral: false,
   syncInterval: 0,
   allowOverwrite: true,
   bidirectionalSync: false,

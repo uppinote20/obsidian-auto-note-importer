@@ -22,7 +22,7 @@ import { FieldCache } from '../services';
 import { ConflictResolver } from './conflict-resolver';
 import { FrontmatterParser, FileWatcher } from '../file-operations';
 import { parseTemplate, buildMarkdownContent, generateBasesContent, resolveBasesFilePath, collectFieldNames } from '../builders';
-import { sanitizeFileName, sanitizeFolderPath, validateAndSanitizeFilename } from '../utils';
+import { sanitizeFileName, sanitizeSubfolderValue, validateAndSanitizeFilename } from '../utils';
 
 export interface StatusBarHandle {
   setText(text: string): void;
@@ -348,7 +348,10 @@ export class SyncOrchestrator {
       return this.settings.folderPath;
     }
 
-    const sanitized = sanitizeFolderPath(String(subfolderValue).trim());
+    const sanitized = sanitizeSubfolderValue(
+      String(subfolderValue).trim(),
+      this.settings.subfolderTreatSlashAsLiteral,
+    );
     if (!sanitized) {
       return this.settings.folderPath;
     }

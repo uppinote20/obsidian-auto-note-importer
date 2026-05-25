@@ -268,3 +268,34 @@ describe('migration: primaryKeyColumn default', () => {
     expect(result?.configs[0].primaryKeyColumn).toBe('');
   });
 });
+
+describe('migration: subfolderTreatSlashAsLiteral default', () => {
+  it('legacy v1 to v3 defaults subfolderTreatSlashAsLiteral to false (slash still nests)', () => {
+    const result = migrateSettings({ apiKey: 'k' });
+    expect(result?.configs[0].subfolderTreatSlashAsLiteral).toBe(false);
+  });
+
+  it('v2 to v3 defaults subfolderTreatSlashAsLiteral to false when absent', () => {
+    const result = migrateSettings({
+      version: 2,
+      credentials: [{ id: 'c1', name: 'A', type: 'airtable', apiKey: 'k' }],
+      configs: [{ id: 'cfg1', name: 'D', credentialId: 'c1', baseId: 'app', tableId: 'tbl', viewId: '' }],
+      activeConfigId: 'cfg1',
+    });
+    expect(result?.configs[0].subfolderTreatSlashAsLiteral).toBe(false);
+  });
+
+  it('v2 to v3 preserves explicit subfolderTreatSlashAsLiteral=true when present', () => {
+    const result = migrateSettings({
+      version: 2,
+      credentials: [{ id: 'c1', name: 'A', type: 'airtable', apiKey: 'k' }],
+      configs: [{
+        id: 'cfg1', name: 'D', credentialId: 'c1',
+        baseId: 'app', tableId: 'tbl', viewId: '',
+        subfolderTreatSlashAsLiteral: true,
+      }],
+      activeConfigId: 'cfg1',
+    });
+    expect(result?.configs[0].subfolderTreatSlashAsLiteral).toBe(true);
+  });
+});
