@@ -168,10 +168,36 @@ describe('sanitizeSubfolderValue', () => {
     expect(sanitizeSubfolderValue('../secret', false)).toBe('secret');
   });
 
-  it('should sanitize away dot segments via filename rules in literal mode', () => {
-    // In literal mode the value becomes a single segment, so '..' loses its
-    // path-traversal meaning entirely — the slash is replaced with '-'.
+  it('should collapse / before applying filename rules in literal mode', () => {
+    // In literal mode the '/' is replaced with '-' first; '..-secret' is a
+    // literal segment name, not a traversal sequence.
     expect(sanitizeSubfolderValue('../secret', true)).toBe('..-secret');
+  });
+
+  // Regression guard for #96: bare '.' / '..' inputs in literal mode previously
+  // survived sanitizeFileName unchanged (regex does not match dots), letting the
+  // orchestrator build `${folderPath}/..` which Obsidian's normalizePath does
+  // NOT collapse — escaping the configured sync folder.
+  it('should reject bare ".." in literal mode (no path traversal)', () => {
+    expect(sanitizeSubfolderValue('..', true)).toBe('');
+  });
+
+  it('should reject bare "." in literal mode (no same-dir reference)', () => {
+    expect(sanitizeSubfolderValue('.', true)).toBe('');
+  });
+
+  it('should reject whitespace-padded ".." in literal mode', () => {
+    expect(sanitizeSubfolderValue(' .. ', true)).toBe('');
+  });
+
+  it('should still reject bare ".." in nest mode (already filtered)', () => {
+    expect(sanitizeSubfolderValue('..', false)).toBe('');
+  });
+
+  it('should preserve names that merely START with ".." in literal mode', () => {
+    // '..foo' is not a traversal — sanitizeFileName returns it unchanged,
+    // dispatcher must not over-reject. Only exact '.' / '..' are dangerous.
+    expect(sanitizeSubfolderValue('..foo', true)).toBe('..foo');
   });
 });
 

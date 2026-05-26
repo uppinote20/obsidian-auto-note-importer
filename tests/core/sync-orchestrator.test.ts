@@ -169,6 +169,34 @@ describe('SyncOrchestrator', () => {
 
       expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/AC-DC/Note.md', expect.any(String));
     });
+
+    // Regression: bare '..' / '.' in literal mode must NOT escape settings.folderPath
+    it('does not escape folderPath when subfolder value is bare ".." in literal mode', async () => {
+      settings = createSettings({
+        subfolderFieldName: 'Category',
+        subfolderTreatSlashAsLiteral: true,
+      });
+      orchestrator.updateSettings(settings);
+      mockNoteWithSubfolder('..');
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      // Empty subfolder result falls back to settings.folderPath — file stays inside Sync/
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/Note.md', expect.any(String));
+    });
+
+    it('does not write to same-dir when subfolder value is "." in literal mode', async () => {
+      settings = createSettings({
+        subfolderFieldName: 'Category',
+        subfolderTreatSlashAsLiteral: true,
+      });
+      orchestrator.updateSettings(settings);
+      mockNoteWithSubfolder('.');
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/Note.md', expect.any(String));
+    });
   });
 
   describe('processSyncRequest — push', () => {
