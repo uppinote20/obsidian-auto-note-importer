@@ -4,11 +4,11 @@
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/uppinote20/obsidian-auto-note-importer?sort=semver)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/uppinote20/obsidian-auto-note-importer/total)
 
-Import and sync notes bidirectionally between **Airtable**, **SeaTable**, and your Obsidian vault with smart field mapping and organization features. Built on a provider-agnostic core; more databases (Supabase, Notion, Custom API) tracked in [#11](https://github.com/uppinote20/obsidian-auto-note-importer/issues/11).
+Import and sync notes bidirectionally between **Airtable**, **SeaTable**, **Supabase**, and your Obsidian vault with smart field mapping and organization features. Built on a provider-agnostic core; more databases (Notion, Custom API) tracked in [#11](https://github.com/uppinote20/obsidian-auto-note-importer/issues/11).
 
 ## ✨ Key Features
 
-- **Multiple Databases**: Airtable and SeaTable supported today; pluggable provider architecture for more
+- **Multiple Databases**: Airtable, SeaTable, and Supabase supported today; pluggable provider architecture for more
 - **Bidirectional Sync**: Sync notes from your remote database to Obsidian and back
 - **Multi-Config**: Run several sync configurations (different bases / tables / folders) side-by-side
 - **Computed-Field Support**: Auto-fetch formula / rollup / lookup / link-formula values after pushing
@@ -27,7 +27,7 @@ Import and sync notes bidirectionally between **Airtable**, **SeaTable**, and yo
 2. Go to **Settings → Community plugins → Browse**
 3. Search for "**Auto Note Importer**" and install it
 4. Enable the plugin
-5. Add a credential for your provider (Airtable PAT or SeaTable API Token), then configure a sync configuration
+5. Add a credential for your provider (Airtable PAT, SeaTable API Token, or Supabase API key), then configure a sync configuration
 
 ## 🚀 Quick Start
 

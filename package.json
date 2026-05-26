@@ -1,7 +1,7 @@
 {
 	"name": "auto-note-importer",
 	"version": "0.11.0",
-	"description": "Automatically import notes from an external database like Airtable into your Vault.",
+	"description": "Sync notes bidirectionally between your vault and Airtable, SeaTable, or Supabase databases.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
