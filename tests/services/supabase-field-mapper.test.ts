@@ -69,11 +69,46 @@ describe('supabaseFieldMapper.isFilenameSafe', () => {
   });
 });
 
+describe('supabaseFieldMapper.isSubfolderSafe', () => {
+  // Issue #98: subfolder accepts all known types — broader than filename.
+  it('returns true for every known base type and its :readonly variant', () => {
+    const known = [
+      'string', 'string:uuid', 'string:date', 'string:date-time',
+      'integer', 'integer:int64', 'number',
+      'boolean',
+      'object',
+      'array:string', 'array:integer', 'array:number', 'array:boolean', 'array:object',
+    ];
+    for (const t of known) {
+      expect(supabaseFieldMapper.isSubfolderSafe(t)).toBe(true);
+      expect(supabaseFieldMapper.isSubfolderSafe(`${t}:readonly`)).toBe(true);
+    }
+  });
+
+  it('returns false for unknown types', () => {
+    expect(supabaseFieldMapper.isSubfolderSafe('something-weird')).toBe(false);
+    expect(supabaseFieldMapper.isSubfolderSafe('')).toBe(false);
+  });
+
+  it('is a superset of isFilenameSafe', () => {
+    for (const t of supabaseFieldMapper.getFilenameSafeTypes()) {
+      expect(supabaseFieldMapper.isSubfolderSafe(t)).toBe(true);
+    }
+  });
+});
+
 describe('supabaseFieldMapper enumerations', () => {
   it('getFilenameSafeTypes returns sorted with no duplicates', () => {
     const list = supabaseFieldMapper.getFilenameSafeTypes();
     expect(new Set(list).size).toBe(list.length);
     expect([...list]).toEqual([...list].sort());
+  });
+
+  it('getSubfolderSafeTypes is a superset of getFilenameSafeTypes', () => {
+    const filename = new Set(supabaseFieldMapper.getFilenameSafeTypes());
+    const subfolder = new Set(supabaseFieldMapper.getSubfolderSafeTypes());
+    for (const t of filename) expect(subfolder.has(t)).toBe(true);
+    expect(subfolder.size).toBeGreaterThan(filename.size);
   });
 
   it('getReadOnlyTypes contains expected entries', () => {

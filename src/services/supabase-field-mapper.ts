@@ -60,6 +60,14 @@ const READ_ONLY_TYPES = Object.keys(TYPE_TO_STANDARD)
   .map(t => `${t}${READONLY_SUFFIX}`)
   .sort() as readonly string[];
 
+// Subfolder accepts every known base type AND its :readonly variant.
+// Broader than FILENAME_SAFE_TYPES because date / boolean / array etc.
+// stringify to reasonable folder names once sanitizeSubfolderValue runs.
+const SUBFOLDER_SAFE_TYPES = [
+  ...Object.keys(TYPE_TO_STANDARD),
+  ...Object.keys(TYPE_TO_STANDARD).map(t => `${t}${READONLY_SUFFIX}`),
+].sort() as readonly string[];
+
 class SupabaseFieldMapperImpl implements FieldTypeMapper {
   mapToStandardType(providerType: string): StandardFieldType {
     const base = providerType.endsWith(READONLY_SUFFIX)
@@ -77,8 +85,20 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
     return (FILENAME_SAFE_TYPES as readonly string[]).includes(providerType);
   }
 
+  /**
+   * Subfolder is permissive: every type in TYPE_TO_STANDARD (and its
+   * :readonly variant) passes. Issue #98.
+   */
+  isSubfolderSafe(providerType: string): boolean {
+    return (SUBFOLDER_SAFE_TYPES as readonly string[]).includes(providerType);
+  }
+
   getFilenameSafeTypes(): readonly string[] {
     return FILENAME_SAFE_TYPES;
+  }
+
+  getSubfolderSafeTypes(): readonly string[] {
+    return SUBFOLDER_SAFE_TYPES;
   }
 
   getReadOnlyTypes(): readonly string[] {

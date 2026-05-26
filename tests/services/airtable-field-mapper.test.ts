@@ -114,6 +114,59 @@ describe('airtableFieldMapper', () => {
     });
   });
 
+  describe('isSubfolderSafe', () => {
+    // Issue #98: subfolder allows every known type intentionally — the result
+    // passes through sanitizeSubfolderValue which handles any stringifiable
+    // input. Filename rules are stricter (OS filename constraints).
+    it('should return true for ALL known types (text / number / date / select / formula / attachment / link)', () => {
+      const allKnown = [
+        'singleLineText', 'multilineText', 'richText', 'email', 'phoneNumber', 'url', 'barcode',
+        'number', 'currency', 'percent', 'rating', 'duration',
+        'date', 'dateTime',
+        'checkbox',
+        'singleSelect', 'multipleSelects', 'multipleCollaborators', 'singleCollaborator',
+        'multipleAttachments',
+        'multipleRecordLinks',
+        'formula', 'rollup', 'count', 'lookup', 'externalSyncSource', 'aiText', 'button',
+        'createdTime', 'lastModifiedTime', 'createdBy', 'lastModifiedBy', 'autoNumber',
+      ];
+      for (const t of allKnown) {
+        expect(airtableFieldMapper.isSubfolderSafe(t)).toBe(true);
+      }
+    });
+
+    it('should return false for unknown types (fail-closed)', () => {
+      expect(airtableFieldMapper.isSubfolderSafe('bogusType')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('someNewAirtableType')).toBe(false);
+    });
+
+    it('should return a superset of isFilenameSafe (every filename-safe type is also subfolder-safe)', () => {
+      for (const t of airtableFieldMapper.getFilenameSafeTypes()) {
+        expect(airtableFieldMapper.isSubfolderSafe(t)).toBe(true);
+      }
+    });
+  });
+
+  describe('getSubfolderSafeTypes', () => {
+    it('should include every known type', () => {
+      const types = airtableFieldMapper.getSubfolderSafeTypes();
+      // sanity: includes broader set than filename-safe
+      expect(types).toContain('date');
+      expect(types).toContain('multipleSelects');
+      expect(types).toContain('checkbox');
+      // includes filename-safe types too
+      expect(types).toContain('singleLineText');
+      expect(types).toContain('formula');
+    });
+
+    it('should be a superset of getFilenameSafeTypes', () => {
+      const subset = new Set(airtableFieldMapper.getFilenameSafeTypes());
+      const superset = new Set(airtableFieldMapper.getSubfolderSafeTypes());
+      for (const t of subset) expect(superset.has(t)).toBe(true);
+    });
+  });
+
   describe('isFilenameSafe', () => {
     it('should return true for types producing safe filename output', () => {
       expect(airtableFieldMapper.isFilenameSafe('singleLineText')).toBe(true);

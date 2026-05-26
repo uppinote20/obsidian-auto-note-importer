@@ -20,7 +20,9 @@ const NOOP_MAPPER: FieldTypeMapper = {
   mapToStandardType: () => 'unknown',
   isReadOnly: () => false,
   isFilenameSafe: () => true,
+  isSubfolderSafe: () => true,
   getFilenameSafeTypes: () => [],
+  getSubfolderSafeTypes: () => [],
   getReadOnlyTypes: () => [],
 };
 

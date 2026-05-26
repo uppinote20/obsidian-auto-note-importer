@@ -88,8 +88,21 @@ class SeaTableFieldMapperImpl implements FieldTypeMapper {
     return (FILENAME_SAFE_TYPES as readonly string[]).includes(providerType);
   }
 
+  /**
+   * Every known SeaTable type is acceptable as a subfolder value —
+   * sanitizeSubfolderValue normalizes path-unsafe characters before use.
+   * Issue #98.
+   */
+  isSubfolderSafe(providerType: string): boolean {
+    return providerType in TYPE_TO_STANDARD;
+  }
+
   getFilenameSafeTypes(): readonly string[] {
     return FILENAME_SAFE_TYPES;
+  }
+
+  getSubfolderSafeTypes(): readonly string[] {
+    return Object.keys(TYPE_TO_STANDARD);
   }
 
   getReadOnlyTypes(): readonly string[] {

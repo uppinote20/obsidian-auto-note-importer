@@ -102,6 +102,46 @@ describe('seatableFieldMapper', () => {
     });
   });
 
+  describe('isSubfolderSafe', () => {
+    it('should return true for ALL known SeaTable types', () => {
+      const allKnown = [
+        'text', 'long-text', 'email', 'url', 'geolocation',
+        'number', 'duration', 'rate',
+        'date',
+        'checkbox',
+        'single-select', 'multiple-select', 'department-single-select', 'collaborator',
+        'image', 'file', 'digital-sign',
+        'link',
+        'formula', 'link-formula', 'button',
+        'ctime', 'mtime', 'creator', 'last-modifier', 'auto-number',
+      ];
+      for (const t of allKnown) {
+        expect(seatableFieldMapper.isSubfolderSafe(t)).toBe(true);
+      }
+    });
+
+    it('should return false for unknown types', () => {
+      expect(seatableFieldMapper.isSubfolderSafe('bogusType')).toBe(false);
+      expect(seatableFieldMapper.isSubfolderSafe('')).toBe(false);
+    });
+
+    it('should be a superset of isFilenameSafe', () => {
+      for (const t of seatableFieldMapper.getFilenameSafeTypes()) {
+        expect(seatableFieldMapper.isSubfolderSafe(t)).toBe(true);
+      }
+    });
+  });
+
+  describe('getSubfolderSafeTypes', () => {
+    it('should include filename-safe types and broader (date, multi-select)', () => {
+      const types = seatableFieldMapper.getSubfolderSafeTypes();
+      expect(types).toContain('date');
+      expect(types).toContain('multiple-select');
+      expect(types).toContain('checkbox');
+      expect(types).toContain('text');
+    });
+  });
+
   describe('isFilenameSafe', () => {
     it('should return true for types producing safe filename output', () => {
       expect(seatableFieldMapper.isFilenameSafe('text')).toBe(true);

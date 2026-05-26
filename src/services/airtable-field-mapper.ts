@@ -106,8 +106,22 @@ class AirtableFieldMapperImpl implements FieldTypeMapper {
     return (FILENAME_SAFE_TYPES as readonly string[]).includes(providerType);
   }
 
+  /**
+   * Subfolder is intentionally permissive — every known Airtable type is
+   * accepted because `sanitizeSubfolderValue` normalizes path-unsafe
+   * characters. Fail-closed on unknown types preserves the same forward-
+   * compatibility guarantee as `isReadOnly`. See issue #98.
+   */
+  isSubfolderSafe(providerType: string): boolean {
+    return providerType in TYPE_TO_STANDARD;
+  }
+
   getFilenameSafeTypes(): readonly string[] {
     return FILENAME_SAFE_TYPES;
+  }
+
+  getSubfolderSafeTypes(): readonly string[] {
+    return Object.keys(TYPE_TO_STANDARD);
   }
 
   getReadOnlyTypes(): readonly string[] {
