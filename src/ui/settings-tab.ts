@@ -1042,16 +1042,17 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         });
       });
 
-    // Subfolder allows every column type intentionally — date / formula /
-    // single-select are all reasonable subfolder grouping keys, and we
-    // sanitize the value before using it as a path. Filename is filtered
-    // to filename-safe types because OS filename rules are stricter.
+    // Subfolder accepts the broader `isSubfolderSafe` set (date / formula /
+    // multi-select / etc.) since sanitizeSubfolderValue normalizes path-unsafe
+    // characters. Filename remains stricter (OS filename rules). Issue #98.
+    const subfolderSafeTypes = new Set(mapper.getSubfolderSafeTypes());
+    const subfolderCandidates = (selectedTable?.columns ?? []).filter(c => subfolderSafeTypes.has(c.type));
     new Setting(containerEl)
       .setName('Subfolder field (optional)')
       .setDesc('Column used for subfolder organization. Leave empty for a flat layout.')
       .addDropdown(dropdown => {
         dropdown.addOption('', '-- No subfolder column --');
-        for (const c of selectedTable?.columns ?? []) dropdown.addOption(c.name, c.name);
+        for (const c of subfolderCandidates) dropdown.addOption(c.name, c.name);
         dropdown.setValue(config.subfolderFieldName);
         dropdown.setDisabled(!selectedTable);
         dropdown.onChange(async (value) => {
@@ -1605,12 +1606,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         });
       });
 
+    // Subfolder filter: broader than filename (issue #98). Excludes
+    // unknown-to-mapper types fail-closed.
+    const subfolderSafeTypes = new Set(mapper.getSubfolderSafeTypes());
+    const subfolderCandidates = columns.filter(c => subfolderSafeTypes.has(c.providerType));
     new Setting(containerEl)
       .setName('Subfolder field (optional)')
       .setDesc('Column used for subfolder organization. Leave empty for flat layout.')
       .addDropdown(dropdown => {
         dropdown.addOption('', '-- No subfolder column --');
-        for (const c of columns) dropdown.addOption(c.name, c.name);
+        for (const c of subfolderCandidates) dropdown.addOption(c.name, c.name);
         dropdown.setValue(config.subfolderFieldName);
         dropdown.setDisabled(columns.length === 0);
         dropdown.onChange(async value => {
@@ -1813,10 +1818,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
   private renderFieldSelectors(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
     this.renderFieldDropdown(containerEl, "Filename field", "Select the field to use for the note's filename.", "-- Select field --",
-      config.filenameFieldName, (value) => { config.filenameFieldName = value; }, config, credential);
+      config.filenameFieldName, (value) => { config.filenameFieldName = value; }, config, credential, 'filename');
 
     this.renderFieldDropdown(containerEl, "Subfolder field", "Select the field to use for subfolder organization.", "-- No subfolder --",
-      config.subfolderFieldName, (value) => { config.subfolderFieldName = value; }, config, credential);
+      config.subfolderFieldName, (value) => { config.subfolderFieldName = value; }, config, credential, 'subfolder');
 
     this.renderSubfolderSlashToggle(containerEl, config);
   }
@@ -1829,7 +1834,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     currentValue: string,
     onSelect: (value: string) => void,
     config: ConfigEntry,
-    credential: AirtableCredential
+    credential: AirtableCredential,
+    // Filter policy: 'filename' uses isFilenameSafe (strict — OS filename
+    // rules); 'subfolder' uses isSubfolderSafe (broader — sanitize handles
+    // path-unsafe chars). Both fail-closed on unknown types. Issue #98.
+    filterMode: 'filename' | 'subfolder'
   ): void {
     if (!hasFieldTypeMapper(credential.type)) {
       new Setting(containerEl)
@@ -1851,7 +1860,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             config.tableId
           );
 
-          const supportedFields = fields.filter(field => mapper.isFilenameSafe(field.type));
+          const supportedFields = filterMode === 'filename'
+            ? fields.filter(field => mapper.isFilenameSafe(field.type))
+            : fields.filter(field => mapper.isSubfolderSafe(field.type));
           const unsupportedCount = fields.length - supportedFields.length;
 
           for (const field of supportedFields) {
