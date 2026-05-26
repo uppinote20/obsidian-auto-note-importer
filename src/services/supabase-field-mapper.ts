@@ -93,7 +93,14 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
   }
 
   isReadOnly(providerType: string): boolean {
-    if (!(providerType.replace(/:readonly$/, '') in TYPE_TO_STANDARD)) return true;
+    // Strip optional :readonly suffix then check base via hasOwnProperty.call
+    // (not `in`) to avoid prototype-chain leak — 'toString'/'constructor' etc.
+    // would otherwise pass the `in` check and return false (writable),
+    // breaking the fail-closed contract. Matches Airtable + SeaTable. #98.
+    const base = providerType.endsWith(READONLY_SUFFIX)
+      ? providerType.slice(0, -READONLY_SUFFIX.length)
+      : providerType;
+    if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, base)) return true;
     return providerType.endsWith(READONLY_SUFFIX);
   }
 

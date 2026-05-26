@@ -36,6 +36,18 @@ describe('supabaseFieldMapper.mapToStandardType', () => {
   });
 });
 
+describe('supabaseFieldMapper.isReadOnly prototype-chain leak guard', () => {
+  // Symmetric with Airtable/SeaTable isReadOnly hardening. The `in
+  // TYPE_TO_STANDARD` check would match 'toString'/'constructor' via
+  // Object.prototype — must use hasOwnProperty.call.
+  it('fails closed on prototype-chain names', () => {
+    for (const t of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
+      expect(supabaseFieldMapper.isReadOnly(t)).toBe(true);
+      expect(supabaseFieldMapper.isReadOnly(`${t}:readonly`)).toBe(true);
+    }
+  });
+});
+
 describe('supabaseFieldMapper.isReadOnly', () => {
   it('returns true for types ending with readonly suffix', () => {
     expect(supabaseFieldMapper.isReadOnly('string:readonly')).toBe(true);

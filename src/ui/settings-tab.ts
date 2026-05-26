@@ -1931,6 +1931,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               // compile-time signal; the runtime fallback empties the option
               // set so a future filterMode union extension can't silently
               // surface attachment/link types.
+              // (Idiomatic `satisfies never` requires TS 4.9+; this repo
+              // pins TS 4.7.4, so the `const _exhaustive: never = ...; void
+              // _exhaustive` pair is used instead.)
               const _exhaustive: never = filterMode;
               void _exhaustive;
               supportedFields = [];
