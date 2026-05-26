@@ -103,26 +103,37 @@ describe('seatableFieldMapper', () => {
   });
 
   describe('isSubfolderSafe', () => {
-    it('should return true for ALL known SeaTable types', () => {
-      const allKnown = [
+    it('should return true for stringifiable known SeaTable types', () => {
+      const stringifiable = [
         'text', 'long-text', 'email', 'url', 'geolocation',
         'number', 'duration', 'rate',
         'date',
         'checkbox',
         'single-select', 'multiple-select', 'department-single-select', 'collaborator',
-        'image', 'file', 'digital-sign',
-        'link',
         'formula', 'link-formula', 'button',
         'ctime', 'mtime', 'creator', 'last-modifier', 'auto-number',
       ];
-      for (const t of allKnown) {
+      for (const t of stringifiable) {
         expect(seatableFieldMapper.isSubfolderSafe(t)).toBe(true);
       }
+    });
+
+    it('should return false for attachment + link types (no sensible string)', () => {
+      expect(seatableFieldMapper.isSubfolderSafe('image')).toBe(false);
+      expect(seatableFieldMapper.isSubfolderSafe('file')).toBe(false);
+      expect(seatableFieldMapper.isSubfolderSafe('digital-sign')).toBe(false);
+      expect(seatableFieldMapper.isSubfolderSafe('link')).toBe(false);
     });
 
     it('should return false for unknown types', () => {
       expect(seatableFieldMapper.isSubfolderSafe('bogusType')).toBe(false);
       expect(seatableFieldMapper.isSubfolderSafe('')).toBe(false);
+    });
+
+    it('should return false for JS prototype-chain names (no in-operator leak)', () => {
+      for (const t of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
+        expect(seatableFieldMapper.isSubfolderSafe(t)).toBe(false);
+      }
     });
 
     it('should be a superset of isFilenameSafe', () => {
@@ -133,12 +144,20 @@ describe('seatableFieldMapper', () => {
   });
 
   describe('getSubfolderSafeTypes', () => {
-    it('should include filename-safe types and broader (date, multi-select)', () => {
+    it('should include stringifiable types but exclude attachment/link', () => {
       const types = seatableFieldMapper.getSubfolderSafeTypes();
       expect(types).toContain('date');
       expect(types).toContain('multiple-select');
       expect(types).toContain('checkbox');
       expect(types).toContain('text');
+      expect(types).not.toContain('image');
+      expect(types).not.toContain('file');
+      expect(types).not.toContain('link');
+    });
+
+    it('should be sorted for stable enumeration', () => {
+      const types = seatableFieldMapper.getSubfolderSafeTypes();
+      expect([...types]).toEqual([...types].sort());
     });
   });
 

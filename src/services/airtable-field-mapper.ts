@@ -82,6 +82,17 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   autoNumber: 'system',
 };
 
+// Subfolder accepts any known Airtable type that stringifies to a reasonable
+// folder atom. Attachment / link types are excluded because their JSON shape
+// stringifies to "[object Object],..." — picking such a column would bucket
+// every record under one literal "[object Object]" folder. Built from
+// TYPE_TO_STANDARD so adding a new known type automatically surfaces it
+// (after a manual review against this exclusion list).
+const SUBFOLDER_SAFE_TYPES = Object.entries(TYPE_TO_STANDARD)
+  .filter(([, std]) => std !== 'attachment' && std !== 'link' && std !== 'unknown')
+  .map(([t]) => t)
+  .sort() as readonly string[];
+
 /**
  * Stateless singleton. Instances are cheap but shared to make identity
  * checks (`===`) meaningful in tests and future caching layers.
@@ -107,13 +118,14 @@ class AirtableFieldMapperImpl implements FieldTypeMapper {
   }
 
   /**
-   * Subfolder is intentionally permissive — every known Airtable type is
-   * accepted because `sanitizeSubfolderValue` normalizes path-unsafe
-   * characters. Fail-closed on unknown types preserves the same forward-
-   * compatibility guarantee as `isReadOnly`. See issue #98.
+   * Subfolder is permissive but not unlimited — accepts any known type that
+   * stringifies to a usable folder name. Attachment / link / unknown standard
+   * types are excluded (see SUBFOLDER_SAFE_TYPES). Uses Array.includes (not
+   * `in TYPE_TO_STANDARD`) to avoid prototype-chain leak on names like
+   * 'toString' / 'constructor'. See issue #98.
    */
   isSubfolderSafe(providerType: string): boolean {
-    return providerType in TYPE_TO_STANDARD;
+    return (SUBFOLDER_SAFE_TYPES as readonly string[]).includes(providerType);
   }
 
   getFilenameSafeTypes(): readonly string[] {
@@ -121,7 +133,7 @@ class AirtableFieldMapperImpl implements FieldTypeMapper {
   }
 
   getSubfolderSafeTypes(): readonly string[] {
-    return Object.keys(TYPE_TO_STANDARD);
+    return SUBFOLDER_SAFE_TYPES;
   }
 
   getReadOnlyTypes(): readonly string[] {

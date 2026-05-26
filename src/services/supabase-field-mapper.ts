@@ -60,13 +60,18 @@ const READ_ONLY_TYPES = Object.keys(TYPE_TO_STANDARD)
   .map(t => `${t}${READONLY_SUFFIX}`)
   .sort() as readonly string[];
 
-// Subfolder accepts every known base type AND its :readonly variant.
-// Broader than FILENAME_SAFE_TYPES because date / boolean / array etc.
-// stringify to reasonable folder names once sanitizeSubfolderValue runs.
-const SUBFOLDER_SAFE_TYPES = [
-  ...Object.keys(TYPE_TO_STANDARD),
-  ...Object.keys(TYPE_TO_STANDARD).map(t => `${t}${READONLY_SUFFIX}`),
-].sort() as readonly string[];
+// Excludes types that map to 'unknown' (e.g. 'string:byte' — bytea blobs
+// stringify to truncated near-collision garbage). Includes both base and
+// :readonly variant for each surviving type.
+const SUBFOLDER_SAFE_TYPES = (() => {
+  const safeBases = Object.entries(TYPE_TO_STANDARD)
+    .filter(([, std]) => std !== 'unknown')
+    .map(([t]) => t);
+  return [
+    ...safeBases,
+    ...safeBases.map(t => `${t}${READONLY_SUFFIX}`),
+  ].sort() as readonly string[];
+})();
 
 class SupabaseFieldMapperImpl implements FieldTypeMapper {
   mapToStandardType(providerType: string): StandardFieldType {

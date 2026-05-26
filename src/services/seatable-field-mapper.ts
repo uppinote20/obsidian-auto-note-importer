@@ -74,6 +74,14 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   'auto-number': 'system',
 };
 
+// Excludes attachment (image / file / digital-sign) and link types — they
+// stringify to JSON / record-id garbage when used as folder names. Sorted
+// for deterministic enumeration across providers.
+const SUBFOLDER_SAFE_TYPES = Object.entries(TYPE_TO_STANDARD)
+  .filter(([, std]) => std !== 'attachment' && std !== 'link' && std !== 'unknown')
+  .map(([t]) => t)
+  .sort() as readonly string[];
+
 class SeaTableFieldMapperImpl implements FieldTypeMapper {
   mapToStandardType(providerType: string): StandardFieldType {
     return TYPE_TO_STANDARD[providerType] ?? 'unknown';
@@ -89,12 +97,11 @@ class SeaTableFieldMapperImpl implements FieldTypeMapper {
   }
 
   /**
-   * Every known SeaTable type is acceptable as a subfolder value —
-   * sanitizeSubfolderValue normalizes path-unsafe characters before use.
-   * Issue #98.
+   * Permissive but excludes attachment / link types. Uses Array.includes to
+   * avoid `in TYPE_TO_STANDARD` prototype-chain leak. Issue #98.
    */
   isSubfolderSafe(providerType: string): boolean {
-    return providerType in TYPE_TO_STANDARD;
+    return (SUBFOLDER_SAFE_TYPES as readonly string[]).includes(providerType);
   }
 
   getFilenameSafeTypes(): readonly string[] {
@@ -102,7 +109,7 @@ class SeaTableFieldMapperImpl implements FieldTypeMapper {
   }
 
   getSubfolderSafeTypes(): readonly string[] {
-    return Object.keys(TYPE_TO_STANDARD);
+    return SUBFOLDER_SAFE_TYPES;
   }
 
   getReadOnlyTypes(): readonly string[] {

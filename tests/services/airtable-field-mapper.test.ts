@@ -115,30 +115,47 @@ describe('airtableFieldMapper', () => {
   });
 
   describe('isSubfolderSafe', () => {
-    // Issue #98: subfolder allows every known type intentionally — the result
-    // passes through sanitizeSubfolderValue which handles any stringifiable
-    // input. Filename rules are stricter (OS filename constraints).
-    it('should return true for ALL known types (text / number / date / select / formula / attachment / link)', () => {
-      const allKnown = [
+    // Issue #98: subfolder allows a broad set of types — sanitizeSubfolderValue
+    // handles any stringifiable input. Filename rules are stricter (OS rules).
+    // Attachment / link types are excluded because their stringified shape is
+    // [object Object] / record-id JSON — produces garbage folder names.
+    it('should return true for stringifiable known types (text / number / date / select / formula / system)', () => {
+      const stringifiable = [
         'singleLineText', 'multilineText', 'richText', 'email', 'phoneNumber', 'url', 'barcode',
         'number', 'currency', 'percent', 'rating', 'duration',
         'date', 'dateTime',
         'checkbox',
         'singleSelect', 'multipleSelects', 'multipleCollaborators', 'singleCollaborator',
-        'multipleAttachments',
-        'multipleRecordLinks',
         'formula', 'rollup', 'count', 'lookup', 'externalSyncSource', 'aiText', 'button',
         'createdTime', 'lastModifiedTime', 'createdBy', 'lastModifiedBy', 'autoNumber',
       ];
-      for (const t of allKnown) {
+      for (const t of stringifiable) {
         expect(airtableFieldMapper.isSubfolderSafe(t)).toBe(true);
       }
+    });
+
+    it('should return false for attachment and link types (no sensible string)', () => {
+      expect(airtableFieldMapper.isSubfolderSafe('multipleAttachments')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('multipleRecordLinks')).toBe(false);
     });
 
     it('should return false for unknown types (fail-closed)', () => {
       expect(airtableFieldMapper.isSubfolderSafe('bogusType')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('someNewAirtableType')).toBe(false);
+    });
+
+    // Regression guard: the `in` operator walks Object.prototype so a naive
+    // implementation would accept inherited method names. Must use a safe
+    // membership check (.includes on a literal array, or hasOwnProperty).
+    it('should return false for JS prototype-chain names (no in-operator leak)', () => {
+      const inheritedNames = [
+        'toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__',
+        'isPrototypeOf', 'propertyIsEnumerable', 'toLocaleString',
+      ];
+      for (const t of inheritedNames) {
+        expect(airtableFieldMapper.isSubfolderSafe(t)).toBe(false);
+      }
     });
 
     it('should return a superset of isFilenameSafe (every filename-safe type is also subfolder-safe)', () => {
@@ -149,15 +166,20 @@ describe('airtableFieldMapper', () => {
   });
 
   describe('getSubfolderSafeTypes', () => {
-    it('should include every known type', () => {
+    it('should include stringifiable known types but exclude attachment/link', () => {
       const types = airtableFieldMapper.getSubfolderSafeTypes();
-      // sanity: includes broader set than filename-safe
       expect(types).toContain('date');
       expect(types).toContain('multipleSelects');
       expect(types).toContain('checkbox');
-      // includes filename-safe types too
       expect(types).toContain('singleLineText');
       expect(types).toContain('formula');
+      expect(types).not.toContain('multipleAttachments');
+      expect(types).not.toContain('multipleRecordLinks');
+    });
+
+    it('should be sorted for stable enumeration', () => {
+      const types = airtableFieldMapper.getSubfolderSafeTypes();
+      expect([...types]).toEqual([...types].sort());
     });
 
     it('should be a superset of getFilenameSafeTypes', () => {

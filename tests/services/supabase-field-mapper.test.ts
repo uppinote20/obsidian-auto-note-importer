@@ -70,10 +70,10 @@ describe('supabaseFieldMapper.isFilenameSafe', () => {
 });
 
 describe('supabaseFieldMapper.isSubfolderSafe', () => {
-  // Issue #98: subfolder accepts all known types — broader than filename.
-  it('returns true for every known base type and its :readonly variant', () => {
+  it('returns true for stringifiable known types and their :readonly variants', () => {
     const known = [
       'string', 'string:uuid', 'string:date', 'string:date-time',
+      'string:jsonb', 'string:json',
       'integer', 'integer:int64', 'number',
       'boolean',
       'object',
@@ -83,6 +83,11 @@ describe('supabaseFieldMapper.isSubfolderSafe', () => {
       expect(supabaseFieldMapper.isSubfolderSafe(t)).toBe(true);
       expect(supabaseFieldMapper.isSubfolderSafe(`${t}:readonly`)).toBe(true);
     }
+  });
+
+  it('returns false for string:byte (maps to unknown — would produce garbage folders)', () => {
+    expect(supabaseFieldMapper.isSubfolderSafe('string:byte')).toBe(false);
+    expect(supabaseFieldMapper.isSubfolderSafe('string:byte:readonly')).toBe(false);
   });
 
   it('returns false for unknown types', () => {
