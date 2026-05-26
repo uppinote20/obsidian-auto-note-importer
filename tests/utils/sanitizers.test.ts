@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sanitizeFileName,
   sanitizeFolderPath,
+  sanitizeSubfolderValue,
   validateAndSanitizeFilename
 } from '../../src/utils/sanitizers';
 
@@ -130,6 +131,73 @@ describe('sanitizeFolderPath', () => {
   it('should preserve segments starting with dot', () => {
     expect(sanitizeFolderPath('.obsidian/plugins')).toBe('.obsidian/plugins');
     expect(sanitizeFolderPath('a/.hidden/b')).toBe('a/.hidden/b');
+  });
+});
+
+describe('sanitizeSubfolderValue', () => {
+  it('should split on / when treatSlashAsLiteral is false (nested-folder default)', () => {
+    expect(sanitizeSubfolderValue('2024/Q1', false)).toBe('2024/Q1');
+  });
+
+  it('should replace / with - when treatSlashAsLiteral is true (literal mode)', () => {
+    expect(sanitizeSubfolderValue('AC/DC', true)).toBe('AC-DC');
+  });
+
+  it('should preserve deep nesting in default mode', () => {
+    expect(sanitizeSubfolderValue('a/b/c', false)).toBe('a/b/c');
+  });
+
+  it('should collapse all slashes in literal mode', () => {
+    expect(sanitizeSubfolderValue('a/b/c', true)).toBe('a-b-c');
+  });
+
+  it('should still strip backslash and other unsafe chars in literal mode', () => {
+    expect(sanitizeSubfolderValue('AC\\DC:x', true)).toBe('AC-DC-x');
+  });
+
+  it('should still strip backslash and other unsafe chars in nested mode', () => {
+    expect(sanitizeSubfolderValue('AC\\DC:x', false)).toBe('AC-DC-x');
+  });
+
+  it('should return empty string for empty input regardless of mode', () => {
+    expect(sanitizeSubfolderValue('', false)).toBe('');
+    expect(sanitizeSubfolderValue('', true)).toBe('');
+  });
+
+  it('should still block path traversal in nested mode', () => {
+    expect(sanitizeSubfolderValue('../secret', false)).toBe('secret');
+  });
+
+  it('should collapse / before applying filename rules in literal mode', () => {
+    // In literal mode the '/' is replaced with '-' first; '..-secret' is a
+    // literal segment name, not a traversal sequence.
+    expect(sanitizeSubfolderValue('../secret', true)).toBe('..-secret');
+  });
+
+  // Regression guard for #96: bare '.' / '..' inputs in literal mode previously
+  // survived sanitizeFileName unchanged (regex does not match dots), letting the
+  // orchestrator build `${folderPath}/..` which Obsidian's normalizePath does
+  // NOT collapse — escaping the configured sync folder.
+  it('should reject bare ".." in literal mode (no path traversal)', () => {
+    expect(sanitizeSubfolderValue('..', true)).toBe('');
+  });
+
+  it('should reject bare "." in literal mode (no same-dir reference)', () => {
+    expect(sanitizeSubfolderValue('.', true)).toBe('');
+  });
+
+  it('should reject whitespace-padded ".." in literal mode', () => {
+    expect(sanitizeSubfolderValue(' .. ', true)).toBe('');
+  });
+
+  it('should still reject bare ".." in nest mode (already filtered)', () => {
+    expect(sanitizeSubfolderValue('..', false)).toBe('');
+  });
+
+  it('should preserve names that merely START with ".." in literal mode', () => {
+    // '..foo' is not a traversal — sanitizeFileName returns it unchanged,
+    // dispatcher must not over-reject. Only exact '.' / '..' are dangerous.
+    expect(sanitizeSubfolderValue('..foo', true)).toBe('..foo');
   });
 });
 

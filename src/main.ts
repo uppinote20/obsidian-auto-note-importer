@@ -17,7 +17,7 @@ import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache } from './serv
 import { ConfigManager } from './core';
 import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
-import { migrateSettings } from './utils/migration';
+import { migrateSettings, hydrateConfigDefaults } from './utils/migration';
 import { findCredentialForConfig, findConfigById, buildCredentialIndex } from './utils';
 
 /**
@@ -239,7 +239,12 @@ export default class AutoNoteImporterPlugin extends Plugin {
       this.settings = migrated;
       await this.saveData(this.settings);
     } else {
-      this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+      // Shallow merge only fills top-level keys; per-config hydration covers
+      // ConfigEntry fields added in newer plugin versions that the user's
+      // saved settings don't yet have (migrateSettings returns null when
+      // version already matches CURRENT_VERSION). See PR #97.
+      const merged = Object.assign({}, DEFAULT_SETTINGS, data) as AutoNoteImporterSettings;
+      this.settings = hydrateConfigDefaults(merged);
     }
   }
 

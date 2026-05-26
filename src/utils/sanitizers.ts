@@ -56,6 +56,35 @@ export function sanitizeFolderPath(path: string): string {
 }
 
 /**
+ * Sanitizes a subfolder field value according to the per-config slash policy.
+ * Dispatches between filename rules (`/` collapses to `-`) and folder-path
+ * rules (`/` splits into nested segments) based on the toggle. Default mode
+ * (`treatSlashAsLiteral=false`) preserves the legacy behavior of nesting on `/`.
+ *
+ * Defense-in-depth: bare `.` / `..` outputs are rejected (returned as `''`)
+ * even though `sanitizeFolderPath` already filters them per-segment — literal
+ * mode dispatches to `sanitizeFileName`, which does NOT touch dot characters,
+ * and Obsidian's `normalizePath` does NOT collapse `..` segments. Without this
+ * guard, a remote value of `..` with the toggle on would let the orchestrator
+ * build `${folderPath}/..` and write notes outside the configured sync folder
+ * (issue #96 follow-up).
+ *
+ * Length-cap note: literal mode caps the entire value at 255 chars via
+ * `sanitizeFileName`; nest mode caps each `/`-separated segment at 255 via
+ * `sanitizeFolderPath`. Toggling on an existing vault can therefore produce
+ * different on-disk paths for long values containing `/`.
+ *
+ * @param value The raw subfolder value from the remote record
+ * @param treatSlashAsLiteral When true, `/` becomes `-`; when false, `/` nests
+ * @returns Sanitized subfolder path string, or `''` for empty/dot-only inputs
+ */
+export function sanitizeSubfolderValue(value: string, treatSlashAsLiteral: boolean): string {
+  const sanitized = treatSlashAsLiteral ? sanitizeFileName(value) : sanitizeFolderPath(value);
+  if (sanitized === '.' || sanitized === '..') return '';
+  return sanitized;
+}
+
+/**
  * Validates and sanitizes a value for use as a filename.
  * Returns the sanitized filename if valid, or null if invalid.
  * @param value The value to validate and sanitize

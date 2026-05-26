@@ -4,7 +4,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { migrateSettings } from '../../src/utils/migration';
+import { migrateSettings, hydrateConfigDefaults } from '../../src/utils/migration';
+import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
+import type { AutoNoteImporterSettings } from '../../src/types';
 
 describe('migrateSettings', () => {
   it('should return null for v3 settings (already current)', () => {
@@ -266,5 +268,106 @@ describe('migration: primaryKeyColumn default', () => {
       activeConfigId: 'cfg1',
     });
     expect(result?.configs[0].primaryKeyColumn).toBe('');
+  });
+});
+
+// Regression for the loadSettings hydration gap surfaced in PR #97 review:
+// When migrateSettings returns null (data already at CURRENT_VERSION), main.ts
+// previously did a shallow Object.assign that left configs[i] untouched. Any
+// ConfigEntry field added after the user's saved version would arrive as
+// `undefined` in memory and at the UI layer. hydrateConfigDefaults backfills
+// each config from DEFAULT_CONFIG_ENTRY, preserving caller-set fields.
+describe('hydrateConfigDefaults', () => {
+  function makeSettings(configs: unknown[]): AutoNoteImporterSettings {
+    return {
+      version: 3,
+      credentials: [],
+      configs: configs as AutoNoteImporterSettings['configs'],
+      activeConfigId: '',
+      debugMode: false,
+    };
+  }
+
+  it('fills missing subfolderTreatSlashAsLiteral with default false', () => {
+    const settings = makeSettings([{ id: 'c1', name: 'D', credentialId: 'cred' }]);
+    const hydrated = hydrateConfigDefaults(settings);
+    expect(hydrated.configs[0].subfolderTreatSlashAsLiteral).toBe(false);
+  });
+
+  it('preserves explicit subfolderTreatSlashAsLiteral=true', () => {
+    const settings = makeSettings([
+      { id: 'c1', name: 'D', credentialId: 'cred', subfolderTreatSlashAsLiteral: true },
+    ]);
+    const hydrated = hydrateConfigDefaults(settings);
+    expect(hydrated.configs[0].subfolderTreatSlashAsLiteral).toBe(true);
+  });
+
+  it('fills missing primaryKeyColumn with default empty string', () => {
+    const settings = makeSettings([{ id: 'c1', name: 'D', credentialId: 'cred' }]);
+    const hydrated = hydrateConfigDefaults(settings);
+    expect(hydrated.configs[0].primaryKeyColumn).toBe('');
+  });
+
+  it('preserves caller-set fields and identity', () => {
+    const settings = makeSettings([
+      { id: 'c1', name: 'My Config', credentialId: 'cred', folderPath: 'Sync/Notes' },
+    ]);
+    const hydrated = hydrateConfigDefaults(settings);
+    expect(hydrated.configs[0].id).toBe('c1');
+    expect(hydrated.configs[0].name).toBe('My Config');
+    expect(hydrated.configs[0].folderPath).toBe('Sync/Notes');
+  });
+
+  it('returns a new settings object (does not mutate input)', () => {
+    const settings = makeSettings([{ id: 'c1', name: 'D', credentialId: 'cred' }]);
+    const hydrated = hydrateConfigDefaults(settings);
+    expect(hydrated).not.toBe(settings);
+    expect(hydrated.configs).not.toBe(settings.configs);
+    expect((settings.configs[0] as Record<string, unknown>)['subfolderTreatSlashAsLiteral']).toBeUndefined();
+  });
+
+  it('handles empty configs array', () => {
+    const settings = makeSettings([]);
+    const hydrated = hydrateConfigDefaults(settings);
+    expect(hydrated.configs).toEqual([]);
+  });
+
+  it('every DEFAULT_CONFIG_ENTRY field appears on hydrated configs', () => {
+    const settings = makeSettings([{ id: 'c1', name: 'D', credentialId: 'cred' }]);
+    const hydrated = hydrateConfigDefaults(settings);
+    for (const key of Object.keys(DEFAULT_CONFIG_ENTRY)) {
+      expect(hydrated.configs[0]).toHaveProperty(key);
+    }
+  });
+});
+
+describe('migration: subfolderTreatSlashAsLiteral default', () => {
+  it('legacy v1 to v3 defaults subfolderTreatSlashAsLiteral to false (slash still nests)', () => {
+    const result = migrateSettings({ apiKey: 'k' });
+    expect(result?.configs[0].subfolderTreatSlashAsLiteral).toBe(false);
+  });
+
+  it('v2 to v3 defaults subfolderTreatSlashAsLiteral to false when absent', () => {
+    const result = migrateSettings({
+      version: 2,
+      credentials: [{ id: 'c1', name: 'A', type: 'airtable', apiKey: 'k' }],
+      configs: [{ id: 'cfg1', name: 'D', credentialId: 'c1', baseId: 'app', tableId: 'tbl', viewId: '' }],
+      activeConfigId: 'cfg1',
+    });
+    expect(result?.configs[0].subfolderTreatSlashAsLiteral).toBe(false);
+  });
+
+  it('v2 to v3 preserves explicit subfolderTreatSlashAsLiteral=true when present', () => {
+    const result = migrateSettings({
+      version: 2,
+      credentials: [{ id: 'c1', name: 'A', type: 'airtable', apiKey: 'k' }],
+      configs: [{
+        id: 'cfg1', name: 'D', credentialId: 'c1',
+        baseId: 'app', tableId: 'tbl', viewId: '',
+        subfolderTreatSlashAsLiteral: true,
+      }],
+      activeConfigId: 'cfg1',
+    });
+    expect(result?.configs[0].subfolderTreatSlashAsLiteral).toBe(true);
   });
 });

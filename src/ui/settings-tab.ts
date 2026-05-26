@@ -1059,6 +1059,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+
+    this.renderSubfolderSlashToggle(containerEl, config);
   }
 
   /**
@@ -1116,6 +1118,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           config.subfolderFieldName = value.trim();
           await this.plugin.saveSettings();
         }));
+
+    this.renderSubfolderSlashToggle(containerEl, config);
   }
 
   // ─── Supabase Connection ───────────────────────────────────────────
@@ -1614,6 +1618,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+
+    this.renderSubfolderSlashToggle(containerEl, config);
   }
 
   private renderSupabaseTextFallback(containerEl: HTMLElement, config: ConfigEntry): void {
@@ -1702,6 +1708,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           config.subfolderFieldName = value.trim();
           debouncedSave();
         }));
+
+    this.renderSubfolderSlashToggle(containerEl, config);
   }
 
   private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
@@ -1809,6 +1817,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     this.renderFieldDropdown(containerEl, "Subfolder field", "Select the field to use for subfolder organization.", "-- No subfolder --",
       config.subfolderFieldName, (value) => { config.subfolderFieldName = value; }, config, credential);
+
+    this.renderSubfolderSlashToggle(containerEl, config);
   }
 
   private renderFieldDropdown(
@@ -1986,6 +1996,29 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           (num) => { config.formulaSyncDelay = num; }, undefined, "100");
       }
     }
+  }
+
+  /**
+   * Provider-agnostic toggle that controls how `/` in a subfolder field value
+   * is interpreted: as a nested-folder separator (default) or as a literal
+   * character collapsed to `-`. Shown beneath every "Subfolder field" picker
+   * across Airtable / SeaTable / Supabase cards and their text fallbacks.
+   * See issue #96.
+   */
+  private renderSubfolderSlashToggle(containerEl: HTMLElement, config: ConfigEntry): void {
+    new Setting(containerEl)
+      .setName('Treat / as literal in subfolder values')
+      .setDesc("When on, '/' is replaced with '-' instead of nesting subfolders.")
+      .addToggle(toggle => toggle
+        // Defensive `?? false`: legacy v3 configs persisted before this field
+        // existed arrive as `undefined` until hydrateConfigDefaults runs at
+        // load time. Belt-and-suspenders for any synthetic call path that
+        // bypasses load (tests, plugin reloads after partial writes).
+        .setValue(config.subfolderTreatSlashAsLiteral ?? false)
+        .onChange(async value => {
+          config.subfolderTreatSlashAsLiteral = value;
+          await this.plugin.saveSettings();
+        }));
   }
 
   private renderNumberSetting(

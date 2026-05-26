@@ -31,7 +31,7 @@
 
 import { findPageTarget } from './cdp-helpers.mjs';
 import { loadEnv } from './load-env.mjs';
-import { buildSettingsHarnessHelpers, buildConfigEntry, createTestHarness } from './obsidian-helpers.mjs';
+import { buildSettingsHarnessHelpers, makeSetConfigAndQuery, buildConfigEntry, createTestHarness } from './obsidian-helpers.mjs';
 
 loadEnv();
 
@@ -93,7 +93,8 @@ const HELPERS = buildSettingsHarnessHelpers({ pluginId: PLUGIN_ID }) + `
 // ---------------------------------------------------------------------------
 
 let targetId;
-const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId });
+const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId, skipSupported: true });
+const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -443,6 +444,80 @@ const { results, log, run, test } = createTestHarness({ getTargetId: () => targe
       };
     });
 
+    // ════════════════════════════════════════════════════════════════
+    // Group: Subfolder slash-literal toggle (#96)
+    // ════════════════════════════════════════════════════════════════
+
+    // Supabase connection card body is only rendered when either the OpenAPI
+    // dropdown path completes OR the text fallback engages. When neither path
+    // runs (backend unreachable / RPC missing → setup banner), the toggle is
+    // genuinely absent, not a code bug. These three tests skip in that case
+    // so an offline Supabase project doesn't appear as a real regression.
+    await test('subfolder-toggle / renders with correct name and description', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const start = Date.now();
+        let target = null;
+        while (Date.now() - start < 5000) {
+          const items = Array.from(getContainer().querySelectorAll('.setting-item'));
+          target = items.find(s =>
+            s.querySelector('.setting-item-name')?.textContent?.trim()
+              === 'Treat / as literal in subfolder values'
+          );
+          if (target) break;
+          await new Promise(r => setTimeout(r, 200));
+        }
+        return JSON.stringify({
+          found: !!target,
+          desc: target?.querySelector('.setting-item-description')?.textContent?.trim() || '',
+          hasToggle: !!target?.querySelector('.checkbox-container'),
+        });
+      })()`, 10000);
+      if (!r.found) return { skip: true, detail: 'Supabase connection card body not rendered (backend/RPC unavailable)' };
+      const pass = r.hasToggle && r.desc.includes("'/' is replaced with '-'");
+      return { pass, detail: JSON.stringify(r) };
+    });
+
+    await test('subfolder-toggle / reflects subfolderTreatSlashAsLiteral=true', async () => {
+      await setConfigAndQuery({ subfolderTreatSlashAsLiteral: true });
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const c = getContainer();
+        const items = Array.from(c.querySelectorAll('.setting-item'));
+        const target = items.find(s =>
+          s.querySelector('.setting-item-name')?.textContent?.trim()
+            === 'Treat / as literal in subfolder values'
+        );
+        const cbox = target?.querySelector('.checkbox-container');
+        return JSON.stringify({
+          found: !!target,
+          isEnabled: !!cbox?.classList.contains('is-enabled'),
+        });
+      })()`, 10000);
+      if (!r.found) return { skip: true, detail: 'Supabase connection card body not rendered' };
+      return { pass: r.isEnabled, detail: `isEnabled=${r.isEnabled}` };
+    });
+
+    await test('subfolder-toggle / reflects subfolderTreatSlashAsLiteral=false', async () => {
+      await setConfigAndQuery({ subfolderTreatSlashAsLiteral: false });
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const c = getContainer();
+        const items = Array.from(c.querySelectorAll('.setting-item'));
+        const target = items.find(s =>
+          s.querySelector('.setting-item-name')?.textContent?.trim()
+            === 'Treat / as literal in subfolder values'
+        );
+        const cbox = target?.querySelector('.checkbox-container');
+        return JSON.stringify({
+          found: !!target,
+          isEnabled: !!cbox?.classList.contains('is-enabled'),
+        });
+      })()`, 10000);
+      if (!r.found) return { skip: true, detail: 'Supabase connection card body not rendered' };
+      return { pass: !r.isEnabled, detail: `isEnabled=${r.isEnabled}` };
+    });
+
     // ── Cleanup ──────────────────────────────────────────────────
 
     log('\n=== Cleanup ===');
@@ -469,15 +544,17 @@ const { results, log, run, test } = createTestHarness({ getTargetId: () => targe
     log('   Supabase Settings UI E2E SUMMARY');
     log('========================================');
     let passCount = 0;
+    let skipCount = 0;
     for (const r of results) {
-      const icon = r.pass ? 'PASS' : 'FAIL';
+      const icon = r.skip ? 'SKIP' : (r.pass ? 'PASS' : 'FAIL');
       log(`${icon} | ${r.test}`);
+      if (r.skip) { log(`       ${r.detail}`); skipCount++; continue; }
       if (!r.pass) log(`       ${r.detail}`);
       if (r.pass) passCount++;
     }
-    log(`\nTotal: ${passCount}/${results.length} passed`);
+    log(`\nTotal: ${passCount} passed, ${skipCount} skipped, ${results.length - passCount - skipCount} failed`);
 
-    process.exit(passCount === results.length ? 0 : 1);
+    process.exit((passCount + skipCount) === results.length ? 0 : 1);
   } catch (e) {
     console.error('FATAL:', e.message);
     process.exit(1);

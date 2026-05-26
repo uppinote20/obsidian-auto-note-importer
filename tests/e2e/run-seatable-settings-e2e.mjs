@@ -385,6 +385,67 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       };
     });
 
+    // ════════════════════════════════════════════════════════════════
+    // Group: Subfolder slash-literal toggle (#96)
+    // ════════════════════════════════════════════════════════════════
+
+    await test('subfolder-toggle / renders with correct name and description', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const c = getContainer();
+        const items = Array.from(c.querySelectorAll('.setting-item'));
+        const target = items.find(s =>
+          s.querySelector('.setting-item-name')?.textContent?.trim()
+            === 'Treat / as literal in subfolder values'
+        );
+        return JSON.stringify({
+          found: !!target,
+          desc: target?.querySelector('.setting-item-description')?.textContent?.trim() || '',
+          hasToggle: !!target?.querySelector('.checkbox-container'),
+        });
+      })()`, 10000);
+      const pass = r.found && r.hasToggle && r.desc.includes("'/' is replaced with '-'");
+      return { pass, detail: JSON.stringify(r) };
+    });
+
+    await test('subfolder-toggle / reflects subfolderTreatSlashAsLiteral=true', async () => {
+      await setConfigAndQuery({ subfolderTreatSlashAsLiteral: true });
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const c = getContainer();
+        const items = Array.from(c.querySelectorAll('.setting-item'));
+        const target = items.find(s =>
+          s.querySelector('.setting-item-name')?.textContent?.trim()
+            === 'Treat / as literal in subfolder values'
+        );
+        const cbox = target?.querySelector('.checkbox-container');
+        return JSON.stringify({
+          found: !!target,
+          isEnabled: !!cbox?.classList.contains('is-enabled'),
+        });
+      })()`, 10000);
+      return { pass: r.found && r.isEnabled, detail: `found=${r.found} isEnabled=${r.isEnabled}` };
+    });
+
+    await test('subfolder-toggle / reflects subfolderTreatSlashAsLiteral=false', async () => {
+      await setConfigAndQuery({ subfolderTreatSlashAsLiteral: false });
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const c = getContainer();
+        const items = Array.from(c.querySelectorAll('.setting-item'));
+        const target = items.find(s =>
+          s.querySelector('.setting-item-name')?.textContent?.trim()
+            === 'Treat / as literal in subfolder values'
+        );
+        const cbox = target?.querySelector('.checkbox-container');
+        return JSON.stringify({
+          found: !!target,
+          isEnabled: !!cbox?.classList.contains('is-enabled'),
+        });
+      })()`, 10000);
+      return { pass: r.found && !r.isEnabled, detail: `found=${r.found} isEnabled=${r.isEnabled}` };
+    });
+
     // ── Cleanup ──────────────────────────────────────────────────
 
     log('\n=== Cleanup ===');
