@@ -100,17 +100,25 @@ describe('seatableFieldMapper', () => {
       expect(seatableFieldMapper.isReadOnly('')).toBe(true);
       expect(seatableFieldMapper.isReadOnly('someNewSeaTableType')).toBe(true);
     });
+
+    it('should fail closed on prototype-chain names (no in-operator leak)', () => {
+      for (const t of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
+        expect(seatableFieldMapper.isReadOnly(t)).toBe(true);
+      }
+    });
   });
 
   describe('isSubfolderSafe', () => {
     it('should return true for stringifiable known SeaTable types', () => {
+      // Excludes OBJECT_SHAPED_TYPES (collaborator / geolocation / button) —
+      // covered by a separate test below.
       const stringifiable = [
-        'text', 'long-text', 'email', 'url', 'geolocation',
+        'text', 'long-text', 'email', 'url',
         'number', 'duration', 'rate',
         'date',
         'checkbox',
-        'single-select', 'multiple-select', 'department-single-select', 'collaborator',
-        'formula', 'link-formula', 'button',
+        'single-select', 'multiple-select', 'department-single-select',
+        'formula', 'link-formula',
         'ctime', 'mtime', 'creator', 'last-modifier', 'auto-number',
       ];
       for (const t of stringifiable) {
@@ -123,6 +131,14 @@ describe('seatableFieldMapper', () => {
       expect(seatableFieldMapper.isSubfolderSafe('file')).toBe(false);
       expect(seatableFieldMapper.isSubfolderSafe('digital-sign')).toBe(false);
       expect(seatableFieldMapper.isSubfolderSafe('link')).toBe(false);
+    });
+
+    // Issue #98 deep-fix: object-shaped types whose API value is {…} or
+    // array of {…}, not a scalar. Standard-type filter misses these.
+    it('should return false for object-shaped types (collaborator / geolocation / button)', () => {
+      expect(seatableFieldMapper.isSubfolderSafe('collaborator')).toBe(false);
+      expect(seatableFieldMapper.isSubfolderSafe('geolocation')).toBe(false);
+      expect(seatableFieldMapper.isSubfolderSafe('button')).toBe(false);
     });
 
     it('should return false for unknown types', () => {
@@ -158,6 +174,10 @@ describe('seatableFieldMapper', () => {
     it('should be sorted for stable enumeration', () => {
       const types = seatableFieldMapper.getSubfolderSafeTypes();
       expect([...types]).toEqual([...types].sort());
+    });
+
+    it('should have exact expected cardinality (drift guard)', () => {
+      expect(seatableFieldMapper.getSubfolderSafeTypes()).toHaveLength(19);
     });
   });
 

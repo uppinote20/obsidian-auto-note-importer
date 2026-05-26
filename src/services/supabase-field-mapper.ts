@@ -60,12 +60,23 @@ const READ_ONLY_TYPES = Object.keys(TYPE_TO_STANDARD)
   .map(t => `${t}${READONLY_SUFFIX}`)
   .sort() as readonly string[];
 
+// PostgREST types whose runtime value is a JSON object / array, not a
+// scalar string. Object / jsonb / json columns stringify to '[object
+// Object]' or unbounded JSON, neither suitable as a folder name.
+const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
+  'object',          // PostgREST 'object' type (jsonb composite, etc.)
+  'array:object',    // jsonb[] / array of records
+  'string:json',     // explicit json format
+  'string:jsonb',    // explicit jsonb format
+]);
+
 // Excludes types that map to 'unknown' (e.g. 'string:byte' — bytea blobs
-// stringify to truncated near-collision garbage). Includes both base and
+// stringify to truncated near-collision garbage) AND object-shaped types
+// whose runtime value isn't a usable folder atom. Includes both base and
 // :readonly variant for each surviving type.
 const SUBFOLDER_SAFE_TYPES = (() => {
   const safeBases = Object.entries(TYPE_TO_STANDARD)
-    .filter(([, std]) => std !== 'unknown')
+    .filter(([t, std]) => std !== 'unknown' && !OBJECT_SHAPED_TYPES.has(t))
     .map(([t]) => t);
   return [
     ...safeBases,

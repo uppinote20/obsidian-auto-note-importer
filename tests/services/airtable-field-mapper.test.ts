@@ -112,6 +112,14 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.isReadOnly('')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('someNewAirtableType')).toBe(true);
     });
+
+    // Regression guard: same prototype-chain leak class as isSubfolderSafe.
+    // Must use Object.prototype.hasOwnProperty.call (not `in`).
+    it('should fail closed on prototype-chain names (no in-operator leak)', () => {
+      for (const t of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__', 'isPrototypeOf']) {
+        expect(airtableFieldMapper.isReadOnly(t)).toBe(true);
+      }
+    });
   });
 
   describe('isSubfolderSafe', () => {
@@ -120,13 +128,15 @@ describe('airtableFieldMapper', () => {
     // Attachment / link types are excluded because their stringified shape is
     // [object Object] / record-id JSON — produces garbage folder names.
     it('should return true for stringifiable known types (text / number / date / select / formula / system)', () => {
+      // Excludes OBJECT_SHAPED_TYPES (collaborator / barcode / button / aiText /
+      // externalSyncSource / lookup) — covered by a separate test below.
       const stringifiable = [
-        'singleLineText', 'multilineText', 'richText', 'email', 'phoneNumber', 'url', 'barcode',
+        'singleLineText', 'multilineText', 'richText', 'email', 'phoneNumber', 'url',
         'number', 'currency', 'percent', 'rating', 'duration',
         'date', 'dateTime',
         'checkbox',
-        'singleSelect', 'multipleSelects', 'multipleCollaborators', 'singleCollaborator',
-        'formula', 'rollup', 'count', 'lookup', 'externalSyncSource', 'aiText', 'button',
+        'singleSelect', 'multipleSelects',
+        'formula', 'rollup', 'count',
         'createdTime', 'lastModifiedTime', 'createdBy', 'lastModifiedBy', 'autoNumber',
       ];
       for (const t of stringifiable) {
@@ -137,6 +147,20 @@ describe('airtableFieldMapper', () => {
     it('should return false for attachment and link types (no sensible string)', () => {
       expect(airtableFieldMapper.isSubfolderSafe('multipleAttachments')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('multipleRecordLinks')).toBe(false);
+    });
+
+    // Issue #98 deep-fix: types whose API value shape is an object/array of
+    // objects, NOT a stringifiable scalar. The standard-type filter
+    // (attachment/link/unknown) misses these — explicit OBJECT_SHAPED_TYPES
+    // exclusion needed.
+    it('should return false for object-shaped types (collaborator / barcode / button / aiText / externalSyncSource / lookup)', () => {
+      expect(airtableFieldMapper.isSubfolderSafe('singleCollaborator')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('multipleCollaborators')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('barcode')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('button')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('aiText')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('externalSyncSource')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('lookup')).toBe(false);
     });
 
     it('should return false for unknown types (fail-closed)', () => {
@@ -186,6 +210,13 @@ describe('airtableFieldMapper', () => {
       const subset = new Set(airtableFieldMapper.getFilenameSafeTypes());
       const superset = new Set(airtableFieldMapper.getSubfolderSafeTypes());
       for (const t of subset) expect(superset.has(t)).toBe(true);
+    });
+
+    // Drift guard: if TYPE_TO_STANDARD grows with an attachment-shaped or
+    // object-shaped type that isn't added to OBJECT_SHAPED_TYPES, the count
+    // here flips and the assertion fails. Forces a manual review.
+    it('should have exact expected cardinality (drift guard)', () => {
+      expect(airtableFieldMapper.getSubfolderSafeTypes()).toHaveLength(24);
     });
   });
 

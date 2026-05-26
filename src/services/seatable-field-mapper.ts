@@ -74,11 +74,27 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   'auto-number': 'system',
 };
 
+// Types whose SeaTable API value is an object, NOT a scalar string.
+// collaborator → array of { name, email, … }; geolocation → { lng, lat,
+// country_region }; button → link-formula-like object. Their standard-type
+// classification doesn't capture this — explicit exclusion.
+const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
+  'collaborator',
+  'geolocation',
+  'button',
+]);
+
 // Excludes attachment (image / file / digital-sign) and link types — they
-// stringify to JSON / record-id garbage when used as folder names. Sorted
-// for deterministic enumeration across providers.
+// stringify to JSON / record-id garbage when used as folder names — and
+// explicit object-shaped types (see OBJECT_SHAPED_TYPES). Sorted for
+// deterministic enumeration across providers.
 const SUBFOLDER_SAFE_TYPES = Object.entries(TYPE_TO_STANDARD)
-  .filter(([, std]) => std !== 'attachment' && std !== 'link' && std !== 'unknown')
+  .filter(([t, std]) =>
+    std !== 'attachment' &&
+    std !== 'link' &&
+    std !== 'unknown' &&
+    !OBJECT_SHAPED_TYPES.has(t)
+  )
   .map(([t]) => t)
   .sort() as readonly string[];
 
@@ -88,7 +104,9 @@ class SeaTableFieldMapperImpl implements FieldTypeMapper {
   }
 
   isReadOnly(providerType: string): boolean {
-    if (!(providerType in TYPE_TO_STANDARD)) return true;
+    // Use Object.prototype.hasOwnProperty.call to avoid `in`-operator
+    // prototype-chain leak (toString/constructor/etc.). See issue #98 fix.
+    if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, providerType)) return true;
     return (READ_ONLY_TYPES as readonly string[]).includes(providerType);
   }
 

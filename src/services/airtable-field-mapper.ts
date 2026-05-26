@@ -82,14 +82,35 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   autoNumber: 'system',
 };
 
+// Types whose API value is an object / array of objects, NOT a scalar
+// string. Even though their StandardFieldType is 'single-select' / 'multi-
+// select' / 'computed' / 'text' / 'system', String(value) produces
+// '[object Object],…' garbage for these. Manual exclusion list — must be
+// kept in sync with TYPE_TO_STANDARD when new object-shaped types arrive.
+const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
+  'singleCollaborator',
+  'multipleCollaborators',
+  'barcode',          // { type, text }
+  'button',           // { label, url }
+  'aiText',           // { state, value, … }
+  'externalSyncSource', // { id, name }
+  'lookup',           // array of any shape (depends on rolled-up field)
+]);
+
 // Subfolder accepts any known Airtable type that stringifies to a reasonable
-// folder atom. Attachment / link types are excluded because their JSON shape
-// stringifies to "[object Object],..." — picking such a column would bucket
-// every record under one literal "[object Object]" folder. Built from
-// TYPE_TO_STANDARD so adding a new known type automatically surfaces it
-// (after a manual review against this exclusion list).
+// folder atom. Excludes (1) attachment / link standard types — their JSON
+// shape stringifies to "[object Object]…" garbage — and (2) explicit
+// object-shaped types (see OBJECT_SHAPED_TYPES above) whose standard-type
+// classification doesn't capture the serialization-shape problem. Picking
+// any of these as subfolder would bucket every record under one literal
+// "[object Object]" folder.
 const SUBFOLDER_SAFE_TYPES = Object.entries(TYPE_TO_STANDARD)
-  .filter(([, std]) => std !== 'attachment' && std !== 'link' && std !== 'unknown')
+  .filter(([t, std]) =>
+    std !== 'attachment' &&
+    std !== 'link' &&
+    std !== 'unknown' &&
+    !OBJECT_SHAPED_TYPES.has(t)
+  )
   .map(([t]) => t)
   .sort() as readonly string[];
 
@@ -109,7 +130,11 @@ class AirtableFieldMapperImpl implements FieldTypeMapper {
    * we'd rather skip the push than 422 the whole batch.
    */
   isReadOnly(providerType: string): boolean {
-    if (!(providerType in TYPE_TO_STANDARD)) return true;
+    // `Object.prototype.hasOwnProperty.call` avoids the prototype-chain leak
+    // of `providerType in TYPE_TO_STANDARD` — 'toString'/'constructor'/etc.
+    // would otherwise be treated as "known" and fall through to the
+    // .includes() check, returning false. See issue #98 fix.
+    if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, providerType)) return true;
     return (READ_ONLY_TYPES as readonly string[]).includes(providerType);
   }
 

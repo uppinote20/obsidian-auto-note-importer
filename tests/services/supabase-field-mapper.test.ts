@@ -71,13 +71,13 @@ describe('supabaseFieldMapper.isFilenameSafe', () => {
 
 describe('supabaseFieldMapper.isSubfolderSafe', () => {
   it('returns true for stringifiable known types and their :readonly variants', () => {
+    // Excludes OBJECT_SHAPED_TYPES (object / array:object / string:json /
+    // string:jsonb) — covered by a separate test below.
     const known = [
       'string', 'string:uuid', 'string:date', 'string:date-time',
-      'string:jsonb', 'string:json',
       'integer', 'integer:int64', 'number',
       'boolean',
-      'object',
-      'array:string', 'array:integer', 'array:number', 'array:boolean', 'array:object',
+      'array:string', 'array:integer', 'array:number', 'array:boolean',
     ];
     for (const t of known) {
       expect(supabaseFieldMapper.isSubfolderSafe(t)).toBe(true);
@@ -88,6 +88,16 @@ describe('supabaseFieldMapper.isSubfolderSafe', () => {
   it('returns false for string:byte (maps to unknown — would produce garbage folders)', () => {
     expect(supabaseFieldMapper.isSubfolderSafe('string:byte')).toBe(false);
     expect(supabaseFieldMapper.isSubfolderSafe('string:byte:readonly')).toBe(false);
+  });
+
+  // Issue #98 deep-fix: jsonb / object-shaped PostgREST types — their
+  // stringified form is '[object Object]' or unbounded JSON garbage. Same
+  // root cause as Airtable's collaborator types.
+  it('returns false for object-shaped types (object / array:object / string:json / string:jsonb)', () => {
+    for (const t of ['object', 'array:object', 'string:json', 'string:jsonb']) {
+      expect(supabaseFieldMapper.isSubfolderSafe(t)).toBe(false);
+      expect(supabaseFieldMapper.isSubfolderSafe(`${t}:readonly`)).toBe(false);
+    }
   });
 
   it('returns false for unknown types', () => {
@@ -114,6 +124,11 @@ describe('supabaseFieldMapper enumerations', () => {
     const subfolder = new Set(supabaseFieldMapper.getSubfolderSafeTypes());
     for (const t of filename) expect(subfolder.has(t)).toBe(true);
     expect(subfolder.size).toBeGreaterThan(filename.size);
+  });
+
+  it('getSubfolderSafeTypes has exact expected cardinality (drift guard)', () => {
+    // 15 stringifiable base types × 2 (base + :readonly variant) = 30.
+    expect(supabaseFieldMapper.getSubfolderSafeTypes()).toHaveLength(30);
   });
 
   it('getReadOnlyTypes contains expected entries', () => {
