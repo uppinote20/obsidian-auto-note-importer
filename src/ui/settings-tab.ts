@@ -1141,6 +1141,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     config: ConfigEntry,
     credential: SupabaseCredential,
   ): Promise<void> {
+    // Symmetric with SeaTable's renderSeaTableConnection — bail early if the
+    // mapper isn't registered so the dropdown render path can use
+    // getFieldTypeMapper safely below.
+    if (!hasFieldTypeMapper(credential.type)) {
+      new Setting(containerEl)
+        .setName('Field type mapper missing')
+        .setDesc(`No field type mapper registered for ${credential.type}.`);
+      return;
+    }
+
     // Read defaults at render time; do NOT persist 'public' as a side effect of
     // rendering. The schema input's onChange handler is the only place that
     // writes baseId — opening the settings tab is read-only.
@@ -1912,10 +1922,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           }
 
           if (unsupportedCount > 0) {
-            // 'unsupported' = wrong type for the chosen role (filename rules
-            // strict, subfolder skips attachment/link/unknown). Same label for
-            // both modes is acceptable since both modes filter for a reason.
-            dropdown.addOption("", `--- ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ---`);
+            // Mode-specific wording: filename filter rejects on type-fit
+            // ('unsupported'); subfolder filter only rejects unknown /
+            // non-stringifiable types ('unrecognized') which usually means
+            // the plugin's mapper doesn't know the type yet.
+            const label = filterMode === 'filename' ? 'unsupported' : 'unrecognized';
+            dropdown.addOption("", `--- ${unsupportedCount} ${label} field${unsupportedCount > 1 ? 's' : ''} hidden ---`);
           }
 
           dropdown.setValue(currentValue);
