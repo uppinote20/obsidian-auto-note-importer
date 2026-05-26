@@ -8,6 +8,7 @@
 import type { Credential, CredentialType } from '../types/credential.types';
 import { CREDENTIAL_TYPES } from '../types/credential.types';
 import type { ConfigEntry } from '../types/config.types';
+import { DEFAULT_CONFIG_ENTRY } from '../types/config.types';
 import type { AutoNoteImporterSettings, ConflictResolutionMode } from '../types/settings.types';
 import { generateId } from './object-utils';
 
@@ -71,6 +72,24 @@ export function migrateSettings(data: unknown): AutoNoteImporterSettings | null 
   }
 
   return migrateLegacyToV3(record);
+}
+
+/**
+ * Backfills missing fields on each `ConfigEntry` with `DEFAULT_CONFIG_ENTRY`,
+ * without overwriting caller-set values. Use on the `loadSettings()` else
+ * branch where `migrateSettings()` returned null (data already at
+ * `CURRENT_VERSION`) — the shallow `Object.assign` merge there leaves nested
+ * configs unchanged, so any field added since the user last saved arrives as
+ * `undefined`. Hydration restores the declared type contract.
+ *
+ * @param settings Settings object whose configs may have missing fields
+ * @returns New settings object with hydrated configs (input is not mutated)
+ */
+export function hydrateConfigDefaults(settings: AutoNoteImporterSettings): AutoNoteImporterSettings {
+  return {
+    ...settings,
+    configs: settings.configs.map(cfg => ({ ...DEFAULT_CONFIG_ENTRY, ...cfg })),
+  };
 }
 
 function buildConfigFromRecord(

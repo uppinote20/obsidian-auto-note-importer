@@ -2014,7 +2014,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         "Only applies when a subfolder field is selected."
       )
       .addToggle(toggle => toggle
-        .setValue(config.subfolderTreatSlashAsLiteral)
+        // Defensive `?? false`: legacy v3 configs persisted before this field
+        // existed arrive as `undefined` until hydrateConfigDefaults runs at
+        // load time. Belt-and-suspenders for any synthetic call path that
+        // bypasses load (tests, plugin reloads after partial writes).
+        .setValue(config.subfolderTreatSlashAsLiteral ?? false)
         .onChange(async value => {
           config.subfolderTreatSlashAsLiteral = value;
           await this.plugin.saveSettings();

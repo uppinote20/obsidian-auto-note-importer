@@ -33,3 +33,5 @@ export {
 } from './api-errors';
 
 export { debounce } from './debounce';
+
+export { migrateSettings, hydrateConfigDefaults } from './migration';
