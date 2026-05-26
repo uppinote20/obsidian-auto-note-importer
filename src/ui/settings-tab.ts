@@ -1044,15 +1044,26 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
 
     // Subfolder accepts the broader `isSubfolderSafe` set (date / formula /
     // multi-select / etc.) since sanitizeSubfolderValue normalizes path-unsafe
-    // characters. Filename remains stricter (OS filename rules). Issue #98.
+    // characters. Excludes attachment/link/unknown types whose stringified
+    // shape is garbage. Filename remains stricter (OS filename rules). #98.
     const subfolderSafeTypes = new Set(mapper.getSubfolderSafeTypes());
     const subfolderCandidates = (selectedTable?.columns ?? []).filter(c => subfolderSafeTypes.has(c.type));
+    const staleSubfolderValue =
+      config.subfolderFieldName &&
+      !subfolderCandidates.some(c => c.name === config.subfolderFieldName)
+        ? config.subfolderFieldName
+        : null;
     new Setting(containerEl)
       .setName('Subfolder field (optional)')
       .setDesc('Column used for subfolder organization. Leave empty for a flat layout.')
       .addDropdown(dropdown => {
         dropdown.addOption('', '-- No subfolder column --');
         for (const c of subfolderCandidates) dropdown.addOption(c.name, c.name);
+        // Stale value surface: stored selection no longer matches any column —
+        // expose explicitly so the user sees what they have.
+        if (staleSubfolderValue) {
+          dropdown.addOption(staleSubfolderValue, `${staleSubfolderValue} (unsupported / hidden)`);
+        }
         dropdown.setValue(config.subfolderFieldName);
         dropdown.setDisabled(!selectedTable);
         dropdown.onChange(async (value) => {
@@ -1607,15 +1618,24 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       });
 
     // Subfolder filter: broader than filename (issue #98). Excludes
-    // unknown-to-mapper types fail-closed.
+    // unknown-to-mapper types fail-closed (e.g. bytea / unrecognized
+    // PostgREST formats).
     const subfolderSafeTypes = new Set(mapper.getSubfolderSafeTypes());
     const subfolderCandidates = columns.filter(c => subfolderSafeTypes.has(c.providerType));
+    const staleSubfolderValue =
+      config.subfolderFieldName &&
+      !subfolderCandidates.some(c => c.name === config.subfolderFieldName)
+        ? config.subfolderFieldName
+        : null;
     new Setting(containerEl)
       .setName('Subfolder field (optional)')
       .setDesc('Column used for subfolder organization. Leave empty for flat layout.')
       .addDropdown(dropdown => {
         dropdown.addOption('', '-- No subfolder column --');
         for (const c of subfolderCandidates) dropdown.addOption(c.name, c.name);
+        if (staleSubfolderValue) {
+          dropdown.addOption(staleSubfolderValue, `${staleSubfolderValue} (unsupported / hidden)`);
+        }
         dropdown.setValue(config.subfolderFieldName);
         dropdown.setDisabled(columns.length === 0);
         dropdown.onChange(async value => {
@@ -1860,16 +1880,41 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             config.tableId
           );
 
-          const supportedFields = filterMode === 'filename'
-            ? fields.filter(field => mapper.isFilenameSafe(field.type))
-            : fields.filter(field => mapper.isSubfolderSafe(field.type));
+          let supportedFields;
+          switch (filterMode) {
+            case 'filename':
+              supportedFields = fields.filter(field => mapper.isFilenameSafe(field.type));
+              break;
+            case 'subfolder':
+              supportedFields = fields.filter(field => mapper.isSubfolderSafe(field.type));
+              break;
+            default: {
+              // Exhaustiveness guard — future-proofs against silent fallthrough
+              // if `filterMode`'s union grows.
+              const _exhaustive: never = filterMode;
+              void _exhaustive;
+              supportedFields = fields;
+            }
+          }
           const unsupportedCount = fields.length - supportedFields.length;
 
           for (const field of supportedFields) {
             dropdown.addOption(field.name, `${field.name} (${field.type})`);
           }
 
+          // Stale value surface: if the stored field isn't in the visible
+          // options (e.g. column was renamed, type became unrecognized after
+          // a plugin downgrade), expose it as a synthetic '(unsupported /
+          // hidden)' entry. Otherwise dropdown.setValue silently no-ops on
+          // missing options and the stored config drifts from UI state.
+          if (currentValue && !supportedFields.some(f => f.name === currentValue)) {
+            dropdown.addOption(currentValue, `${currentValue} (unsupported / hidden)`);
+          }
+
           if (unsupportedCount > 0) {
+            // 'unsupported' = wrong type for the chosen role (filename rules
+            // strict, subfolder skips attachment/link/unknown). Same label for
+            // both modes is acceptable since both modes filter for a reason.
             dropdown.addOption("", `--- ${unsupportedCount} unsupported field${unsupportedCount > 1 ? 's' : ''} hidden ---`);
           }
 
