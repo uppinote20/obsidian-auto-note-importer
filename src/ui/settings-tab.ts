@@ -2008,11 +2008,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private renderSubfolderSlashToggle(containerEl: HTMLElement, config: ConfigEntry): void {
     new Setting(containerEl)
       .setName('Treat / as literal in subfolder values')
-      .setDesc(
-        "Off (default): / nests into subfolders, so '2024/Q1' creates two levels. " +
-        "On: / is replaced with '-', so 'AC/DC' stays as one folder. " +
-        "Only applies when a subfolder field is selected."
-      )
+      .setDesc("When on, '/' is replaced with '-' instead of nesting subfolders.")
       .addToggle(toggle => toggle
         // Defensive `?? false`: legacy v3 configs persisted before this field
         // existed arrive as `undefined` until hydrateConfigDefaults runs at
