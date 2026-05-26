@@ -6,29 +6,12 @@
 import { describe, it, expect } from 'vitest';
 import { validateFolderPath } from '../../src/utils/validation';
 import type { ConfigEntry } from '../../src/types/config.types';
+import { DEFAULT_CONFIG_ENTRY } from '../../src/types/config.types';
 
 function makeConfig(overrides: Partial<ConfigEntry> & { id: string; name: string; folderPath: string }): ConfigEntry {
   return {
-    enabled: true,
+    ...DEFAULT_CONFIG_ENTRY,
     credentialId: 'cred-1',
-    baseId: '',
-    tableId: '',
-    viewId: '',
-    templatePath: '',
-    filenameFieldName: '',
-    subfolderFieldName: '',
-    syncInterval: 0,
-    allowOverwrite: true,
-    bidirectionalSync: false,
-    conflictResolution: 'manual',
-    watchForChanges: false,
-    fileWatchDebounce: 2000,
-    autoSyncComputedFields: false,
-    formulaSyncDelay: 3000,
-    generateBasesFile: false,
-    basesFileLocation: 'vault-root',
-    basesCustomPath: '',
-    basesRegenerateOnSync: false,
     ...overrides,
   };
 }

@@ -8,6 +8,7 @@ import { SupabaseClient } from '../../src/services/supabase-client';
 import { SupabaseMetadataCache } from '../../src/services/supabase-metadata-cache';
 import { RateLimiter } from '../../src/services/rate-limiter';
 import type { ConfigEntry, SupabaseCredential } from '../../src/types';
+import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
 
 const mockRequestUrl = vi.fn();
 vi.mock('obsidian', () => ({
@@ -21,14 +22,9 @@ const cred: SupabaseCredential = {
 
 function makeConfig(overrides: Partial<ConfigEntry> = {}): ConfigEntry {
   return {
-    id: 'cfg1', name: 'D', enabled: true, credentialId: 'c1',
-    baseId: 'public', tableId: 'notes', viewId: '', primaryKeyColumn: 'id',
-    folderPath: '', templatePath: '', filenameFieldName: '', subfolderFieldName: '',
-    syncInterval: 0, allowOverwrite: true, bidirectionalSync: false,
-    conflictResolution: 'manual', watchForChanges: false, fileWatchDebounce: 2000,
-    autoSyncComputedFields: false, formulaSyncDelay: 1500,
-    generateBasesFile: false, basesFileLocation: 'vault-root',
-    basesCustomPath: '', basesRegenerateOnSync: false,
+    ...DEFAULT_CONFIG_ENTRY,
+    id: 'cfg1', name: 'D', credentialId: 'c1',
+    baseId: 'public', tableId: 'notes', primaryKeyColumn: 'id',
     ...overrides,
   };
 }
