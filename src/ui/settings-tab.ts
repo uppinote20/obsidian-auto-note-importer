@@ -1028,12 +1028,24 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const safeTypes = new Set(mapper.getFilenameSafeTypes());
     const filenameCandidates = (selectedTable?.columns ?? []).filter(c => safeTypes.has(c.type));
     const safeTypesList = mapper.getFilenameSafeTypes().join(', ') || 'text';
+    // Stale-value surface: symmetric with the subfolder dropdown — exposes a
+    // stored filenameFieldName that no longer matches any candidate so the
+    // user sees what they have rather than a silent empty selection. Skip
+    // when columns haven't loaded yet (cold-load flicker guard).
+    const staleFilenameValue =
+      selectedTable && config.filenameFieldName &&
+      !filenameCandidates.some(c => c.name === config.filenameFieldName)
+        ? config.filenameFieldName
+        : null;
     new Setting(containerEl)
       .setName('Filename field')
       .setDesc(`Column whose value becomes the note filename. Filtered to: ${safeTypesList}.`)
       .addDropdown(dropdown => {
         dropdown.addOption('', '-- Select filename column --');
         for (const c of filenameCandidates) dropdown.addOption(c.name, c.name);
+        if (staleFilenameValue) {
+          dropdown.addOption(staleFilenameValue, `${staleFilenameValue} (unsupported / hidden)`);
+        }
         dropdown.setValue(config.filenameFieldName);
         dropdown.setDisabled(!selectedTable);
         dropdown.onChange(async (value) => {
@@ -1048,8 +1060,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // shape is garbage. Filename remains stricter (OS filename rules). #98.
     const subfolderSafeTypes = new Set(mapper.getSubfolderSafeTypes());
     const subfolderCandidates = (selectedTable?.columns ?? []).filter(c => subfolderSafeTypes.has(c.type));
+    // Skip stale-value surface when columns haven't loaded (cold-load flicker
+    // guard) — wait until selectedTable resolves before judging "stale".
     const staleSubfolderValue =
-      config.subfolderFieldName &&
+      selectedTable && config.subfolderFieldName &&
       !subfolderCandidates.some(c => c.name === config.subfolderFieldName)
         ? config.subfolderFieldName
         : null;
@@ -1612,6 +1626,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const safeTypes = new Set(mapper.getFilenameSafeTypes());
     const filenameCandidates = columns.filter(c => safeTypes.has(c.providerType));
     const safeTypesList = mapper.getFilenameSafeTypes().join(', ');
+    // Stale-value surface — only when columns have actually loaded.
+    const staleFilenameValue =
+      columns.length > 0 && config.filenameFieldName &&
+      !filenameCandidates.some(c => c.name === config.filenameFieldName)
+        ? config.filenameFieldName
+        : null;
 
     new Setting(containerEl)
       .setName('Filename field')
@@ -1619,6 +1639,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addDropdown(dropdown => {
         dropdown.addOption('', '-- Select filename column --');
         for (const c of filenameCandidates) dropdown.addOption(c.name, c.name);
+        if (staleFilenameValue) {
+          dropdown.addOption(staleFilenameValue, `${staleFilenameValue} (unsupported / hidden)`);
+        }
         dropdown.setValue(config.filenameFieldName);
         dropdown.setDisabled(columns.length === 0);
         dropdown.onChange(async value => {
@@ -1633,7 +1656,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     const subfolderSafeTypes = new Set(mapper.getSubfolderSafeTypes());
     const subfolderCandidates = columns.filter(c => subfolderSafeTypes.has(c.providerType));
     const staleSubfolderValue =
-      config.subfolderFieldName &&
+      columns.length > 0 && config.subfolderFieldName &&
       !subfolderCandidates.some(c => c.name === config.subfolderFieldName)
         ? config.subfolderFieldName
         : null;
@@ -1878,6 +1901,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
     const mapper = getFieldTypeMapper(credential.type);
 
+    // Capture renderGeneration so a subsequent display() invocation can
+    // invalidate this still-resolving async callback. Same guard SeaTable
+    // and Supabase use for their async metadata fetches.
+    const gen = this.renderGeneration;
     new Setting(containerEl)
       .setName(name)
       .setDesc(desc)
@@ -1889,8 +1916,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             config.baseId,
             config.tableId
           );
+          if (this.renderGeneration !== gen) return;
 
-          let supportedFields;
+          let supportedFields: typeof fields;
           switch (filterMode) {
             case 'filename':
               supportedFields = fields.filter(field => mapper.isFilenameSafe(field.type));
@@ -1899,35 +1927,40 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               supportedFields = fields.filter(field => mapper.isSubfolderSafe(field.type));
               break;
             default: {
-              // Exhaustiveness guard — future-proofs against silent fallthrough
-              // if `filterMode`'s union grows.
+              // Fail-closed exhaustiveness guard. The `never` assertion is a
+              // compile-time signal; the runtime fallback empties the option
+              // set so a future filterMode union extension can't silently
+              // surface attachment/link types.
               const _exhaustive: never = filterMode;
               void _exhaustive;
-              supportedFields = fields;
+              supportedFields = [];
             }
           }
-          const unsupportedCount = fields.length - supportedFields.length;
+          // Stale-value detection: the stored field isn't visible in the
+          // filtered set (renamed, type became unrecognized, etc.). We
+          // surface it as a synthetic '(unsupported / hidden)' entry AND
+          // exclude it from the "N hidden" count below — otherwise the
+          // single stale field would be both visible inline AND counted
+          // in the trailing banner ("1 hidden") which is contradictory.
+          const isStale = currentValue && !supportedFields.some(f => f.name === currentValue);
+          const fieldInCurrentBatch = currentValue && fields.some(f => f.name === currentValue);
+          const unsupportedCount =
+            fields.length - supportedFields.length - (isStale && fieldInCurrentBatch ? 1 : 0);
 
           for (const field of supportedFields) {
             dropdown.addOption(field.name, `${field.name} (${field.type})`);
           }
 
-          // Stale value surface: if the stored field isn't in the visible
-          // options (e.g. column was renamed, type became unrecognized after
-          // a plugin downgrade), expose it as a synthetic '(unsupported /
-          // hidden)' entry. Otherwise dropdown.setValue silently no-ops on
-          // missing options and the stored config drifts from UI state.
-          if (currentValue && !supportedFields.some(f => f.name === currentValue)) {
+          if (isStale) {
             dropdown.addOption(currentValue, `${currentValue} (unsupported / hidden)`);
           }
 
           if (unsupportedCount > 0) {
-            // Mode-specific wording: filename filter rejects on type-fit
-            // ('unsupported'); subfolder filter only rejects unknown /
-            // non-stringifiable types ('unrecognized') which usually means
-            // the plugin's mapper doesn't know the type yet.
-            const label = filterMode === 'filename' ? 'unsupported' : 'unrecognized';
-            dropdown.addOption("", `--- ${unsupportedCount} ${label} field${unsupportedCount > 1 ? 's' : ''} hidden ---`);
+            // 'excluded' covers both reasons: filename rules are stricter
+            // than what stringifies, subfolder rules drop attachment/link
+            // and object-shaped types. 'unrecognized' was misleading
+            // because attachment columns ARE recognized — just excluded.
+            dropdown.addOption("", `--- ${unsupportedCount} excluded field${unsupportedCount > 1 ? 's' : ''} hidden ---`);
           }
 
           dropdown.setValue(currentValue);
