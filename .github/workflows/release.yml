@@ -3,7 +3,12 @@ name: Release Obsidian plugin
 on:
   push:
     tags:
-      - "*"
+      # Semver-only filter. Glob "[0-9]*" requires the tag to start with a
+      # digit, which matches versioned releases (0.11.0, 1.0.0, …) and
+      # excludes the project's local-sync refs (test-sync, handbook-sync).
+      # Pushing a sync tag previously triggered this workflow and created
+      # bogus published releases under the sync-tag name.
+      - "[0-9]*"
 
 jobs:
   build:
@@ -11,12 +16,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
 
       - name: Use Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
         with:
-          node-version: "18.x"
+          node-version: "20.x"
 
       - name: Build plugin
         run: |
