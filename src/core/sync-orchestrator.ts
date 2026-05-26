@@ -348,8 +348,22 @@ export class SyncOrchestrator {
       return this.settings.folderPath;
     }
 
+    // Defense-in-depth: if the column's API value is a plain object or array
+    // of objects (e.g. Airtable collaborator, SeaTable geolocation, Supabase
+    // jsonb), String(...) yields '[object Object]' garbage. The settings UI
+    // filters these types out, but a legacy config from before #98 may still
+    // reference one — fall back to flat layout instead of bucketing every
+    // record under a literal '[object Object]' folder.
+    const rawString = String(subfolderValue).trim();
+    if (rawString.startsWith('[object ')) {
+      if (this.settings.debugMode) {
+        new Notice(`Auto Note Importer: Subfolder field '${this.settings.subfolderFieldName}' returned a non-string value; using flat layout.`);
+      }
+      return this.settings.folderPath;
+    }
+
     const sanitized = sanitizeSubfolderValue(
-      String(subfolderValue).trim(),
+      rawString,
       this.settings.subfolderTreatSlashAsLiteral,
     );
     if (!sanitized) {

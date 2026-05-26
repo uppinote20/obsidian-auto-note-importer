@@ -170,6 +170,39 @@ describe('SyncOrchestrator', () => {
       expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/AC-DC/Note.md', expect.any(String));
     });
 
+    // Issue #98 deep-fix: object-shaped subfolder values must not produce
+    // garbage folder names at runtime. If the resolved value stringifies to
+    // '[object …]' (i.e. it's a non-array object that the column type didn't
+    // pre-stringify), fall back to settings.folderPath. UI-only filter is
+    // not sufficient — legacy configs may still hold the field name.
+    it('falls back to folderPath when subfolder value is a plain object (defense-in-depth)', async () => {
+      settings = createSettings({ subfolderFieldName: 'Category' });
+      orchestrator.updateSettings(settings);
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note', Category: { id: 'usr1', email: 'a@b.c' } } },
+      ]);
+      mockApp.vault.adapter.exists.mockResolvedValue(true);
+      mockApp.vault.getAbstractFileByPath.mockReturnValue(null);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/Note.md', expect.any(String));
+    });
+
+    it('falls back to folderPath when subfolder value is an array of objects', async () => {
+      settings = createSettings({ subfolderFieldName: 'Owners' });
+      orchestrator.updateSettings(settings);
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note', Owners: [{ id: 'u1' }, { id: 'u2' }] } },
+      ]);
+      mockApp.vault.adapter.exists.mockResolvedValue(true);
+      mockApp.vault.getAbstractFileByPath.mockReturnValue(null);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/Note.md', expect.any(String));
+    });
+
     // Regression: bare '..' / '.' in literal mode must NOT escape settings.folderPath
     it('does not escape folderPath when subfolder value is bare ".." in literal mode', async () => {
       settings = createSettings({
