@@ -15,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Required by actions/attest-build-provenance to mint a signing
+      # certificate from Sigstore and publish the attestation to GitHub's
+      # attestation store.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
 
@@ -27,6 +32,13 @@ jobs:
         run: |
           npm install
           npm run build
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            styles.css
 
       - name: Create or update release
         env:
