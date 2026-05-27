@@ -21,11 +21,13 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   'string:date': 'date',
   'string:date-time': 'date',
   'string:byte': 'unknown',
-  // PostgreSQL json/jsonb are serialized by PostgREST as a JSON string in
-  // the OpenAPI shape (type: 'string', format: 'jsonb'/'json'). Map them
-  // as 'text' so they aren't rejected by the fail-closed default — the
-  // type-aware coercion in SupabaseClient.batchUpdate handles the "" → null
-  // conversion for actual upserts.
+  // PostgreSQL json/jsonb: PostgREST's OpenAPI spec describes these as
+  // {type: 'string', format: 'jsonb'/'json'}, but the runtime VALUE is a
+  // parsed JS object/array (NOT a string) — see OBJECT_SHAPED_TYPES below.
+  // Map as 'text' here so the fail-closed default doesn't reject them at
+  // the standard-type lookup; the type-aware coercion in SupabaseClient.
+  // batchUpdate handles "" → null for upserts; subfolder dropdown filters
+  // them out via OBJECT_SHAPED_TYPES because String(value) → '[object …]'.
   'string:jsonb': 'text',
   'string:json': 'text',
   'integer': 'number',
