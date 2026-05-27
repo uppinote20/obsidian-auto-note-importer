@@ -57,16 +57,33 @@ export interface FieldTypeMapper {
   isReadOnly(providerType: string): boolean;
 
   /**
-   * Returns true if the field type is usable as a filename or subfolder value.
-   * Used by settings-tab to filter the filename/subfolder field dropdown.
+   * Returns true if the field type is usable as a filename value.
+   * Stricter than `isSubfolderSafe` — only types that stringify to OS-safe
+   * filename atoms (no separators, stable text-like output). Used by
+   * settings-tab to filter the filename field dropdown.
    */
   isFilenameSafe(providerType: string): boolean;
+
+  /**
+   * Returns true if the field type is usable as a subfolder grouping key.
+   * Broader than `isFilenameSafe` — every type whose stringified value is a
+   * reasonable folder name passes. Subfolder values flow through
+   * `sanitizeSubfolderValue` which normalizes path-unsafe characters, so
+   * date / formula / multi-select / etc. are all acceptable. Issue #98.
+   */
+  isSubfolderSafe(providerType: string): boolean;
 
   /**
    * Returns all known provider-specific types that pass `isFilenameSafe`.
    * Enables UIs to enumerate the whitelist without guessing.
    */
   getFilenameSafeTypes(): readonly string[];
+
+  /**
+   * Returns all known provider-specific types that pass `isSubfolderSafe`.
+   * Used by settings-tab to filter the subfolder field dropdown.
+   */
+  getSubfolderSafeTypes(): readonly string[];
 
   /**
    * Returns all known provider-specific types that pass `isReadOnly`.

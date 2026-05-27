@@ -156,7 +156,9 @@ describe('provider-registry', () => {
         mapToStandardType: () => 'text' as const,
         isReadOnly: () => false,
         isFilenameSafe: () => true,
+        isSubfolderSafe: () => true,
         getFilenameSafeTypes: () => [],
+        getSubfolderSafeTypes: () => [],
         getReadOnlyTypes: () => [],
       };
       registerFieldTypeMapper('notion', fake);

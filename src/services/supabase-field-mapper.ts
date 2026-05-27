@@ -21,11 +21,13 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   'string:date': 'date',
   'string:date-time': 'date',
   'string:byte': 'unknown',
-  // PostgreSQL json/jsonb are serialized by PostgREST as a JSON string in
-  // the OpenAPI shape (type: 'string', format: 'jsonb'/'json'). Map them
-  // as 'text' so they aren't rejected by the fail-closed default — the
-  // type-aware coercion in SupabaseClient.batchUpdate handles the "" → null
-  // conversion for actual upserts.
+  // PostgreSQL json/jsonb: PostgREST's OpenAPI spec describes these as
+  // {type: 'string', format: 'jsonb'/'json'}, but the runtime VALUE is a
+  // parsed JS object/array (NOT a string) — see OBJECT_SHAPED_TYPES below.
+  // Map as 'text' here so the fail-closed default doesn't reject them at
+  // the standard-type lookup; the type-aware coercion in SupabaseClient.
+  // batchUpdate handles "" → null for upserts; subfolder dropdown filters
+  // them out via OBJECT_SHAPED_TYPES because String(value) → '[object …]'.
   'string:jsonb': 'text',
   'string:json': 'text',
   'integer': 'number',
@@ -60,6 +62,30 @@ const READ_ONLY_TYPES = Object.keys(TYPE_TO_STANDARD)
   .map(t => `${t}${READONLY_SUFFIX}`)
   .sort() as readonly string[];
 
+// PostgREST types whose runtime value is a JSON object / array, not a
+// scalar string. Object / jsonb / json columns stringify to '[object
+// Object]' or unbounded JSON, neither suitable as a folder name.
+const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
+  'object',          // PostgREST 'object' type (jsonb composite, etc.)
+  'array:object',    // jsonb[] / array of records
+  'string:json',     // explicit json format
+  'string:jsonb',    // explicit jsonb format
+]);
+
+// Excludes types that map to 'unknown' (e.g. 'string:byte' — bytea blobs
+// stringify to truncated near-collision garbage) AND object-shaped types
+// whose runtime value isn't a usable folder atom. Includes both base and
+// :readonly variant for each surviving type.
+const SUBFOLDER_SAFE_TYPES = (() => {
+  const safeBases = Object.entries(TYPE_TO_STANDARD)
+    .filter(([t, std]) => std !== 'unknown' && !OBJECT_SHAPED_TYPES.has(t))
+    .map(([t]) => t);
+  return [
+    ...safeBases,
+    ...safeBases.map(t => `${t}${READONLY_SUFFIX}`),
+  ].sort() as readonly string[];
+})();
+
 class SupabaseFieldMapperImpl implements FieldTypeMapper {
   mapToStandardType(providerType: string): StandardFieldType {
     const base = providerType.endsWith(READONLY_SUFFIX)
@@ -69,7 +95,14 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
   }
 
   isReadOnly(providerType: string): boolean {
-    if (!(providerType.replace(/:readonly$/, '') in TYPE_TO_STANDARD)) return true;
+    // Strip optional :readonly suffix then check base via hasOwnProperty.call
+    // (not `in`) to avoid prototype-chain leak — 'toString'/'constructor' etc.
+    // would otherwise pass the `in` check and return false (writable),
+    // breaking the fail-closed contract. Matches Airtable + SeaTable. #98.
+    const base = providerType.endsWith(READONLY_SUFFIX)
+      ? providerType.slice(0, -READONLY_SUFFIX.length)
+      : providerType;
+    if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, base)) return true;
     return providerType.endsWith(READONLY_SUFFIX);
   }
 
@@ -77,8 +110,20 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
     return (FILENAME_SAFE_TYPES as readonly string[]).includes(providerType);
   }
 
+  /**
+   * Subfolder is permissive: every type in TYPE_TO_STANDARD (and its
+   * :readonly variant) passes. Issue #98.
+   */
+  isSubfolderSafe(providerType: string): boolean {
+    return (SUBFOLDER_SAFE_TYPES as readonly string[]).includes(providerType);
+  }
+
   getFilenameSafeTypes(): readonly string[] {
     return FILENAME_SAFE_TYPES;
+  }
+
+  getSubfolderSafeTypes(): readonly string[] {
+    return SUBFOLDER_SAFE_TYPES;
   }
 
   getReadOnlyTypes(): readonly string[] {

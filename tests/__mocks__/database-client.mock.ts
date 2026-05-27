@@ -16,11 +16,17 @@ export type MockDatabaseProvider = {
   reconfigure: ReturnType<typeof vi.fn>;
 };
 
+// Mirror the real mapper contract: fail-closed by default. Tests that need
+// permissive behavior should construct a custom mapper instead of relying
+// on a too-permissive NOOP. This prevents 'subfolder picks attachment' style
+// bugs from sneaking past tests that use this mock.
 const NOOP_MAPPER: FieldTypeMapper = {
   mapToStandardType: () => 'unknown',
-  isReadOnly: () => false,
-  isFilenameSafe: () => true,
+  isReadOnly: () => true,      // unknown → read-only (matches production fail-closed)
+  isFilenameSafe: () => false, // unknown → not filename-safe
+  isSubfolderSafe: () => false,// unknown → not subfolder-safe
   getFilenameSafeTypes: () => [],
+  getSubfolderSafeTypes: () => [],
   getReadOnlyTypes: () => [],
 };
 

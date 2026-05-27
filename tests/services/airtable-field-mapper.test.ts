@@ -112,6 +112,112 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.isReadOnly('')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('someNewAirtableType')).toBe(true);
     });
+
+    // Regression guard: same prototype-chain leak class as isSubfolderSafe.
+    // Must use Object.prototype.hasOwnProperty.call (not `in`).
+    it('should fail closed on prototype-chain names (no in-operator leak)', () => {
+      for (const t of ['toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__', 'isPrototypeOf']) {
+        expect(airtableFieldMapper.isReadOnly(t)).toBe(true);
+      }
+    });
+  });
+
+  describe('isSubfolderSafe', () => {
+    // Issue #98: subfolder allows a broad set of types — sanitizeSubfolderValue
+    // handles any stringifiable input. Filename rules are stricter (OS rules).
+    // Attachment / link types are excluded because their stringified shape is
+    // [object Object] / record-id JSON — produces garbage folder names.
+    it('should return true for stringifiable known types (text / number / date / select / formula / system)', () => {
+      // Excludes OBJECT_SHAPED_TYPES (collaborator / barcode / button / aiText /
+      // externalSyncSource / lookup) — covered by a separate test below.
+      const stringifiable = [
+        'singleLineText', 'multilineText', 'richText', 'email', 'phoneNumber', 'url',
+        'number', 'currency', 'percent', 'rating', 'duration',
+        'date', 'dateTime',
+        'checkbox',
+        'singleSelect', 'multipleSelects',
+        'formula', 'rollup', 'count',
+        'createdTime', 'lastModifiedTime', 'createdBy', 'lastModifiedBy', 'autoNumber',
+      ];
+      for (const t of stringifiable) {
+        expect(airtableFieldMapper.isSubfolderSafe(t)).toBe(true);
+      }
+    });
+
+    it('should return false for attachment and link types (no sensible string)', () => {
+      expect(airtableFieldMapper.isSubfolderSafe('multipleAttachments')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('multipleRecordLinks')).toBe(false);
+    });
+
+    // Issue #98 deep-fix: types whose API value shape is an object/array of
+    // objects, NOT a stringifiable scalar. The standard-type filter
+    // (attachment/link/unknown) misses these — explicit OBJECT_SHAPED_TYPES
+    // exclusion needed.
+    it('should return false for object-shaped types (collaborator / barcode / button / aiText / externalSyncSource / lookup)', () => {
+      expect(airtableFieldMapper.isSubfolderSafe('singleCollaborator')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('multipleCollaborators')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('barcode')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('button')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('aiText')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('externalSyncSource')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('lookup')).toBe(false);
+    });
+
+    it('should return false for unknown types (fail-closed)', () => {
+      expect(airtableFieldMapper.isSubfolderSafe('bogusType')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('someNewAirtableType')).toBe(false);
+    });
+
+    // Regression guard: the `in` operator walks Object.prototype so a naive
+    // implementation would accept inherited method names. Must use a safe
+    // membership check (.includes on a literal array, or hasOwnProperty).
+    it('should return false for JS prototype-chain names (no in-operator leak)', () => {
+      const inheritedNames = [
+        'toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__',
+        'isPrototypeOf', 'propertyIsEnumerable', 'toLocaleString',
+      ];
+      for (const t of inheritedNames) {
+        expect(airtableFieldMapper.isSubfolderSafe(t)).toBe(false);
+      }
+    });
+
+    it('should return a superset of isFilenameSafe (every filename-safe type is also subfolder-safe)', () => {
+      for (const t of airtableFieldMapper.getFilenameSafeTypes()) {
+        expect(airtableFieldMapper.isSubfolderSafe(t)).toBe(true);
+      }
+    });
+  });
+
+  describe('getSubfolderSafeTypes', () => {
+    it('should include stringifiable known types but exclude attachment/link', () => {
+      const types = airtableFieldMapper.getSubfolderSafeTypes();
+      expect(types).toContain('date');
+      expect(types).toContain('multipleSelects');
+      expect(types).toContain('checkbox');
+      expect(types).toContain('singleLineText');
+      expect(types).toContain('formula');
+      expect(types).not.toContain('multipleAttachments');
+      expect(types).not.toContain('multipleRecordLinks');
+    });
+
+    it('should be sorted for stable enumeration', () => {
+      const types = airtableFieldMapper.getSubfolderSafeTypes();
+      expect([...types]).toEqual([...types].sort());
+    });
+
+    it('should be a superset of getFilenameSafeTypes', () => {
+      const subset = new Set(airtableFieldMapper.getFilenameSafeTypes());
+      const superset = new Set(airtableFieldMapper.getSubfolderSafeTypes());
+      for (const t of subset) expect(superset.has(t)).toBe(true);
+    });
+
+    // Drift guard: if TYPE_TO_STANDARD grows with an attachment-shaped or
+    // object-shaped type that isn't added to OBJECT_SHAPED_TYPES, the count
+    // here flips and the assertion fails. Forces a manual review.
+    it('should have exact expected cardinality (drift guard)', () => {
+      expect(airtableFieldMapper.getSubfolderSafeTypes()).toHaveLength(24);
+    });
   });
 
   describe('isFilenameSafe', () => {
