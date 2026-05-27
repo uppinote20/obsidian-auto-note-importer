@@ -3,11 +3,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { requestUrl } from 'obsidian';
 import { SeaTableMetadataCache } from '../../src/services/seatable-metadata-cache';
 import type { SeaTableCredential } from '../../src/types';
 
-const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
+const mockRequestUrl = vi.mocked(requestUrl);
 
 function createCredential(overrides: Partial<SeaTableCredential> = {}): SeaTableCredential {
   return {
@@ -53,19 +53,11 @@ const METADATA_RESPONSE = {
 };
 
 function mockOk(body: unknown) {
-  return {
-    ok: true,
-    status: 200,
-    json: async () => body,
-  };
+  return { status: 200, json: body, headers: {}, text: '', arrayBuffer: new ArrayBuffer(0) };
 }
 
 function mockErr(status: number, body: unknown = {}) {
-  return {
-    ok: false,
-    status,
-    json: async () => body,
-  };
+  return { status, json: body, headers: {}, text: '', arrayBuffer: new ArrayBuffer(0) };
 }
 
 describe('SeaTableMetadataCache', () => {
@@ -78,18 +70,18 @@ describe('SeaTableMetadataCache', () => {
 
   describe('fetchTables', () => {
     it('exchanges Base-Token then GETs /metadata/ on a fresh cred', async () => {
-      mockFetch
+      mockRequestUrl
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockOk(METADATA_RESPONSE));
 
       const tables = await cache.fetchTables(createCredential());
 
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      const [tokenCall, metaCall] = mockFetch.mock.calls;
-      expect(tokenCall[0]).toBe('https://cloud.seatable.io/api/v2.1/dtable/app-access-token/');
-      expect(tokenCall[1].headers.Authorization).toBe('Token st-token-abc');
-      expect(metaCall[0]).toBe('https://cloud.seatable.io/api-gateway/api/v2/dtables/uuid-xxx/metadata/');
-      expect(metaCall[1].headers.Authorization).toBe('Bearer bt-xxx');
+      expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+      const [tokenCall, metaCall] = mockRequestUrl.mock.calls;
+      expect(tokenCall[0].url).toBe('https://cloud.seatable.io/api/v2.1/dtable/app-access-token/');
+      expect(tokenCall[0].headers?.Authorization).toBe('Token st-token-abc');
+      expect(metaCall[0].url).toBe('https://cloud.seatable.io/api-gateway/api/v2/dtables/uuid-xxx/metadata/');
+      expect(metaCall[0].headers?.Authorization).toBe('Bearer bt-xxx');
       expect(tables).toHaveLength(2);
       expect(tables[0]).toEqual({
         id: '0000',
@@ -107,7 +99,7 @@ describe('SeaTableMetadataCache', () => {
     });
 
     it('reuses the cached tables across repeat calls without hitting the API', async () => {
-      mockFetch
+      mockRequestUrl
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockOk(METADATA_RESPONSE));
 
@@ -116,11 +108,11 @@ describe('SeaTableMetadataCache', () => {
       const second = await cache.fetchTables(credential);
 
       expect(first).toBe(second);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockRequestUrl).toHaveBeenCalledTimes(2);
     });
 
     it('refetches metadata after clearForCred()', async () => {
-      mockFetch
+      mockRequestUrl
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockOk(METADATA_RESPONSE))
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
@@ -132,11 +124,11 @@ describe('SeaTableMetadataCache', () => {
       const refreshed = await cache.fetchTables(credential);
 
       expect(refreshed).toEqual([]);
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(mockRequestUrl).toHaveBeenCalledTimes(4);
     });
 
     it('strips trailing slashes from custom server URLs and routes to dtable_server', async () => {
-      mockFetch
+      mockRequestUrl
         .mockResolvedValueOnce(mockOk({
           ...TOKEN_RESPONSE,
           dtable_server: 'https://seatable.example.com/api-gateway/',
@@ -145,26 +137,26 @@ describe('SeaTableMetadataCache', () => {
 
       await cache.fetchTables(createCredential({ serverUrl: 'https://seatable.example.com/' }));
 
-      const [tokenCall, metaCall] = mockFetch.mock.calls;
-      expect(tokenCall[0]).toBe('https://seatable.example.com/api/v2.1/dtable/app-access-token/');
-      expect(metaCall[0]).toBe('https://seatable.example.com/api-gateway/api/v2/dtables/uuid-xxx/metadata/');
+      const [tokenCall, metaCall] = mockRequestUrl.mock.calls;
+      expect(tokenCall[0].url).toBe('https://seatable.example.com/api/v2.1/dtable/app-access-token/');
+      expect(metaCall[0].url).toBe('https://seatable.example.com/api-gateway/api/v2/dtables/uuid-xxx/metadata/');
     });
 
     it('throws with HTTP details when the Base-Token endpoint fails', async () => {
-      mockFetch.mockResolvedValueOnce(mockErr(403, { error_msg: 'Invalid API token' }));
+      mockRequestUrl.mockResolvedValueOnce(mockErr(403, { error_msg: 'Invalid API token' }));
 
       await expect(cache.fetchTables(createCredential())).rejects.toThrow(/Failed to obtain SeaTable Base-Token/);
     });
 
     it('throws when Base-Token response is missing required fields', async () => {
-      mockFetch.mockResolvedValueOnce(mockOk({ access_token: 'only' }));
+      mockRequestUrl.mockResolvedValueOnce(mockOk({ access_token: 'only' }));
 
       await expect(cache.fetchTables(createCredential()))
         .rejects.toThrow(/missing access_token or dtable_uuid/);
     });
 
     it('throws with HTTP details when the metadata endpoint fails', async () => {
-      mockFetch
+      mockRequestUrl
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockErr(500, { error_msg: 'server error' }));
 
@@ -172,7 +164,7 @@ describe('SeaTableMetadataCache', () => {
     });
 
     it('drops malformed columns and views silently', async () => {
-      mockFetch
+      mockRequestUrl
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockOk({
           metadata: {
@@ -201,7 +193,7 @@ describe('SeaTableMetadataCache', () => {
 
   describe('getTable', () => {
     it('returns the cached table by id', async () => {
-      mockFetch
+      mockRequestUrl
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockOk(METADATA_RESPONSE));
 
@@ -221,7 +213,7 @@ describe('SeaTableMetadataCache', () => {
       let resolveMeta!: (v: unknown) => void;
       const tokenPromise = new Promise(r => { resolveToken = r; });
       const metaPromise = new Promise(r => { resolveMeta = r; });
-      mockFetch.mockReturnValueOnce(tokenPromise).mockReturnValueOnce(metaPromise);
+      mockRequestUrl.mockReturnValueOnce(tokenPromise).mockReturnValueOnce(metaPromise);
 
       const credential = createCredential();
       const a = cache.fetchTables(credential);
@@ -234,7 +226,7 @@ describe('SeaTableMetadataCache', () => {
 
       expect(resA).toBe(resB);
       // Two fetches total: 1 token + 1 metadata. Without dedup we'd see 4.
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockRequestUrl).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -243,13 +235,13 @@ describe('SeaTableMetadataCache', () => {
       vi.useFakeTimers();
       try {
         // First fetch — token + metadata.
-        mockFetch
+        mockRequestUrl
           .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
           .mockResolvedValueOnce(mockOk(METADATA_RESPONSE));
 
         const credential = createCredential();
         await cache.fetchTables(credential);
-        expect(mockFetch).toHaveBeenCalledTimes(2);
+        expect(mockRequestUrl).toHaveBeenCalledTimes(2);
 
         // Drop the tables cache so the next fetchTables() reaches into
         // the token cache, but advance time past the refresh window so
@@ -262,11 +254,11 @@ describe('SeaTableMetadataCache', () => {
         // would require exposing private state.
         vi.advanceTimersByTime(3 * 24 * 60 * 60 * 1000);
 
-        mockFetch
+        mockRequestUrl
           .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
           .mockResolvedValueOnce(mockOk(METADATA_RESPONSE));
         await cache.fetchTables(credential);
-        expect(mockFetch).toHaveBeenCalledTimes(4);
+        expect(mockRequestUrl).toHaveBeenCalledTimes(4);
       } finally {
         vi.useRealTimers();
       }
@@ -275,7 +267,7 @@ describe('SeaTableMetadataCache', () => {
 
   describe('clear()', () => {
     it('drops every cached cred entry, forcing a re-fetch', async () => {
-      mockFetch
+      mockRequestUrl
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
         .mockResolvedValueOnce(mockOk(METADATA_RESPONSE))
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
@@ -286,7 +278,7 @@ describe('SeaTableMetadataCache', () => {
       cache.clear();
       await cache.fetchTables(credential);
 
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(mockRequestUrl).toHaveBeenCalledTimes(4);
     });
   });
 });

@@ -9,16 +9,19 @@
  * round trips. Both caches are keyed by `credential.id` so swapping
  * credentials evicts cleanly.
  *
- * Direct `fetch()` calls (instead of plumbing through `SeaTableClient`)
- * are intentional: settings-tab needs metadata before any
- * `ConfigInstance` exists for that credential, and Obsidian's
- * `requestUrl` and the browser `fetch` produce equivalent results for
- * SeaTable's CORS-enabled endpoints. The token refresh margin matches
+ * Uses Obsidian's `requestUrl` (matching `SeaTableClient`) rather than
+ * native `fetch` — keeps a single network surface for plugin guideline
+ * compliance and avoids CORS issues on Obsidian Mobile where browser
+ * fetch is more restrictive. Settings-tab still calls this directly
+ * (without going through `ConfigInstance`) because metadata is needed
+ * before any sync config is wired up. The token refresh margin matches
  * `SeaTableClient` so the two never diverge by more than a few seconds.
  *
  * @handbook 9.7-field-cache
  * @tested tests/services/seatable-metadata-cache.test.ts
  */
+
+import { requestUrl } from 'obsidian';
 
 import {
   SEATABLE_BASE_TOKEN_REFRESH_MARGIN_MS,
@@ -117,18 +120,16 @@ export class SeaTableMetadataCache {
   private async fetchTablesUncached(credential: SeaTableCredential): Promise<SeaTableTable[]> {
     const token = await this.getBaseToken(credential);
     const url = this.buildDtableUrl(token, 'metadata/');
-    const r = await fetch(url, {
+    const r = await requestUrl({
+      url,
+      method: 'GET',
       headers: { Authorization: `Bearer ${token.access_token}` },
+      throw: false,
     });
-    if (!r.ok) {
-      throw new Error(
-        `Failed to fetch SeaTable metadata: ${extractApiErrorDetails({
-          status: r.status,
-          json: await r.json().catch(() => undefined),
-        })}`,
-      );
+    if (r.status !== 200) {
+      throw new Error(`Failed to fetch SeaTable metadata: ${extractApiErrorDetails(r)}`);
     }
-    const json = (await r.json()) as { metadata?: { tables?: RawMetadataTable[] } };
+    const json = r.json as { metadata?: { tables?: RawMetadataTable[] } };
     const rawTables = json.metadata?.tables ?? [];
     const tables: SeaTableTable[] = rawTables.map(t => ({
       id: t._id,
@@ -164,18 +165,16 @@ export class SeaTableMetadataCache {
 
     const serverUrl = normalizeServerUrl(credential.serverUrl, SEATABLE_DEFAULT_SERVER_URL);
     const url = `${serverUrl}/api/v2.1/dtable/app-access-token/`;
-    const r = await fetch(url, {
+    const r = await requestUrl({
+      url,
+      method: 'GET',
       headers: { Authorization: `Token ${credential.apiToken}` },
+      throw: false,
     });
-    if (!r.ok) {
-      throw new Error(
-        `Failed to obtain SeaTable Base-Token: ${extractApiErrorDetails({
-          status: r.status,
-          json: await r.json().catch(() => undefined),
-        })}`,
-      );
+    if (r.status !== 200) {
+      throw new Error(`Failed to obtain SeaTable Base-Token: ${extractApiErrorDetails(r)}`);
     }
-    const body = (await r.json()) as BaseTokenResponse;
+    const body = r.json as BaseTokenResponse;
     if (!body.access_token || !body.dtable_uuid) {
       throw new Error('SeaTable Base-Token response missing access_token or dtable_uuid');
     }
