@@ -63,13 +63,12 @@
 .ani-credentials-table .ani-cred-key-set {
   color: var(--text-accent);
   cursor: pointer;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  transition: text-decoration-color 150ms;
+  border-bottom: 1px solid transparent;
+  transition: border-bottom-color 150ms;
 }
 
 .ani-credentials-table .ani-cred-key-set:hover {
-  text-decoration-color: var(--text-accent);
+  border-bottom-color: var(--text-accent);
 }
 
 .ani-credentials-table .ani-cred-actions {
@@ -259,8 +258,12 @@
 
 /* ─── Inline Field Errors ─────────────────────────────────────────── */
 
-.ani-field-error {
-  color: var(--text-error) !important;
+/* Specificity bump (.setting-item-description.ani-field-error = 0,2,0) beats
+   Obsidian's default `.setting-item-description { color: var(--text-muted) }`
+   (0,1,0) without resorting to !important. The class is only ever applied
+   to a Setting's descEl, which always carries `.setting-item-description`. */
+.setting-item-description.ani-field-error {
+  color: var(--text-error);
 }
 
 /* ─── Delete Config ───────────────────────────────────────────────── */
