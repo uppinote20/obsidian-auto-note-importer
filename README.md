@@ -247,12 +247,15 @@ This plugin emits Bases-compatible YAML frontmatter with proper data types for s
 
 What the plugin accesses and why — full transparency. Nothing is sent anywhere except the database APIs you configure; there is no telemetry.
 
-- **Vault file enumeration** (`vault.getFiles`, `vault.getMarkdownFiles`, `vault.getAllLoadedFiles`)
+- **Vault file enumeration** (`vault.getAllLoadedFiles`, `vault.getAbstractFileByPath`)
   - **Why**: find notes to sync, scope sync to your destination folder, and power folder / file autocomplete in settings.
   - **Scope**: file *paths* only. Contents are read on demand by the sync flow (see below), not during enumeration.
-- **Vault read & write** (`vault.read`, `vault.cachedRead`, `vault.modify`, `vault.create`)
-  - **Why**: import remote records into `.md` files, parse frontmatter to push edits back, and write computed values returned by formulas / rollups.
+- **Vault read & write** (`vault.read`, `vault.create`, `vault.modify`, `vault.createFolder`, `vault.adapter.exists`)
+  - **Why**: import remote records into `.md` files, parse frontmatter to push edits back, create destination subfolders, and write computed values returned by formulas / rollups.
   - **Scope**: only files inside the destination folder you configure per sync config.
+- **Vault change events** (`vault.on`, `vault.offref`)
+  - **Why**: detect file edits when "Watch for file changes" is enabled, so edits can be queued for push.
+  - **Scope**: events on all files; the handler filters to your configured destination folder before queuing.
 - **Clipboard write** (`navigator.clipboard.writeText`)
   - **Why**: the Supabase credential form's "Copy SQL" button copies a one-time `SECURITY DEFINER` setup function for you to paste into the Supabase SQL Editor. A `Notice` fallback is shown when clipboard access is denied.
   - **Scope**: clipboard is only ever *written* (never read), and only when you click that specific button.
