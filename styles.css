@@ -258,11 +258,13 @@
 
 /* ─── Inline Field Errors ─────────────────────────────────────────── */
 
-/* Specificity bump (.setting-item-description.ani-field-error = 0,2,0) beats
-   Obsidian's default `.setting-item-description { color: var(--text-muted) }`
-   (0,1,0) without resorting to !important. The class is only ever applied
-   to a Setting's descEl, which always carries `.setting-item-description`. */
-.setting-item-description.ani-field-error {
+/* (0,3,0) selector beats both Obsidian core's `.setting-item-description`
+   (0,1,0) and popular themes (Minimal, Things, AnuPpuccin) that ship
+   `.setting-item .setting-item-description` at (0,2,0). The plugin's
+   settings UI always renders inside `.vertical-tab-content`, so this
+   parent is guaranteed at runtime. Avoids !important without depending
+   on stylesheet load order. */
+.vertical-tab-content .setting-item-description.ani-field-error {
   color: var(--text-error);
 }
 
