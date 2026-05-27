@@ -10,18 +10,21 @@ on:
       # bogus published releases under the sync-tag name.
       - "[0-9]*"
 
+# Split into two jobs so that npm install (which can run third-party
+# postinstall scripts) never executes in the same job as the OIDC
+# `id-token: write` permission. Build deps cannot exfiltrate the
+# attestation signing identity.
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      # Required by actions/attest-build-provenance to mint a signing
-      # certificate from Sigstore and publish the attestation to GitHub's
-      # attestation store.
-      id-token: write
-      attestations: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Don't leave GITHUB_TOKEN in .git/config where postinstall
+          # scripts could pick it up.
+          persist-credentials: false
 
       - name: Use Node.js
         uses: actions/setup-node@v6
@@ -29,16 +32,51 @@ jobs:
           node-version: "20.x"
 
       - name: Build plugin
+        # --ignore-scripts blocks postinstall lifecycle hooks across the
+        # whole dep tree. esbuild and our other deps do not require them.
+        # npm ci honors the lockfile exactly (no silent drift).
         run: |
-          npm install
+          npm ci --ignore-scripts
           npm run build
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-build
+          path: |
+            main.js
+            styles.css
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Sigstore OIDC + attestation publishing. Scoped to this job only,
+      # which runs no npm install and no third-party code beyond the
+      # pinned attest action.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: plugin-build
+
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        # SHA-pinned (v2.4.0). When bumping, update both SHA and comment.
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-path: |
             main.js
             styles.css
+            manifest.json
 
       - name: Create or update release
         env:
