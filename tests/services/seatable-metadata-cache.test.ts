@@ -64,7 +64,10 @@ describe('SeaTableMetadataCache', () => {
   let cache: SeaTableMetadataCache;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks (not clearAllMocks) drops mockImplementation set in
+    // other tests / suites — prevents the obsidian mock from leaking
+    // request behavior between files.
+    vi.resetAllMocks();
     cache = new SeaTableMetadataCache();
   });
 
@@ -161,6 +164,55 @@ describe('SeaTableMetadataCache', () => {
         .mockResolvedValueOnce(mockErr(500, { error_msg: 'server error' }));
 
       await expect(cache.fetchTables(createCredential())).rejects.toThrow(/Failed to fetch SeaTable metadata/);
+    });
+
+    it('falls back to `${serverUrl}/api-gateway/` when token response omits dtable_server', async () => {
+      // Matches SeaTableClient.getBaseToken's fallback so settings-tab
+      // doesn't 404 on self-hosted SeaTable where the proxy strips
+      // dtable_server from the token response.
+      mockRequestUrl
+        .mockResolvedValueOnce(mockOk({ access_token: 'bt-xxx', dtable_uuid: 'uuid-xxx' }))
+        .mockResolvedValueOnce(mockOk(METADATA_RESPONSE));
+
+      await cache.fetchTables(createCredential({ serverUrl: 'https://seatable.example.com' }));
+
+      const [, metaCall] = mockRequestUrl.mock.calls;
+      expect(metaCall[0].url).toBe('https://seatable.example.com/api-gateway/api/v2/dtables/uuid-xxx/metadata/');
+    });
+
+    it('accepts 2xx status codes other than 200 (e.g. 201 from upstream proxies)', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce({ status: 201, json: TOKEN_RESPONSE, headers: {}, text: '', arrayBuffer: new ArrayBuffer(0) })
+        .mockResolvedValueOnce({ status: 201, json: METADATA_RESPONSE, headers: {}, text: '', arrayBuffer: new ArrayBuffer(0) });
+
+      await expect(cache.fetchTables(createCredential())).resolves.toHaveLength(2);
+    });
+
+    it('does not crash when the 200 response body is non-JSON (lazy r.json throws)', async () => {
+      // Simulate Obsidian's lazy `.json` getter throwing SyntaxError on
+      // an HTML maintenance page returned with status 200.
+      const throwingJsonResponse: unknown = {
+        status: 200,
+        get json() { throw new SyntaxError("Unexpected token '<'"); },
+        headers: {},
+        text: '<!DOCTYPE html><html>maintenance</html>',
+        arrayBuffer: new ArrayBuffer(0),
+      };
+      mockRequestUrl
+        .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
+        .mockResolvedValueOnce(throwingJsonResponse as Awaited<ReturnType<typeof import('obsidian').requestUrl>>);
+
+      // parseJson swallows the SyntaxError → metadata?.tables ?? [] → empty list.
+      await expect(cache.fetchTables(createCredential())).resolves.toEqual([]);
+    });
+
+    it('recovers wrapped error shape when older Obsidian builds reject on 4xx (throw:false ignored)', async () => {
+      // Simulate the old Obsidian behavior: rejection with a status-bearing error object.
+      mockRequestUrl.mockRejectedValueOnce(
+        Object.assign(new Error('Forbidden'), { status: 403, json: { error_msg: 'Invalid API token' }, headers: {}, text: '' })
+      );
+
+      await expect(cache.fetchTables(createCredential())).rejects.toThrow(/Failed to obtain SeaTable Base-Token/);
     });
 
     it('drops malformed columns and views silently', async () => {
