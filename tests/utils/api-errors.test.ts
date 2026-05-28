@@ -58,6 +58,30 @@ describe('extractApiErrorMessage', () => {
   it('treats body.error as object only when it has message', () => {
     expect(extractApiErrorMessage({ json: { error: { code: 42 } as { message?: string }, error_msg: 'x' } })).toBe('x');
   });
+
+  it('falls through to response.text when accessing response.json throws (lazy getter on non-JSON body)', () => {
+    // Obsidian's requestUrl exposes `.json` as a lazy getter that parses
+    // response.text on access. When the body is HTML (proxy 502 / captive
+    // portal), the getter throws SyntaxError. Without the defensive
+    // try/catch in extractApiErrorMessage, callers like
+    // `extractApiErrorDetails(r)` inside `throw new Error('Failed: ${...}')`
+    // would see the SyntaxError replace the intended HTTP-status message.
+    const throwingResponse: { status: number; text?: string; json?: unknown } = {
+      status: 502,
+      text: '<!DOCTYPE html><html>Bad gateway</html>',
+      get json() { throw new SyntaxError("Unexpected token '<'"); },
+    };
+    expect(extractApiErrorMessage(throwingResponse)).toBe('<!DOCTYPE html><html>Bad gateway</html>');
+  });
+
+  it('falls through to HTTP status when both json getter throws AND text is empty', () => {
+    const throwingResponse: { status: number; text?: string; json?: unknown } = {
+      status: 500,
+      text: '',
+      get json() { throw new SyntaxError('Unexpected end of JSON input'); },
+    };
+    expect(extractApiErrorMessage(throwingResponse)).toBe('HTTP 500');
+  });
 });
 
 describe('extractApiErrorDetails', () => {
