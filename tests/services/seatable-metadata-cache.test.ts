@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { requestUrl } from 'obsidian';
+import { requestUrl, type RequestUrlResponse } from 'obsidian';
 import { SeaTableMetadataCache } from '../../src/services/seatable-metadata-cache';
 import type { SeaTableCredential } from '../../src/types';
 
@@ -202,7 +202,7 @@ describe('SeaTableMetadataCache', () => {
       };
       mockRequestUrl
         .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))
-        .mockResolvedValueOnce(throwingJsonResponse as Awaited<ReturnType<typeof import('obsidian').requestUrl>>);
+        .mockResolvedValueOnce(throwingJsonResponse as RequestUrlResponse);
 
       // parseJson swallows the SyntaxError → metadata?.tables ?? [] → empty list.
       await expect(cache.fetchTables(createCredential())).resolves.toEqual([]);
@@ -290,7 +290,10 @@ describe('SeaTableMetadataCache', () => {
 
       const callA = cache.fetchTables(credential);
       // Drain microtasks so A's token resolves and A reaches the metadata
-      // await — A is now the in-flight entry.
+      // await — A is now the in-flight entry. Current chain (fetchTables →
+      // fetchTablesUncached → getBaseToken → request → requestUrl + json
+      // parse + token cache set) needs ~5-8 turns; 20 leaves margin for a
+      // future async layer. Bump if a new await is added to the path.
       for (let i = 0; i < 20; i++) await Promise.resolve();
 
       cache.clearForCred(credential.id);

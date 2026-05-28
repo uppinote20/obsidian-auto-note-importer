@@ -144,6 +144,12 @@ export class SeaTableMetadataCache {
       throw new Error(`Failed to fetch SeaTable metadata: ${extractApiErrorDetails(r)}`);
     }
     const json = this.parseJson(r) as { metadata?: { tables?: RawMetadataTable[] } } | null;
+    if (json === null) {
+      // Diagnostic for the silent empty-list path — a 200 response with a
+      // non-JSON body usually means a proxy interstitial (captive portal,
+      // CDN maintenance page) sat in front of SeaTable.
+      console.warn('SeaTableMetadataCache: metadata response was not JSON (proxy interstitial?), returning empty table list');
+    }
     const rawTables = json?.metadata?.tables ?? [];
     const tables: SeaTableTable[] = rawTables.map(t => ({
       id: t._id,
