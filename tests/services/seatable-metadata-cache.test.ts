@@ -83,8 +83,10 @@ describe('SeaTableMetadataCache', () => {
       const [tokenCall, metaCall] = mockRequestUrl.mock.calls;
       expect(tokenCall[0].url).toBe('https://cloud.seatable.io/api/v2.1/dtable/app-access-token/');
       expect(tokenCall[0].headers?.Authorization).toBe('Token st-token-abc');
+      expect(tokenCall[0].headers?.Accept).toBe('application/json');
       expect(metaCall[0].url).toBe('https://cloud.seatable.io/api-gateway/api/v2/dtables/uuid-xxx/metadata/');
       expect(metaCall[0].headers?.Authorization).toBe('Bearer bt-xxx');
+      expect(metaCall[0].headers?.Accept).toBe('application/json');
       expect(tables).toHaveLength(2);
       expect(tables[0]).toEqual({
         id: '0000',
@@ -256,6 +258,64 @@ describe('SeaTableMetadataCache', () => {
 
     it('returns undefined when nothing is cached for the cred', () => {
       expect(cache.getTable('cred-missing', '0000')).toBeUndefined();
+    });
+  });
+
+  describe('clearForCred during in-flight fetch', () => {
+    it('preserves a later in-flight entry when an earlier promise resolves (identity-checked finally)', async () => {
+      // Reproduces SWEEP#2 race: clearForCred mid-flight, then a new fetch
+      // starts. Without identity-checked delete in fetchTables' finally,
+      // the original promise's cleanup would wipe the NEW promise's
+      // in-flight entry → a follow-up call would NOT dedupe and start a
+      // redundant fetch.
+      //
+      // We need to observe a follow-up that arrives AFTER A's finally but
+      // BEFORE B finishes — and crucially, no cachedTables entry from A
+      // (which would short-circuit the dedup test). Solving that by making
+      // A fail (its metadata response is a 500), so the cache stays empty
+      // and the inFlightTables Map is the only thing keeping D from
+      // starting fresh.
+      let resolveMetaA!: (v: unknown) => void;
+      let resolveMetaB!: (v: unknown) => void;
+      const metaPromiseA = new Promise(r => { resolveMetaA = r; });
+      const metaPromiseB = new Promise(r => { resolveMetaB = r; });
+
+      mockRequestUrl
+        .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))   // A token
+        .mockReturnValueOnce(metaPromiseA)               // A metadata (will fail)
+        .mockResolvedValueOnce(mockOk(TOKEN_RESPONSE))   // B token
+        .mockReturnValueOnce(metaPromiseB);              // B metadata (will succeed)
+
+      const credential = createCredential();
+
+      const callA = cache.fetchTables(credential);
+      // Drain microtasks so A's token resolves and A reaches the metadata
+      // await — A is now the in-flight entry.
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+
+      cache.clearForCred(credential.id);
+
+      const callB = cache.fetchTables(credential);
+      const callC = cache.fetchTables(credential);
+
+      // A's metadata fails. A throws; A's finally runs identity-check:
+      // current inFlightTables entry is B's promise, NOT A's → must not delete.
+      // A also never reached `cachedTables.set`, so cache is empty.
+      resolveMetaA(mockErr(500, { error_msg: 'server error' }));
+      await expect(callA).rejects.toThrow();
+
+      // D arrives. With identity check: B's in-flight entry intact → dedupe.
+      // Without it (the bug): no in-flight, no cache → fresh round trip.
+      const callD = cache.fetchTables(credential);
+
+      resolveMetaB(mockOk(METADATA_RESPONSE));
+      const [resB, resC, resD] = await Promise.all([callB, callC, callD]);
+
+      expect(resB).toBe(resC);
+      expect(resB).toBe(resD);
+      // 4 total mock calls: A(token+meta) + B(token+meta). C and D dedupe.
+      // Without the race fix this would be 6 (extra token+meta for D).
+      expect(mockRequestUrl).toHaveBeenCalledTimes(4);
     });
   });
 
