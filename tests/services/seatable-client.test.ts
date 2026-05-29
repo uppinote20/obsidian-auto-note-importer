@@ -265,6 +265,20 @@ describe('SeaTableClient', () => {
 
       await expect(client.fetchNotes()).rejects.toThrow(/Failed to fetch SeaTable rows/);
     });
+
+    it('accepts 2xx statuses other than 200 for token and rows (proxy may rewrite 200→201)', async () => {
+      // Corporate proxies in front of SeaTable sometimes rewrite 200→201/202.
+      // Both the Base-Token exchange and the rows fetch must treat the full
+      // 2xx range as success — mirrors SeaTableMetadataCache.
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE, 201))
+        .mockResolvedValueOnce(mockResponse({ rows: [{ _id: 'r1', Name: 'Note 1' }] }, 202));
+
+      const notes = await client.fetchNotes();
+
+      expect(notes).toHaveLength(1);
+      expect(notes[0].id).toBe('r1');
+    });
   });
 
   describe('fetchRecord', () => {
@@ -286,6 +300,15 @@ describe('SeaTableClient', () => {
       const url = mockRequestUrl.mock.calls[1][0].url;
       expect(url).toContain('/api/v2/dtables/uuid-xxx/rows/r1/');
       expect(url).toContain('convert_keys=true');
+    });
+
+    it('accepts 2xx statuses other than 200 for single-row fetch (e.g. 201)', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ _id: 'r1', Name: 'Test' }, 201));
+
+      const note = await client.fetchRecord('r1');
+      expect(note).toEqual({ id: 'r1', primaryField: 'r1', fields: { Name: 'Test' } });
     });
 
     it('should return null for 404', async () => {
@@ -438,6 +461,18 @@ describe('SeaTableClient', () => {
       if (!results[0].success) {
         expect(results[0].error).toBe('Connection lost');
       }
+    });
+
+    it('accepts 2xx statuses other than 200 as success (e.g. 201 from a proxy)', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ success: true }, 201));
+
+      const results = await client.batchUpdate([{ recordId: 'r1', fields: { Name: 'A' } }]);
+
+      expect(results).toEqual([
+        { success: true, recordId: 'r1', updatedFields: { Name: 'A' } },
+      ]);
     });
   });
 

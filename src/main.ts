@@ -98,7 +98,12 @@ export default class AutoNoteImporterPlugin extends Plugin {
   private reregisterAllCommands(): void {
     // Collect all config IDs that currently have commands registered
     const commandPrefix = this.manifest.id;
-    const commands = (this.app as any).commands?.commands;
+    // Obsidian's command registry is private API (not in the published
+    // typings). Narrow to the shape we touch instead of `any`, matching the
+    // codebase convention for private-API access.
+    const commands = (this.app as unknown as {
+      commands?: { commands?: Record<string, unknown> };
+    }).commands?.commands;
     if (commands) {
       const registeredIds = Object.keys(commands).filter(
         id => id.startsWith(`${commandPrefix}:`) && id !== commandPrefix,

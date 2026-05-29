@@ -150,7 +150,7 @@ export class SeaTableClient implements DatabaseProvider {
       }),
     );
 
-    if (response.status !== 200) {
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(
         `Failed to obtain SeaTable Base-Token: ${extractApiErrorDetails(response)}`,
       );
@@ -220,7 +220,7 @@ export class SeaTableClient implements DatabaseProvider {
         requestUrl({ url, method: 'GET', headers }),
       );
 
-      if (response.status !== 200) {
+      if (response.status < 200 || response.status >= 300) {
         throw new Error(`Failed to fetch SeaTable rows: ${extractApiErrorDetails(response)}`);
       }
 
@@ -256,7 +256,7 @@ export class SeaTableClient implements DatabaseProvider {
 
     if (response.status === 404) return null;
 
-    if (response.status !== 200) {
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(`Failed to fetch SeaTable row ${recordId}: ${extractApiErrorDetails(response)}`);
     }
 
@@ -301,7 +301,7 @@ export class SeaTableClient implements DatabaseProvider {
         requestUrl({ url, method: 'PUT', headers, body }),
       );
 
-      if (response.status !== 200) {
+      if (response.status < 200 || response.status >= 300) {
         const errorDetails = extractApiErrorDetails(response);
         return buildBatchFailures(updates, `Failed to batch update SeaTable rows: ${errorDetails}`);
       }

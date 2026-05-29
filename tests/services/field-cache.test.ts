@@ -72,6 +72,15 @@ describe('FieldCache', () => {
 
       await expect(cache.fetchBases('bad-key')).rejects.toThrow('HTTP 401');
     });
+
+    it('accepts 2xx statuses other than 200 (e.g. 201 from a proxy)', async () => {
+      mockRequestUrl.mockResolvedValueOnce({
+        status: 201, json: { bases: [{ id: 'app1', name: 'Base 1' }] }, headers: {}, text: '', arrayBuffer: new ArrayBuffer(0),
+      });
+
+      const bases = await cache.fetchBases('pat-key');
+      expect(bases).toEqual([{ id: 'app1', name: 'Base 1' }]);
+    });
   });
 
   describe('fetchTables', () => {
@@ -87,6 +96,15 @@ describe('FieldCache', () => {
       // Cache hit
       await cache.fetchTables('pat-key', 'app1');
       expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts 2xx statuses other than 200 (e.g. 201 from a proxy)', async () => {
+      mockRequestUrl.mockResolvedValueOnce({
+        status: 201, json: { tables: [{ id: 'tbl1', name: 'Table 1' }] }, headers: {}, text: '', arrayBuffer: new ArrayBuffer(0),
+      });
+
+      const tables = await cache.fetchTables('pat-key', 'app1');
+      expect(tables).toEqual([{ id: 'tbl1', name: 'Table 1' }]);
     });
   });
 
@@ -150,6 +168,18 @@ describe('FieldCache', () => {
 
       const views = await cache.fetchViews('pat-key', 'app1', 'tbl1');
       expect(views).toEqual([]);
+    });
+
+    it('accepts 2xx statuses other than 200 for table metadata (e.g. 201)', async () => {
+      mockRequestUrl.mockResolvedValueOnce({
+        status: 201,
+        json: { tables: [{ id: 'tbl1', name: 'Table 1', fields: [{ id: 'fld1', name: 'Name', type: 'singleLineText' }], views: [] }] },
+        headers: {}, text: '', arrayBuffer: new ArrayBuffer(0),
+      });
+
+      const fields = await cache.fetchFields('pat-key', 'app1', 'tbl1');
+      expect(fields).toHaveLength(1);
+      expect(fields[0].name).toBe('Name');
     });
   });
 
