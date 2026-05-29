@@ -112,7 +112,11 @@ export class FieldCache {
   /**
    * Fetches and caches both fields and views for a table in a single API call.
    */
-  private async fetchTableMetadata(apiKey: string, baseId: string, tableId: string): Promise<void> {
+  private async fetchTableMetadata(
+    apiKey: string,
+    baseId: string,
+    tableId: string,
+  ): Promise<{ fields: AirtableField[]; views: AirtableView[] }> {
     const response = await requestUrl({
       url: `${AIRTABLE_META_API_URL}/bases/${baseId}/tables`,
       method: "GET",
@@ -155,6 +159,10 @@ export class FieldCache {
       type: v.type
     }));
     this.cachedViews.set(cacheKey, views);
+
+    // Return what we just cached so callers skip a redundant Map.get() and
+    // the (always-populated) non-null assertion it would otherwise need.
+    return { fields, views };
   }
 
   /**
@@ -165,8 +173,8 @@ export class FieldCache {
     const cached = this.cachedFields.get(cacheKey);
     if (cached) return cached;
 
-    await this.fetchTableMetadata(apiKey, baseId, tableId);
-    return this.cachedFields.get(cacheKey)!;
+    const { fields } = await this.fetchTableMetadata(apiKey, baseId, tableId);
+    return fields;
   }
 
   /**
@@ -177,8 +185,8 @@ export class FieldCache {
     const cached = this.cachedViews.get(cacheKey);
     if (cached) return cached;
 
-    await this.fetchTableMetadata(apiKey, baseId, tableId);
-    return this.cachedViews.get(cacheKey)!;
+    const { views } = await this.fetchTableMetadata(apiKey, baseId, tableId);
+    return views;
   }
 
   /**
