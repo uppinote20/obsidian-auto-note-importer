@@ -9,16 +9,26 @@
  * round trips. Both caches are keyed by `credential.id` so swapping
  * credentials evicts cleanly.
  *
- * Direct `fetch()` calls (instead of plumbing through `SeaTableClient`)
- * are intentional: settings-tab needs metadata before any
- * `ConfigInstance` exists for that credential, and Obsidian's
- * `requestUrl` and the browser `fetch` produce equivalent results for
- * SeaTable's CORS-enabled endpoints. The token refresh margin matches
+ * Uses Obsidian's `requestUrl` (matching `SeaTableClient`) rather than
+ * native `fetch` — keeps a single network surface for plugin guideline
+ * compliance and avoids CORS issues on Obsidian Mobile where browser
+ * fetch is more restrictive. Settings-tab still calls this directly
+ * (without going through `ConfigInstance`) because metadata is needed
+ * before any sync config is wired up. The token refresh margin matches
  * `SeaTableClient` so the two never diverge by more than a few seconds.
+ *
+ * Defensive patterns mirror `SupabaseMetadataCache`:
+ *  - `request()` wraps requestUrl with a try/catch fallback for older
+ *    Obsidian builds that ignore `throw: false` and reject on 4xx/5xx.
+ *  - `parseJson()` swallows SyntaxError from the lazy `r.json` getter
+ *    so a non-JSON body (proxy maintenance page, HTML 502) surfaces
+ *    as a friendly `HTTP {status}` message, not a raw parse error.
  *
  * @handbook 9.7-field-cache
  * @tested tests/services/seatable-metadata-cache.test.ts
  */
+
+import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from 'obsidian';
 
 import {
   SEATABLE_BASE_TOKEN_REFRESH_MARGIN_MS,
@@ -110,26 +120,37 @@ export class SeaTableMetadataCache {
     try {
       return await promise;
     } finally {
-      this.inFlightTables.delete(credential.id);
+      // Identity-checked delete: if `clearForCred` (or a later concurrent
+      // call) replaced our entry mid-flight, leave the new entry alone so
+      // it can dedupe its own callers.
+      if (this.inFlightTables.get(credential.id) === promise) {
+        this.inFlightTables.delete(credential.id);
+      }
     }
   }
 
   private async fetchTablesUncached(credential: SeaTableCredential): Promise<SeaTableTable[]> {
     const token = await this.getBaseToken(credential);
     const url = this.buildDtableUrl(token, 'metadata/');
-    const r = await fetch(url, {
-      headers: { Authorization: `Bearer ${token.access_token}` },
+    const r = await this.request({
+      url,
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token.access_token}`,
+        'Accept': 'application/json',
+      },
     });
-    if (!r.ok) {
-      throw new Error(
-        `Failed to fetch SeaTable metadata: ${extractApiErrorDetails({
-          status: r.status,
-          json: await r.json().catch(() => undefined),
-        })}`,
-      );
+    if (r.status < 200 || r.status >= 300) {
+      throw new Error(`Failed to fetch SeaTable metadata: ${extractApiErrorDetails(r)}`);
     }
-    const json = (await r.json()) as { metadata?: { tables?: RawMetadataTable[] } };
-    const rawTables = json.metadata?.tables ?? [];
+    const json = this.parseJson(r) as { metadata?: { tables?: RawMetadataTable[] } } | null;
+    if (json === null) {
+      // Diagnostic for the silent empty-list path — a 200 response with a
+      // non-JSON body usually means a proxy interstitial (captive portal,
+      // CDN maintenance page) sat in front of SeaTable.
+      console.warn('SeaTableMetadataCache: metadata response was not JSON (proxy interstitial?), returning empty table list');
+    }
+    const rawTables = json?.metadata?.tables ?? [];
     const tables: SeaTableTable[] = rawTables.map(t => ({
       id: t._id,
       name: t.name,
@@ -164,22 +185,25 @@ export class SeaTableMetadataCache {
 
     const serverUrl = normalizeServerUrl(credential.serverUrl, SEATABLE_DEFAULT_SERVER_URL);
     const url = `${serverUrl}/api/v2.1/dtable/app-access-token/`;
-    const r = await fetch(url, {
-      headers: { Authorization: `Token ${credential.apiToken}` },
+    const r = await this.request({
+      url,
+      method: 'GET',
+      headers: {
+        'Authorization': `Token ${credential.apiToken}`,
+        'Accept': 'application/json',
+      },
     });
-    if (!r.ok) {
-      throw new Error(
-        `Failed to obtain SeaTable Base-Token: ${extractApiErrorDetails({
-          status: r.status,
-          json: await r.json().catch(() => undefined),
-        })}`,
-      );
+    if (r.status < 200 || r.status >= 300) {
+      throw new Error(`Failed to obtain SeaTable Base-Token: ${extractApiErrorDetails(r)}`);
     }
-    const body = (await r.json()) as BaseTokenResponse;
-    if (!body.access_token || !body.dtable_uuid) {
+    const body = this.parseJson(r) as BaseTokenResponse | null;
+    if (!body?.access_token || !body?.dtable_uuid) {
       throw new Error('SeaTable Base-Token response missing access_token or dtable_uuid');
     }
-    const gatewayBase = normalizeServerUrl(body.dtable_server, serverUrl);
+    // Fallback matches SeaTableClient.getBaseToken (line 164) so settings-tab
+    // and sync paths agree on the gateway base when SeaTable omits
+    // `dtable_server` (older self-hosted, custom proxies).
+    const gatewayBase = normalizeServerUrl(body.dtable_server, `${serverUrl}/api-gateway/`);
     const token: CachedToken = {
       ...body,
       gatewayBase,
@@ -191,5 +215,41 @@ export class SeaTableMetadataCache {
 
   private buildDtableUrl(token: CachedToken, path: string): string {
     return `${token.gatewayBase}/api/v2/dtables/${token.dtable_uuid}/${path}`;
+  }
+
+  /**
+   * Wraps `requestUrl({...opts, throw: false})` with a fallback for older
+   * Obsidian builds that ignore `throw: false` and reject on 4xx/5xx —
+   * recovers the response shape so `r.status` branches stay live.
+   * Mirrors `SupabaseMetadataCache` and `SupabaseClient`.
+   */
+  private async request(opts: RequestUrlParam): Promise<RequestUrlResponse> {
+    try {
+      return await requestUrl({ ...opts, throw: false });
+    } catch (e) {
+      const err = e as { status?: number; headers?: Record<string, string>; json?: unknown; text?: string };
+      if (typeof err.status !== 'number') throw e;
+      return {
+        status: err.status,
+        headers: err.headers ?? {},
+        json: err.json,
+        text: err.text ?? '',
+        arrayBuffer: new ArrayBuffer(0),
+      } as RequestUrlResponse;
+    }
+  }
+
+  /**
+   * Safe access to the lazy `r.json` getter. Obsidian's requestUrl parses
+   * JSON on demand and throws `SyntaxError` if the body is non-JSON
+   * (proxy HTML interstitials, captive portals). Returns `null` on parse
+   * failure so callers can fall back to `??` defaulting.
+   */
+  private parseJson(r: RequestUrlResponse): unknown {
+    try {
+      return r.json;
+    } catch {
+      return null;
+    }
   }
 }

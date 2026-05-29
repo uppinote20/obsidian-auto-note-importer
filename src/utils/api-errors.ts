@@ -36,7 +36,19 @@ interface ApiErrorResponse {
 }
 
 export function extractApiErrorMessage(response: ApiErrorResponse): string {
-  const body = response.json as ApiErrorBody | undefined;
+  // Obsidian `requestUrl` exposes `.json` as a LAZY getter that runs
+  // `JSON.parse(response.text)` on access — it throws SyntaxError when
+  // the body is non-JSON (HTML 502 from a proxy, captive portal page,
+  // empty body, etc.). Without this guard, every caller that passes a
+  // raw RequestUrlResponse here would see the SyntaxError bubble out of
+  // their `throw new Error('Failed: ${extractApiErrorDetails(r)}')`
+  // and replace the intended HTTP-status message.
+  let body: ApiErrorBody | undefined;
+  try {
+    body = response.json as ApiErrorBody | undefined;
+  } catch {
+    body = undefined;
+  }
   if (body) {
     // PostgREST proper: code + message (both strings) is the most structured form
     if (typeof body.code === 'string' && typeof body.message === 'string') {

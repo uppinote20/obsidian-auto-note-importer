@@ -10,23 +10,80 @@ on:
       # bogus published releases under the sync-tag name.
       - "[0-9]*"
 
+# Split into two jobs so that npm install (which can run third-party
+# postinstall scripts) never executes in the same job as the OIDC
+# `id-token: write` permission. Build deps cannot exfiltrate the
+# attestation signing identity.
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      # SHA-pinned (v6.0.2) — all actions pinned for supply-chain consistency.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          # Don't leave GITHUB_TOKEN in .git/config where postinstall
+          # scripts could pick it up.
+          persist-credentials: false
 
       - name: Use Node.js
-        uses: actions/setup-node@v6
+        # SHA-pinned (v6.4.0).
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: "20.x"
 
       - name: Build plugin
+        # --ignore-scripts blocks postinstall lifecycle hooks across the
+        # whole dep tree. esbuild and our other deps do not require them.
+        # npm ci honors the lockfile exactly (no silent drift).
         run: |
-          npm install
+          npm ci --ignore-scripts
           npm run build
+
+      - name: Upload build artifacts
+        # SHA-pinned (v4.6.2) for supply-chain hardening consistency
+        # with the attest step. Bump SHA together with comment.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: plugin-build
+          path: |
+            main.js
+            styles.css
+            manifest.json
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Sigstore OIDC + attestation publishing. Scoped to this job only,
+      # which runs no npm install and no third-party code beyond the
+      # pinned attest action.
+      id-token: write
+      attestations: write
+    steps:
+      # SHA-pinned (v6.0.2).
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Download build artifacts
+        # SHA-pinned (v4.3.0).
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: plugin-build
+
+      - name: Attest build provenance
+        # SHA-pinned (v2.4.0). When bumping, update both SHA and comment.
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            main.js
+            styles.css
+            manifest.json
 
       - name: Create or update release
         env:

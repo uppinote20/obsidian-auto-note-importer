@@ -5,7 +5,7 @@
 	"minAppVersion": "0.15.0",
 	"description": "Sync notes bidirectionally between your vault and Airtable, SeaTable, or Supabase databases.",
 	"author": "uppinote",
-	"authorUrl": "https://github.com/uppinote20/obsidian-auto-note-importer",
+	"authorUrl": "https://github.com/uppinote20",
 	"fundingUrl": {
 		"Buy Me a Coffee": "https://www.buymeacoffee.com/uppinote",
 		"ko-fi": "https://ko-fi.com/uppinote"
