@@ -70,7 +70,7 @@ export class FieldCache {
       headers: { "Authorization": `Bearer ${apiKey}` },
     });
 
-    if (response.status !== 200) {
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(`Failed to fetch bases: HTTP ${response.status}`);
     }
 
@@ -96,7 +96,7 @@ export class FieldCache {
       headers: { "Authorization": `Bearer ${apiKey}` },
     });
 
-    if (response.status !== 200) {
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(`Failed to fetch tables: HTTP ${response.status}`);
     }
 
@@ -123,7 +123,7 @@ export class FieldCache {
       headers: { "Authorization": `Bearer ${apiKey}` },
     });
 
-    if (response.status !== 200) {
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(`Failed to fetch table metadata: HTTP ${response.status}`);
     }
 
