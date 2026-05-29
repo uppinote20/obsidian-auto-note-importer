@@ -99,8 +99,8 @@ export default class AutoNoteImporterPlugin extends Plugin {
     // Collect all config IDs that currently have commands registered
     const commandPrefix = this.manifest.id;
     // Obsidian's command registry is private API (not in the published
-    // typings). Narrow to the shape we touch instead of `any` — matches the
-    // `as unknown as { … }` pattern used in rate-limiter / supabase cache.
+    // typings). Narrow to the shape we touch instead of `any`, matching the
+    // codebase convention for private-API access.
     const commands = (this.app as unknown as {
       commands?: { commands?: Record<string, unknown> };
     }).commands?.commands;
