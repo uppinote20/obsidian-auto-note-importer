@@ -302,6 +302,15 @@ describe('SeaTableClient', () => {
       expect(url).toContain('convert_keys=true');
     });
 
+    it('accepts 2xx statuses other than 200 for single-row fetch (e.g. 201)', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ _id: 'r1', Name: 'Test' }, 201));
+
+      const note = await client.fetchRecord('r1');
+      expect(note).toEqual({ id: 'r1', primaryField: 'r1', fields: { Name: 'Test' } });
+    });
+
     it('should return null for 404', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
