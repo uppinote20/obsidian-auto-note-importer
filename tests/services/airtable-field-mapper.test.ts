@@ -294,10 +294,10 @@ describe('airtableFieldMapper', () => {
     it('should return exactly the 4 filename-safe types', () => {
       const types = airtableFieldMapper.getFilenameSafeTypes();
       expect(types).toEqual([
+        'formula',
+        'number',
         'singleLineText',
         'singleSelect',
-        'number',
-        'formula',
       ]);
     });
 

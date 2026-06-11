@@ -252,11 +252,11 @@ describe('seatableFieldMapper', () => {
     it('should return exactly the 5 filename-safe types', () => {
       const types = seatableFieldMapper.getFilenameSafeTypes();
       expect(types).toEqual([
-        'text',
-        'single-select',
-        'number',
         'auto-number',
         'formula',
+        'number',
+        'single-select',
+        'text',
       ]);
     });
 
