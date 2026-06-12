@@ -16,6 +16,120 @@ export const MarkdownView = vi.fn();
 
 export const requestUrl = vi.fn();
 
+export const setIcon = vi.fn();
+
+export class PluginSettingTab {
+  app: unknown;
+  plugin: unknown;
+  containerEl: unknown;
+
+  constructor(app: unknown, plugin: unknown) {
+    this.app = app;
+    this.plugin = plugin;
+    this.containerEl = {};
+  }
+
+  display(): void {}
+}
+
+export class Setting {
+  settingEl = {
+    addClass: vi.fn(),
+  };
+
+  constructor(_containerEl?: unknown) {}
+
+  setName(): this { return this; }
+  setDesc(): this { return this; }
+  setClass(): this { return this; }
+
+  addButton(callback: (button: {
+    buttonEl: { disabled: boolean; textContent: string | null };
+    setButtonText: (text: string) => unknown;
+    setCta: () => unknown;
+    setDisabled: (disabled: boolean) => unknown;
+    onClick: (handler: () => unknown) => unknown;
+  }) => unknown): this {
+    const button = {
+      buttonEl: { disabled: false, textContent: null },
+      setButtonText(text: string) {
+        this.buttonEl.textContent = text;
+        return this;
+      },
+      setCta() { return this; },
+      setDisabled(disabled: boolean) {
+        this.buttonEl.disabled = disabled;
+        return this;
+      },
+      onClick(_handler: () => unknown) { return this; },
+    };
+    callback(button);
+    return this;
+  }
+
+  addText(callback: (text: {
+    inputEl: unknown;
+    setValue: (value: string) => unknown;
+    setPlaceholder: (value: string) => unknown;
+    onChange: (handler: (value: string) => unknown) => unknown;
+  }) => unknown): this {
+    const text = {
+      inputEl: {},
+      setValue(_value: string) { return this; },
+      setPlaceholder(_value: string) { return this; },
+      onChange(_handler: (value: string) => unknown) { return this; },
+    };
+    callback(text);
+    return this;
+  }
+
+  addDropdown(callback: (dropdown: {
+    addOption: (value: string, label: string) => unknown;
+    setValue: (value: string) => unknown;
+    onChange: (handler: (value: string) => unknown) => unknown;
+  }) => unknown): this {
+    const dropdown = {
+      addOption(_value: string, _label: string) { return this; },
+      setValue(_value: string) { return this; },
+      onChange(_handler: (value: string) => unknown) { return this; },
+    };
+    callback(dropdown);
+    return this;
+  }
+
+  addToggle(callback: (toggle: {
+    setValue: (value: boolean) => unknown;
+    onChange: (handler: (value: boolean) => unknown) => unknown;
+  }) => unknown): this {
+    const toggle = {
+      setValue(_value: boolean) { return this; },
+      onChange(_handler: (value: boolean) => unknown) { return this; },
+    };
+    callback(toggle);
+    return this;
+  }
+
+  addExtraButton(callback: (button: unknown) => unknown): this {
+    callback({});
+    return this;
+  }
+}
+
+export class AbstractInputSuggest<T> {
+  app: unknown;
+  inputEl: unknown;
+
+  constructor(app: unknown, inputEl: unknown) {
+    this.app = app;
+    this.inputEl = inputEl;
+  }
+
+  getSuggestions(_query: string): T[] { return []; }
+  renderSuggestion(_value: T, _el: HTMLElement): void {}
+  selectSuggestion(_value: T): void {}
+  close(): void {}
+}
+
 export function normalizePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
 }

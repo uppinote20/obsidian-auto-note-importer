@@ -7,6 +7,7 @@
  *
  * @handbook 5.1-ui-components
  * @handbook 4.4-provider-abstraction
+ * @tested tests/ui/settings-tab-verification-cache.test.ts
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
@@ -45,16 +46,18 @@ export interface SettingsPlugin extends Plugin {
 /**
  * Transient UI state for the credential add/edit form. Tracks whether
  * the active form has a pending setup requirement (e.g. Supabase RPC
- * not installed), references to the banner host element and Save button,
- * in-flight guards to prevent concurrent click races, and a cleanups
- * array for any event listeners that must be detached when the form is
- * disposed or re-rendered (prevents listener accumulation across
- * type-switches and re-displays). Owned by the settings tab; reset via
- * resetCredentialFormUi() when a credential form opens, and torn down
- * (cleanups invoked) by display().
+ * not installed), the recent successful setup verification fingerprint,
+ * references to the banner host element and Save button, in-flight guards
+ * to prevent concurrent click races, and a cleanups array for any event
+ * listeners that must be detached when the form is disposed or re-rendered
+ * (prevents listener accumulation across type-switches and re-displays).
+ * Owned by the settings tab; reset via resetCredentialFormUi() when a
+ * credential form opens, and torn down (cleanups invoked) by display().
  */
 interface CredentialFormUiState {
   setupRequirement: SetupRequirement | null;
+  lastVerifiedAt: number | null;
+  lastVerifiedFingerprint: string | null;
   bannerHost: HTMLElement | null;
   saveButton: HTMLButtonElement | null;
   testButton: HTMLButtonElement | null;
@@ -67,6 +70,8 @@ interface CredentialFormUiState {
  * Settings tab for the Auto Note Importer plugin.
  */
 export class AutoNoteImporterSettingTab extends PluginSettingTab {
+  private static readonly SETUP_VERIFICATION_FRESH_MS = 60_000;
+
   plugin: SettingsPlugin;
   private fieldCache: FieldCache;
   private seatableMetadataCache: SeaTableMetadataCache;
@@ -389,6 +394,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // type-switches (which re-call renderCredentialAddDetails on the
     // same containerEl) would accumulate listeners.
     const inputResetHandler = (): void => {
+      this.invalidateCredentialFormVerification();
       if (this.credentialFormUi?.setupRequirement) {
         this.clearFormSetupRequirement();
       }
@@ -523,6 +529,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // type-switches (which re-call renderCredentialAddDetails on the
     // same containerEl) would accumulate listeners.
     const inputResetHandler = (): void => {
+      this.invalidateCredentialFormVerification();
       if (this.credentialFormUi?.setupRequirement) {
         this.clearFormSetupRequirement();
       }
@@ -599,10 +606,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     try {
       const result = await renderer.testConnection(credential);
       if (!result.success) {
+        this.invalidateCredentialFormVerification();
         new Notice(`Auto Note Importer: Connection failed \u2014 ${result.error}`);
         return;
       }
       if (result.needsSetup) {
+        this.invalidateCredentialFormVerification();
         // Suppress the "Connection OK" Notice \u2014 the inline banner is the
         // contextual surface. Render banner inside form host, disable
         // Save until verify succeeds.
@@ -615,9 +624,11 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       if (this.credentialFormUi?.setupRequirement) {
         this.clearFormSetupRequirement();
       }
+      this.markCredentialVerified(credential);
       const detail = result.detail ? ` ${result.detail}` : '';
       new Notice(`Auto Note Importer: Connection OK.${detail}`);
     } catch (error) {
+      this.invalidateCredentialFormVerification();
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Connection test errored \u2014 ${message}`);
     } finally {
@@ -1301,6 +1312,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       banner,
       credential,
       () => {
+        this.markCredentialVerified(credential);
         new Notice('Auto Note Importer: Setup confirmed — you can save now.');
         onSuccess();   // clearFormSetupRequirement removes the host (covers banner)
       },
@@ -1347,6 +1359,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     this.tearDownCredentialFormUi();
     this.credentialFormUi = {
       setupRequirement: null,
+      lastVerifiedAt: null,
+      lastVerifiedFingerprint: null,
       bannerHost: null,
       saveButton: null,
       testButton: null,
@@ -1419,6 +1433,12 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     formHostEl: HTMLElement,
   ): Promise<'proceed' | 'blocked'> {
     if (!renderer.verifySetup) return 'proceed';
+    if (this.hasRecentCredentialVerification(credential)) {
+      if (this.credentialFormUi?.setupRequirement) {
+        this.clearFormSetupRequirement();
+      }
+      return 'proceed';
+    }
     if (this.credentialFormUi?.isSaving) return 'blocked';   // re-entry guard
     if (this.credentialFormUi) this.credentialFormUi.isSaving = true;
 
@@ -1437,13 +1457,16 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     try {
       const result = await renderer.verifySetup(credential);
       if (!result.success) {
+        this.invalidateCredentialFormVerification();
         new Notice(`Auto Note Importer: Could not verify setup before save — ${result.error}`);
         return 'blocked';
       }
       if (result.needsSetup) {
+        this.invalidateCredentialFormVerification();
         this.renderSetupBannerForRequirement(result.needsSetup, credential, formHostEl);
         return 'blocked';
       }
+      this.markCredentialVerified(credential);
       // Save-time verify can also clear a stale banner — e.g. user
       // installed the RPC externally then clicked Save without Verify
       // first (Codex P2, PR #92).
@@ -1452,6 +1475,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       }
       return 'proceed';
     } catch (error) {
+      this.invalidateCredentialFormVerification();
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Could not verify setup before save — ${message}`);
       return 'blocked';
@@ -1468,6 +1492,60 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         saveBtn.textContent = originalSaveText ?? 'Save';
       }
     }
+  }
+
+  private hasRecentCredentialVerification(credential: Credential): boolean {
+    if (!this.credentialFormUi?.lastVerifiedAt || !this.credentialFormUi.lastVerifiedFingerprint) {
+      return false;
+    }
+    const ageMs = Date.now() - this.credentialFormUi.lastVerifiedAt;
+    return (
+      ageMs >= 0 &&
+      ageMs <= AutoNoteImporterSettingTab.SETUP_VERIFICATION_FRESH_MS &&
+      this.credentialFormUi.lastVerifiedFingerprint === this.getCredentialVerificationFingerprint(credential)
+    );
+  }
+
+  private markCredentialVerified(credential: Credential): void {
+    if (!this.credentialFormUi) return;
+    this.credentialFormUi.lastVerifiedAt = Date.now();
+    this.credentialFormUi.lastVerifiedFingerprint = this.getCredentialVerificationFingerprint(credential);
+  }
+
+  private invalidateCredentialFormVerification(): void {
+    if (!this.credentialFormUi) return;
+    this.credentialFormUi.lastVerifiedAt = null;
+    this.credentialFormUi.lastVerifiedFingerprint = null;
+  }
+
+  private getCredentialVerificationFingerprint(credential: Credential): string {
+    const parts = (() => {
+      switch (credential.type) {
+        case 'airtable':
+          return [credential.type, credential.apiKey];
+        case 'seatable':
+          return [credential.type, credential.serverUrl, credential.apiToken];
+        case 'supabase':
+          return [credential.type, credential.projectUrl, credential.apiKey];
+        case 'notion':
+          return [credential.type, credential.integrationToken];
+        case 'custom-api':
+          return [credential.type, credential.baseUrl, credential.authHeader, credential.authValue];
+        default: {
+          const _exhaustive: never = credential;
+          return [_exhaustive];
+        }
+      }
+    })();
+    return AutoNoteImporterSettingTab.hashCredentialFingerprint(parts.map(p => p.trim()).join('\0'));
+  }
+
+  private static hashCredentialFingerprint(value: string): string {
+    let hash = 0;
+    for (let i = 0; i < value.length; i++) {
+      hash = (hash * 31 + value.charCodeAt(i)) % 2147483647;
+    }
+    return hash.toString(36);
   }
 
   /**
