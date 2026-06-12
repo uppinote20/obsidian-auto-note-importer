@@ -52,9 +52,18 @@ export interface FieldTypeMapper {
 
   /**
    * Returns true if the field type is read-only (computed or system-assigned).
-   * Used by frontmatter-parser to exclude fields from push payloads.
+   * Read-only is not the whole push-safety contract: some writable provider
+   * types still have object-shaped API values that cannot round-trip from
+   * frontmatter scalars.
    */
   isReadOnly(providerType: string): boolean;
+
+  /**
+   * Returns true if frontmatter values of this provider type can be safely sent
+   * back to the remote API. Stricter than `!isReadOnly`: rejects unknown and
+   * object-shaped provider types that cannot be reconstructed from YAML values.
+   */
+  isPushable(providerType: string): boolean;
 
   /**
    * Returns true if the field type is usable as a filename value.

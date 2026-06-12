@@ -110,6 +110,12 @@ class SeaTableFieldMapperImpl implements FieldTypeMapper {
     return (READ_ONLY_TYPES as readonly string[]).includes(providerType);
   }
 
+  isPushable(providerType: string): boolean {
+    if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, providerType)) return false;
+    if (TYPE_TO_STANDARD[providerType] === 'unknown') return false;
+    return !this.isReadOnly(providerType) && !OBJECT_SHAPED_TYPES.has(providerType);
+  }
+
   isFilenameSafe(providerType: string): boolean {
     return (FILENAME_SAFE_TYPES as readonly string[]).includes(providerType);
   }

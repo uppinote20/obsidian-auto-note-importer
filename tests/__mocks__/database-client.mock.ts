@@ -23,6 +23,7 @@ export type MockDatabaseProvider = {
 const NOOP_MAPPER: FieldTypeMapper = {
   mapToStandardType: () => 'unknown',
   isReadOnly: () => true,      // unknown → read-only (matches production fail-closed)
+  isPushable: () => false,     // unknown → not pushable
   isFilenameSafe: () => false, // unknown → not filename-safe
   isSubfolderSafe: () => false,// unknown → not subfolder-safe
   getFilenameSafeTypes: () => [],

@@ -106,6 +106,15 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
     return providerType.endsWith(READONLY_SUFFIX);
   }
 
+  isPushable(providerType: string): boolean {
+    const base = providerType.endsWith(READONLY_SUFFIX)
+      ? providerType.slice(0, -READONLY_SUFFIX.length)
+      : providerType;
+    if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, base)) return false;
+    if (TYPE_TO_STANDARD[base] === 'unknown') return false;
+    return !providerType.endsWith(READONLY_SUFFIX) && !OBJECT_SHAPED_TYPES.has(base);
+  }
+
   isFilenameSafe(providerType: string): boolean {
     return (FILENAME_SAFE_TYPES as readonly string[]).includes(providerType);
   }

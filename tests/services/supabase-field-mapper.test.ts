@@ -64,6 +64,50 @@ describe('supabaseFieldMapper.isReadOnly', () => {
   });
 });
 
+describe('supabaseFieldMapper.isPushable', () => {
+  it('returns true for writable scalar and primitive-array types', () => {
+    for (const t of [
+      'string',
+      'string:uuid',
+      'string:date',
+      'string:date-time',
+      'integer',
+      'integer:int32',
+      'integer:int64',
+      'number',
+      'number:float',
+      'number:double',
+      'boolean',
+      'array:string',
+      'array:integer',
+      'array:number',
+      'array:boolean',
+    ]) {
+      expect(supabaseFieldMapper.isPushable(t)).toBe(true);
+    }
+  });
+
+  it('returns false for readonly variants', () => {
+    for (const t of ['string:readonly', 'integer:int64:readonly', 'array:string:readonly']) {
+      expect(supabaseFieldMapper.isPushable(t)).toBe(false);
+    }
+  });
+
+  it('returns false for object-shaped writable types', () => {
+    for (const t of ['object', 'array:object', 'string:json', 'string:jsonb']) {
+      expect(supabaseFieldMapper.isReadOnly(t)).toBe(false);
+      expect(supabaseFieldMapper.isPushable(t)).toBe(false);
+      expect(supabaseFieldMapper.isPushable(`${t}:readonly`)).toBe(false);
+    }
+  });
+
+  it('returns false for unknown standard types and prototype-chain names', () => {
+    for (const t of ['string:byte', 'totally-unknown-type', '', 'toString', 'constructor', 'hasOwnProperty']) {
+      expect(supabaseFieldMapper.isPushable(t)).toBe(false);
+    }
+  });
+});
+
 describe('supabaseFieldMapper.isFilenameSafe', () => {
   it('accepts string, integer, and uuid (with optional readonly)', () => {
     for (const t of [

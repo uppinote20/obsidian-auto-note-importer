@@ -34,7 +34,7 @@ export class FrontmatterParser {
 
   /**
    * Extracts syncable fields from a file's frontmatter.
-   * Filters out system fields and read-only fields.
+   * Filters out system fields and fields that are unsafe to push.
    */
   extractSyncableFields(
     file: TFile,
@@ -60,10 +60,10 @@ export class FrontmatterParser {
       }
 
       // When field metadata is available, only sync fields that exist remotely
-      // and are writable (provider decides via its FieldTypeMapper)
+      // and can safely round-trip through the provider API.
       if (cachedFields) {
         const fieldInfo = cachedFields.find(f => f.name === key);
-        if (!fieldInfo || fieldTypeMapper.isReadOnly(fieldInfo.type)) {
+        if (!fieldInfo || !fieldTypeMapper.isPushable(fieldInfo.type)) {
           continue;
         }
       }

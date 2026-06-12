@@ -155,6 +155,7 @@ describe('provider-registry', () => {
       const fake = {
         mapToStandardType: () => 'text' as const,
         isReadOnly: () => false,
+        isPushable: () => true,
         isFilenameSafe: () => true,
         isSubfolderSafe: () => true,
         getFilenameSafeTypes: () => [],
