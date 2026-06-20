@@ -684,4 +684,36 @@ describe('SupabaseClient.batchUpdate composite PK + view-as-tableId guards (revi
     }
     expect(mockRequestUrl).not.toHaveBeenCalled();
   });
+
+  it('does not falsely reject a table whose only writable columns are object-shaped (#108: view guard counts writable, not pushable)', async () => {
+    const cache = new SupabaseMetadataCache();
+    // readonly PK + a single writable jsonb column. The table IS updatable
+    // (jsonb is a writable column), but jsonb is object-shaped so it must be
+    // omitted from the push — NOT reported as a non-updatable view.
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:   { type: 'string', format: 'uuid', readOnly: true },
+            data: { type: 'string', format: 'jsonb' },  // writable, object-shaped
+          },
+          required: ['id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+    const result = await c.batchUpdate([{ recordId: 'r1', fields: { data: 'user-edited json' } }]);
+
+    // Must succeed (not a "non-updatable view" failure)...
+    expect(result[0].success).toBe(true);
+    // ...and the object-shaped column is omitted from the upsert body so the
+    // structured remote value is preserved.
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0]).not.toHaveProperty('data');
+    expect(body[0]).toEqual({ id: 'r1' });
+  });
 });
