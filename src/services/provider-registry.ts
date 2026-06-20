@@ -11,6 +11,7 @@
  *
  * @handbook 4.4-provider-abstraction
  * @tested tests/services/provider-registry.test.ts
+ * @tested tests/services/mapper-parity.test.ts
  * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 

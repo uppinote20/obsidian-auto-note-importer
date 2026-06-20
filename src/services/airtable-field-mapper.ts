@@ -8,6 +8,7 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 7.3-read-only-field-protection
  * @tested tests/services/airtable-field-mapper.test.ts
+ * @tested tests/services/mapper-parity.test.ts
  */
 
 import type { FieldTypeMapper, StandardFieldType } from '../types';
