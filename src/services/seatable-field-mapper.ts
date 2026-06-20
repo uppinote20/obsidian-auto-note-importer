@@ -8,6 +8,7 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 7.3-read-only-field-protection
  * @tested tests/services/seatable-field-mapper.test.ts
+ * @tested tests/services/mapper-parity.test.ts
  * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
@@ -18,11 +19,11 @@ import type { FieldTypeMapper, StandardFieldType } from '../types';
 // `formula` appear here AND in READ_ONLY_TYPES below: they're great
 // stable identifiers but the sync pipeline must not push to them.
 const FILENAME_SAFE_TYPES = [
-  'text',
-  'single-select',
-  'number',
   'auto-number',
   'formula',
+  'number',
+  'single-select',
+  'text',
 ] as const;
 
 const READ_ONLY_TYPES = [

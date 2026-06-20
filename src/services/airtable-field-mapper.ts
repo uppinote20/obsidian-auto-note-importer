@@ -8,6 +8,7 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 7.3-read-only-field-protection
  * @tested tests/services/airtable-field-mapper.test.ts
+ * @tested tests/services/mapper-parity.test.ts
  */
 
 import type { FieldTypeMapper, StandardFieldType } from '../types';
@@ -16,10 +17,10 @@ import type { FieldTypeMapper, StandardFieldType } from '../types';
 // value is server-computed) but still safe to use as a filename source
 // because the computed value is stable and typically text-like.
 const FILENAME_SAFE_TYPES = [
+  'formula',
+  'number',
   'singleLineText',
   'singleSelect',
-  'number',
-  'formula',
 ] as const;
 
 const READ_ONLY_TYPES = [

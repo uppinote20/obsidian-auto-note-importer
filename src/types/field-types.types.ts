@@ -83,14 +83,16 @@ export interface FieldTypeMapper {
   isSubfolderSafe(providerType: string): boolean;
 
   /**
-   * Returns all known provider-specific types that pass `isFilenameSafe`.
-   * Enables UIs to enumerate the whitelist without guessing.
+   * Returns all known provider-specific types that pass `isFilenameSafe`,
+   * sorted and deduplicated. Enables UIs to enumerate the whitelist without
+   * guessing.
    */
   getFilenameSafeTypes(): readonly string[];
 
   /**
-   * Returns all known provider-specific types that pass `isSubfolderSafe`.
-   * Used by settings-tab to filter the subfolder field dropdown.
+   * Returns all known provider-specific types that pass `isSubfolderSafe`,
+   * sorted and deduplicated. Used by settings-tab to filter the subfolder
+   * field dropdown.
    */
   getSubfolderSafeTypes(): readonly string[];
 
