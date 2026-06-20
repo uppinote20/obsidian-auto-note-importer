@@ -1533,7 +1533,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           return [credential.type, credential.baseUrl, credential.authHeader, credential.authValue];
         default: {
           const _exhaustive: never = credential;
-          return [_exhaustive];
+          throw new Error(`Unknown credential type: ${String(_exhaustive)}`);
         }
       }
     })();
