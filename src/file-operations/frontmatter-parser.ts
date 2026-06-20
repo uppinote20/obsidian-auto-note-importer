@@ -35,6 +35,12 @@ export class FrontmatterParser {
   /**
    * Extracts syncable fields from a file's frontmatter.
    * Filters out system fields and fields that are unsafe to push.
+   *
+   * The `isPushable` gate only runs when `cachedFields` is provided. When it is
+   * `undefined` (cache miss, or a provider that supplies no field metadata),
+   * every non-system, non-null frontmatter value passes through — so object-shaped
+   * values could reach the API on a cold cache. Callers that need the guard must
+   * ensure field metadata is loaded first.
    */
   extractSyncableFields(
     file: TFile,
