@@ -155,7 +155,8 @@ function buildCredentialFromRecord(raw: Record<string, unknown>): Credential | u
   }
 
   const base = { id, name: readString(raw, 'name', '') };
-  switch (type as CredentialType) {
+  const credType = type as CredentialType;
+  switch (credType) {
     case 'airtable':
       return { ...base, type: 'airtable', apiKey: readString(raw, 'apiKey', '') };
     case 'seatable':
@@ -180,9 +181,11 @@ function buildCredentialFromRecord(raw: Record<string, unknown>): Credential | u
         authValue: readString(raw, 'authValue', ''),
       };
     default: {
-      // Compile-time exhaustiveness guard — unreachable at runtime (CREDENTIAL_TYPES.includes guards above).
-      const _exhaustive: never = type as never;
-      void _exhaustive;
+      // Real compile-time exhaustiveness guard: credType narrows to never once
+      // every CredentialType has a case. Returns undefined (not throw) so a
+      // malformed legacy setting is skipped rather than fatal — the
+      // CREDENTIAL_TYPES.includes() check above already gates the runtime path.
+      credType satisfies never;
       return undefined;
     }
   }

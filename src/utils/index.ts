@@ -34,4 +34,6 @@ export {
 
 export { debounce } from './debounce';
 
+export { assertNever } from './assert';
+
 export { migrateSettings, hydrateConfigDefaults } from './migration';

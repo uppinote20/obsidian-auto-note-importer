@@ -7,7 +7,7 @@
  */
 
 import { Notice } from "obsidian";
-import { areValuesEqual } from '../utils';
+import { areValuesEqual, assertNever } from '../utils';
 import type { LegacySettings, ConflictInfo, SyncResult, DatabaseProvider } from '../types';
 
 /**
@@ -80,10 +80,8 @@ export class ConflictResolver {
       case 'manual':
         return this.resolveManual(conflicts, recordId);
 
-      default: {
-        const _exhaustive: never = this.settings.conflictResolution;
-        throw new Error(`Unknown conflict resolution mode: ${_exhaustive}`);
-      }
+      default:
+        return assertNever(this.settings.conflictResolution, 'Unknown conflict resolution mode');
     }
   }
 
