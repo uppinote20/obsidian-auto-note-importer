@@ -34,6 +34,7 @@ import { FolderSuggest, FileSuggest } from './suggest';
 import { generateId } from '../utils/object-utils';
 import { validateFolderPath } from '../utils/validation';
 import { debounce } from '../utils/debounce';
+import { assertNever } from '../utils/assert';
 
 /**
  * Interface for the plugin that the settings tab needs.
@@ -1410,10 +1411,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }
         return;
       }
-      default: {
-        const _exhaustive: never = needsSetup.kind;
-        throw new Error(`Unhandled setup requirement kind: ${String(_exhaustive)}`);
-      }
+      default:
+        return assertNever(needsSetup.kind, 'Unhandled setup requirement kind');
     }
   }
 
@@ -1531,10 +1530,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           return [credential.type, credential.integrationToken];
         case 'custom-api':
           return [credential.type, credential.baseUrl, credential.authHeader, credential.authValue];
-        default: {
-          const _exhaustive: never = credential;
-          throw new Error(`Unknown credential type: ${String(_exhaustive)}`);
-        }
+        default:
+          return assertNever(credential, 'Unknown credential type');
       }
     })();
     return AutoNoteImporterSettingTab.hashCredentialFingerprint(parts.map(p => p.trim()).join('\0'));

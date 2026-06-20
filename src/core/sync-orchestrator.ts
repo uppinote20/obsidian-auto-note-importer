@@ -22,7 +22,7 @@ import { FieldCache } from '../services';
 import { ConflictResolver } from './conflict-resolver';
 import { FrontmatterParser, FileWatcher } from '../file-operations';
 import { parseTemplate, buildMarkdownContent, generateBasesContent, resolveBasesFilePath, collectFieldNames } from '../builders';
-import { sanitizeFileName, sanitizeSubfolderValue, validateAndSanitizeFilename } from '../utils';
+import { sanitizeFileName, sanitizeSubfolderValue, validateAndSanitizeFilename, assertNever } from '../utils';
 
 export interface StatusBarHandle {
   setText(text: string): void;
@@ -126,10 +126,8 @@ export class SyncOrchestrator {
           break;
         }
 
-        default: {
-          const _exhaustive: never = mode;
-          throw new Error(`Unknown sync mode: ${_exhaustive}`);
-        }
+        default:
+          assertNever(mode, 'Unknown sync mode');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -166,10 +164,8 @@ export class SyncOrchestrator {
         return this.collectMarkdownFiles(folder);
       }
 
-      default: {
-        const _exhaustive: never = scope;
-        throw new Error(`Unknown sync scope: ${_exhaustive}`);
-      }
+      default:
+        return assertNever(scope, 'Unknown sync scope');
     }
   }
 
