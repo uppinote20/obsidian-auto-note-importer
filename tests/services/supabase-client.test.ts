@@ -544,12 +544,12 @@ describe('SupabaseClient.batchUpdate type-aware coercion (Path A — frontmatter
     expect(body[0].tags).toEqual([]);
   });
 
-  it('coerces frontmatter "" to null for jsonb / json columns', async () => {
+  it('drops jsonb / json columns from the upsert body', async () => {
     mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
     const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), specWithTypes());
-    await c.batchUpdate([{ recordId: 'r1', fields: { meta: '' } }]);
+    await c.batchUpdate([{ recordId: 'r1', fields: { meta: 'user-edited json text' } }]);
     const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
-    expect(body[0].meta).toBeNull();
+    expect(body[0]).not.toHaveProperty('meta');
   });
 
   it('drops frontmatter "" for numeric / boolean / uuid columns (PostgREST would 400)', async () => {
@@ -606,7 +606,7 @@ describe('SupabaseClient.batchUpdate type-aware coercion (Path A — frontmatter
     expect(body[0]).not.toHaveProperty('b');
   });
 
-  it('coerces "" to null for plain `object` providerType (alternate jsonb shape)', async () => {
+  it('drops plain `object` providerType columns from the upsert body', async () => {
     const cache = new SupabaseMetadataCache();
     const spec = {
       definitions: {
@@ -623,9 +623,9 @@ describe('SupabaseClient.batchUpdate type-aware coercion (Path A — frontmatter
       .entries.set('c1:public', { spec, fetchedAt: Date.now() });
     mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
     const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
-    await c.batchUpdate([{ recordId: 'r1', fields: { data: '' } }]);
+    await c.batchUpdate([{ recordId: 'r1', fields: { data: 'user-edited object text' } }]);
     const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
-    expect(body[0].data).toBeNull();
+    expect(body[0]).not.toHaveProperty('data');
   });
 });
 
@@ -683,5 +683,37 @@ describe('SupabaseClient.batchUpdate composite PK + view-as-tableId guards (revi
       expect(result[0].error).toMatch(/non-updatable view|writable columns/i);
     }
     expect(mockRequestUrl).not.toHaveBeenCalled();
+  });
+
+  it('does not falsely reject a table whose only writable columns are object-shaped (#108: view guard counts writable, not pushable)', async () => {
+    const cache = new SupabaseMetadataCache();
+    // readonly PK + a single writable jsonb column. The table IS updatable
+    // (jsonb is a writable column), but jsonb is object-shaped so it must be
+    // omitted from the push — NOT reported as a non-updatable view.
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:   { type: 'string', format: 'uuid', readOnly: true },
+            data: { type: 'string', format: 'jsonb' },  // writable, object-shaped
+          },
+          required: ['id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+    const result = await c.batchUpdate([{ recordId: 'r1', fields: { data: 'user-edited json' } }]);
+
+    // Must succeed (not a "non-updatable view" failure)...
+    expect(result[0].success).toBe(true);
+    // ...and the object-shaped column is omitted from the upsert body so the
+    // structured remote value is preserved.
+    const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
+    expect(body[0]).not.toHaveProperty('data');
+    expect(body[0]).toEqual({ id: 'r1' });
   });
 });

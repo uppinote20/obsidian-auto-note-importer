@@ -25,9 +25,10 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   // {type: 'string', format: 'jsonb'/'json'}, but the runtime VALUE is a
   // parsed JS object/array (NOT a string) — see OBJECT_SHAPED_TYPES below.
   // Map as 'text' here so the fail-closed default doesn't reject them at
-  // the standard-type lookup; the type-aware coercion in SupabaseClient.
-  // batchUpdate handles "" → null for upserts; subfolder dropdown filters
-  // them out via OBJECT_SHAPED_TYPES because String(value) → '[object …]'.
+  // the standard-type lookup; push consumers (extractSyncableFields +
+  // SupabaseClient.batchUpdate) exclude them via isPushable() / OBJECT_SHAPED_TYPES
+  // before they reach the upsert body, and the subfolder dropdown filters them
+  // out via OBJECT_SHAPED_TYPES because String(value) → '[object …]'.
   'string:jsonb': 'text',
   'string:json': 'text',
   'integer': 'number',
@@ -104,6 +105,15 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
       : providerType;
     if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, base)) return true;
     return providerType.endsWith(READONLY_SUFFIX);
+  }
+
+  isPushable(providerType: string): boolean {
+    const base = providerType.endsWith(READONLY_SUFFIX)
+      ? providerType.slice(0, -READONLY_SUFFIX.length)
+      : providerType;
+    if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, base)) return false;
+    if (TYPE_TO_STANDARD[base] === 'unknown') return false;
+    return !providerType.endsWith(READONLY_SUFFIX) && !OBJECT_SHAPED_TYPES.has(base);
   }
 
   isFilenameSafe(providerType: string): boolean {

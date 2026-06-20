@@ -122,6 +122,53 @@ describe('airtableFieldMapper', () => {
     });
   });
 
+  describe('isPushable', () => {
+    it('should return true for writable scalar types', () => {
+      for (const t of [
+        'singleLineText',
+        'multilineText',
+        'richText',
+        'email',
+        'phoneNumber',
+        'url',
+        'number',
+        'currency',
+        'percent',
+        'rating',
+        'duration',
+        'date',
+        'dateTime',
+        'checkbox',
+        'singleSelect',
+        'multipleSelects',
+      ]) {
+        expect(airtableFieldMapper.isPushable(t)).toBe(true);
+      }
+    });
+
+    it('should return false for read-only types', () => {
+      for (const t of airtableFieldMapper.getReadOnlyTypes()) {
+        expect(airtableFieldMapper.isPushable(t)).toBe(false);
+      }
+    });
+
+    it('should return false for object-shaped writable types', () => {
+      expect(airtableFieldMapper.isReadOnly('barcode')).toBe(false);
+      expect(airtableFieldMapper.isReadOnly('singleCollaborator')).toBe(false);
+      expect(airtableFieldMapper.isReadOnly('multipleCollaborators')).toBe(false);
+
+      expect(airtableFieldMapper.isPushable('barcode')).toBe(false);
+      expect(airtableFieldMapper.isPushable('singleCollaborator')).toBe(false);
+      expect(airtableFieldMapper.isPushable('multipleCollaborators')).toBe(false);
+    });
+
+    it('should fail closed for unknown and prototype-chain names', () => {
+      for (const t of ['bogusType', '', 'toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
+        expect(airtableFieldMapper.isPushable(t)).toBe(false);
+      }
+    });
+  });
+
   describe('isSubfolderSafe', () => {
     // Issue #98: subfolder allows a broad set of types — sanitizeSubfolderValue
     // handles any stringifiable input. Filename rules are stricter (OS rules).

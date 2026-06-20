@@ -162,6 +162,10 @@ export class SupabaseClient implements DatabaseProvider {
       const columns = this.metadataCache.getColumns(spec, tableName);
       const m = new Map<string, string>();
       for (const c of columns) {
+        // Map writable (non-read-only) columns. The view guard in batchUpdate
+        // treats an empty map as "non-updatable view", so this must reflect
+        // writability — NOT push-safety. Object-shaped writable columns are
+        // filtered later, at payload composition (#108).
         if (!supabaseFieldMapper.isReadOnly(c.providerType)) {
           m.set(c.name, c.providerType);
         }
@@ -181,7 +185,8 @@ export class SupabaseClient implements DatabaseProvider {
    * Coerce a frontmatter value into something PostgREST accepts for the
    * column's type. `note-builder` writes null → '""' (so the field stays
    * visible in Obsidian frontmatter), but PostgREST rejects empty strings
-   * for non-text columns (text[], jsonb, integer, boolean, etc.).
+   * for non-text columns (text[], integer, boolean, etc.). Object-shaped
+   * columns such as json/jsonb are filtered before this coercion step.
    *
    * Returns the symbol `SKIP_FIELD` when the field should be dropped from
    * the upsert body entirely (e.g. empty string for a numeric column).
@@ -190,9 +195,6 @@ export class SupabaseClient implements DatabaseProvider {
     if (value !== '') return value;  // only "" is the problem case
     if (!providerType) return value;
     if (providerType.startsWith('array:')) return [];      // empty PostgreSQL array
-    // jsonb/json — emitted as `string:jsonb` by the RPC fallback OR plain
-    // `object` by PostgREST's own OpenAPI for some configurations.
-    if (providerType === 'object' || /(:|^)json[b]?$/.test(providerType)) return null;
     // Only PLAIN `string` accepts "" legitimately (text/varchar/citext/etc).
     // Every formatted string variant (`string:date`, `string:date-time`,
     // `string:byte`, `string:uuid`) maps to a PG type that rejects ""  drop.
@@ -410,7 +412,13 @@ export class SupabaseClient implements DatabaseProvider {
         for (const [k, v] of Object.entries(u.fields)) {
           if (k === pk) continue;
           if (writableColumns && !writableColumns.has(k)) continue;
-          const coerced = this.coerceForSupabase(v, writableColumns?.get(k));
+          const providerType = writableColumns?.get(k);
+          // Writable but object-shaped (json/jsonb/object): omit from the upsert
+          // so the structured remote value is preserved. isPushable is applied
+          // here, at composition — not in loadWritableColumns, whose count feeds
+          // the non-updatable-view guard above (#108).
+          if (providerType && !supabaseFieldMapper.isPushable(providerType)) continue;
+          const coerced = this.coerceForSupabase(v, providerType);
           if (coerced === SupabaseClient.SKIP_FIELD) continue;
           filtered[k] = coerced;
         }

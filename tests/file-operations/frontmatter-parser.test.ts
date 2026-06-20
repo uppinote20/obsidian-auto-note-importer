@@ -179,6 +179,37 @@ Content here`;
       expect(result).not.toHaveProperty('primaryField');
     });
 
+    it('should exclude object-shaped fields even when the provider does not mark them read-only', () => {
+      const mockApp = {
+        metadataCache: {
+          getFileCache: vi.fn().mockReturnValue({
+            frontmatter: {
+              primaryField: 'rec123',
+              Name: 'Test',
+              Barcode: 'user-edited barcode',
+              Collaborator: 'Ada',
+              position: { start: { line: 0 }, end: { line: 5 } }
+            }
+          })
+        },
+        vault: { getAbstractFileByPath: vi.fn() }
+      };
+      const parser = new FrontmatterParser(mockApp as any);
+      const mockFile = { path: 'test.md' } as any;
+
+      const cachedFields = [
+        { id: 'fld1', name: 'Name', type: 'singleLineText' },
+        { id: 'fld2', name: 'Barcode', type: 'barcode' },
+        { id: 'fld3', name: 'Collaborator', type: 'singleCollaborator' }
+      ];
+
+      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, cachedFields);
+
+      expect(result).toEqual({ Name: 'Test' });
+      expect(airtableFieldMapper.isReadOnly('barcode')).toBe(false);
+      expect(airtableFieldMapper.isPushable('barcode')).toBe(false);
+    });
+
     it('should include all non-system fields when no cachedFields provided', () => {
       const mockApp = {
         metadataCache: {

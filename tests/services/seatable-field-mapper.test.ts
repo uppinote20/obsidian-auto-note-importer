@@ -108,6 +108,47 @@ describe('seatableFieldMapper', () => {
     });
   });
 
+  describe('isPushable', () => {
+    it('should return true for writable scalar types', () => {
+      for (const t of [
+        'text',
+        'long-text',
+        'email',
+        'url',
+        'number',
+        'duration',
+        'rate',
+        'date',
+        'checkbox',
+        'single-select',
+        'multiple-select',
+        'department-single-select',
+      ]) {
+        expect(seatableFieldMapper.isPushable(t)).toBe(true);
+      }
+    });
+
+    it('should return false for read-only types', () => {
+      for (const t of seatableFieldMapper.getReadOnlyTypes()) {
+        expect(seatableFieldMapper.isPushable(t)).toBe(false);
+      }
+    });
+
+    it('should return false for object-shaped writable types', () => {
+      expect(seatableFieldMapper.isReadOnly('collaborator')).toBe(false);
+      expect(seatableFieldMapper.isReadOnly('geolocation')).toBe(false);
+
+      expect(seatableFieldMapper.isPushable('collaborator')).toBe(false);
+      expect(seatableFieldMapper.isPushable('geolocation')).toBe(false);
+    });
+
+    it('should fail closed for unknown and prototype-chain names', () => {
+      for (const t of ['bogusType', '', 'toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
+        expect(seatableFieldMapper.isPushable(t)).toBe(false);
+      }
+    });
+  });
+
   describe('isSubfolderSafe', () => {
     it('should return true for stringifiable known SeaTable types', () => {
       // Excludes OBJECT_SHAPED_TYPES (collaborator / geolocation / button) —

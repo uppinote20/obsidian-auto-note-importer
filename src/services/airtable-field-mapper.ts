@@ -87,6 +87,10 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
 // select' / 'computed' / 'text' / 'system', String(value) produces
 // '[object Object],…' garbage for these. Manual exclusion list — must be
 // kept in sync with TYPE_TO_STANDARD when new object-shaped types arrive.
+// `button` / `aiText` / `externalSyncSource` / `lookup` also appear in
+// READ_ONLY_TYPES — `isPushable` already rejects them via `isReadOnly`, so
+// their entry here is belt-and-suspenders that also documents the object
+// shape for the subfolder filter.
 const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
   'singleCollaborator',
   'multipleCollaborators',
@@ -136,6 +140,12 @@ class AirtableFieldMapperImpl implements FieldTypeMapper {
     // .includes() check, returning false. See issue #98 fix.
     if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, providerType)) return true;
     return (READ_ONLY_TYPES as readonly string[]).includes(providerType);
+  }
+
+  isPushable(providerType: string): boolean {
+    if (!Object.prototype.hasOwnProperty.call(TYPE_TO_STANDARD, providerType)) return false;
+    if (TYPE_TO_STANDARD[providerType] === 'unknown') return false;
+    return !this.isReadOnly(providerType) && !OBJECT_SHAPED_TYPES.has(providerType);
   }
 
   isFilenameSafe(providerType: string): boolean {
