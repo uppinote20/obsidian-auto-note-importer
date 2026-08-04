@@ -55,7 +55,7 @@ export class ConfigInstance {
   private syncOrchestrator: SyncOrchestrator;
   private syncQueue: SyncQueue;
 
-  private schedulerIntervalId: ReturnType<typeof setInterval> | null = null;
+  private schedulerIntervalId: number | null = null;
 
   constructor(app: App, config: ConfigEntry, credential: Credential, shared: SharedServices) {
     this.configId = config.id;
@@ -205,8 +205,8 @@ export class ConfigInstance {
    */
   private startScheduler(config: ConfigEntry): void {
     if (config.syncInterval > 0) {
-      this.schedulerIntervalId = setInterval(
-        () => this.syncQueue.enqueue('pull', 'all'),
+      this.schedulerIntervalId = window.setInterval(
+        () => { void this.syncQueue.enqueue('pull', 'all'); },
         config.syncInterval * 60 * 1000,
       );
     }
@@ -217,7 +217,7 @@ export class ConfigInstance {
    */
   private stopScheduler(): void {
     if (this.schedulerIntervalId !== null) {
-      clearInterval(this.schedulerIntervalId);
+      window.clearInterval(this.schedulerIntervalId);
       this.schedulerIntervalId = null;
     }
   }
