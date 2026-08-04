@@ -130,7 +130,7 @@ export class SupabaseMetadataCache {
         json: err.json,
         text: err.text ?? '',
         arrayBuffer: new ArrayBuffer(0),
-      } as Awaited<ReturnType<typeof requestUrl>>;
+      };
     }
 
     if (response.status === 200) {
@@ -189,7 +189,7 @@ export class SupabaseMetadataCache {
         json: err.json,
         text: err.text ?? '',
         arrayBuffer: new ArrayBuffer(0),
-      } as Awaited<ReturnType<typeof requestUrl>>;
+      };
     }
 
     // PostgREST signals "function does not exist" specifically with code
@@ -219,7 +219,7 @@ export class SupabaseMetadataCache {
     if (definitions === null || typeof definitions !== 'object' || Array.isArray(definitions)) {
       throw new Error('Supabase RPC schema response was not a JSON object.');
     }
-    return { definitions: definitions as Record<string, SupabaseOpenApiSpec['definitions'][string]> } as SupabaseOpenApiSpec;
+    return { definitions: definitions as Record<string, SupabaseOpenApiSpec['definitions'][string]> };
   }
 
   async refresh(credential: SupabaseCredential, schema: string): Promise<void> {

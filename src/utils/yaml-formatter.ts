@@ -75,7 +75,7 @@ export function formatFieldForBases(key: string, value: unknown): string | null 
 
   // Handle objects
   if (typeof value === 'object') {
-    return `"[Object: ${Object.keys(value as object).slice(0, 3).join(', ')}]"`;
+    return `"[Object: ${Object.keys(value).slice(0, 3).join(', ')}]"`;
   }
 
   // Handle multiline strings

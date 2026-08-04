@@ -118,7 +118,7 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
   }
 
   isFilenameSafe(providerType: string): boolean {
-    return (FILENAME_SAFE_TYPES as readonly string[]).includes(providerType);
+    return FILENAME_SAFE_TYPES.includes(providerType);
   }
 
   /**
@@ -126,7 +126,7 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
    * :readonly variant) passes. Issue #98.
    */
   isSubfolderSafe(providerType: string): boolean {
-    return (SUBFOLDER_SAFE_TYPES as readonly string[]).includes(providerType);
+    return SUBFOLDER_SAFE_TYPES.includes(providerType);
   }
 
   getFilenameSafeTypes(): readonly string[] {
