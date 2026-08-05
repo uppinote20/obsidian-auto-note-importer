@@ -13,14 +13,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Notice } from 'obsidian';
 import type { AutoNoteImporterSettings, Credential, CredentialFormRenderer, SupabaseCredential } from '../../src/types';
-import { DEFAULT_SETTINGS } from '../../src/types';
-import { AutoNoteImporterSettingTab } from '../../src/ui/settings-tab';
-import {
-  FieldCache,
-  SeaTableMetadataCache,
-  SupabaseMetadataCache,
-  registerCredentialFormRenderer,
-} from '../../src/services';
+import type { SettingsTabHarness } from './settings-tab-test-utils';
+import { registerCredentialFormRenderer } from '../../src/services';
+import { createSettingsTabHarness } from './settings-tab-test-utils';
 
 const VERIFY_LABEL = 'I’ve run it — Verify';
 
@@ -38,23 +33,14 @@ type TestableSettingsTab = {
 
 function createTab(settings: Partial<AutoNoteImporterSettings> = {}): {
   tab: TestableSettingsTab;
-  plugin: { settings: AutoNoteImporterSettings; saveSettings: ReturnType<typeof vi.fn> };
+  plugin: SettingsTabHarness['plugin'];
 } {
-  const plugin = {
-    settings: { ...DEFAULT_SETTINGS, ...settings },
-    saveSettings: vi.fn().mockResolvedValue(undefined),
-  };
-  const tab = new AutoNoteImporterSettingTab(
-    {} as never,
-    plugin as never,
-    new FieldCache(),
-    new SeaTableMetadataCache(),
-    new SupabaseMetadataCache(),
-  ) as unknown as TestableSettingsTab;
+  const { tab, plugin } = createSettingsTabHarness(settings);
+  const testable = tab as TestableSettingsTab;
   // The real display() renders the whole settings panel through Obsidian's
   // DOM helpers, which the node test environment does not provide.
-  tab.display = vi.fn();
-  return { tab, plugin };
+  testable.display = vi.fn();
+  return { tab: testable, plugin };
 }
 
 /** Only `.disabled` / `.textContent` are touched — no DOM needed. */

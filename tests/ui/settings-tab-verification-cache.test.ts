@@ -4,9 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CredentialFormRenderer, SupabaseCredential } from '../../src/types';
-import { DEFAULT_SETTINGS } from '../../src/types';
-import { AutoNoteImporterSettingTab } from '../../src/ui/settings-tab';
-import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache } from '../../src/services';
+import { createSettingsTabHarness } from './settings-tab-test-utils';
 
 type TestableSettingsTab = {
   resetCredentialFormUi(): void;
@@ -24,17 +22,7 @@ type TestableSettingsTab = {
 };
 
 function createTab(): TestableSettingsTab {
-  const plugin = {
-    settings: { ...DEFAULT_SETTINGS },
-    saveSettings: vi.fn(),
-  };
-  const tab = new AutoNoteImporterSettingTab(
-    {} as never,
-    plugin as never,
-    new FieldCache(),
-    new SeaTableMetadataCache(),
-    new SupabaseMetadataCache(),
-  ) as unknown as TestableSettingsTab;
+  const tab = createSettingsTabHarness().tab as TestableSettingsTab;
   tab.resetCredentialFormUi();
   return tab;
 }

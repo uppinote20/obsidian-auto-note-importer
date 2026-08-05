@@ -1247,6 +1247,28 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
    * calling verifySetup — the user just ran the SQL, so the previous
    * 404 is stale by definition.
    */
+  /**
+   * Title + explanation shared by both RPC setup banners (connection card
+   * and credential form). The title is a styled div rather than an `h4`:
+   * raw headings inside a settings tab trip the directory scanner's
+   * heading rule, so the ARIA role carries the semantics instead — the
+   * rule matches the literal element, screen readers read the
+   * accessibility tree, and both stay satisfied (claude, PR #115).
+   * See the styles.css note on `.ani-rpc-setup-title`.
+   */
+  private renderRpcSetupBannerHeader(banner: HTMLElement): void {
+    banner.createDiv({
+      cls: 'ani-rpc-setup-title',
+      text: 'One-time setup required for publishable keys',
+      attr: { role: 'heading', 'aria-level': '4' },
+    });
+    banner.createEl('p').setText(
+      'Supabase’s new key system blocks publishable keys from reading the ' +
+      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
+      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
+    );
+  }
+
   private renderRpcSetupBannerCore(
     host: HTMLElement,
     credential: SupabaseCredential,
@@ -1351,20 +1373,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   ): void {
     host.empty();
     const banner = host.createDiv({ cls: 'ani-rpc-setup-banner' });
-    // ARIA role restores the heading semantics the styled div gave up to
-    // satisfy the directory scanner's heading rule — the rule matches the
-    // literal element, so screen readers still announce a level-4 heading
-    // (claude, PR #115). See the styles.css note on .ani-rpc-setup-title.
-    banner.createDiv({
-      cls: 'ani-rpc-setup-title',
-      text: 'One-time setup required for publishable keys',
-      attr: { role: 'heading', 'aria-level': '4' },
-    });
-    banner.createEl('p').setText(
-      'Supabase’s new key system blocks publishable keys from reading the ' +
-      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
-      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
-    );
+    this.renderRpcSetupBannerHeader(banner);
 
     const errorHost = banner.createDiv({ cls: 'ani-rpc-setup-error' });
 
@@ -1638,20 +1647,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   ): void {
     containerEl.empty();
     const banner = containerEl.createDiv({ cls: 'ani-rpc-setup-banner' });
-    // ARIA role restores the heading semantics the styled div gave up to
-    // satisfy the directory scanner's heading rule — the rule matches the
-    // literal element, so screen readers still announce a level-4 heading
-    // (claude, PR #115). See the styles.css note on .ani-rpc-setup-title.
-    banner.createDiv({
-      cls: 'ani-rpc-setup-title',
-      text: 'One-time setup required for publishable keys',
-      attr: { role: 'heading', 'aria-level': '4' },
-    });
-    banner.createEl('p').setText(
-      'Supabase’s new key system blocks publishable keys from reading the ' +
-      'OpenAPI schema. Run this SQL once in your Supabase SQL Editor — it ' +
-      'creates a SECURITY DEFINER function the plugin uses for schema introspection.',
-    );
+    this.renderRpcSetupBannerHeader(banner);
 
     this.renderRpcSetupBannerCore(
       banner,
