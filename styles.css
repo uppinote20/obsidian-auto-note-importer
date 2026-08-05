@@ -269,11 +269,16 @@
 
 /* ─── Delete Config ───────────────────────────────────────────────── */
 
-.ani-delete-config .setting-item-control .mod-warning {
+/* Obsidian 1.13 renamed the class Setting.setWarning() applies from
+   mod-warning to mod-destructive. Style both — the manifest supports
+   1.4.10+, so either class can show up depending on the host version. */
+.ani-delete-config .setting-item-control .mod-warning,
+.ani-delete-config .setting-item-control .mod-destructive {
   opacity: 0.8;
 }
 
-.ani-delete-config .setting-item-control .mod-warning:hover {
+.ani-delete-config .setting-item-control .mod-warning:hover,
+.ani-delete-config .setting-item-control .mod-destructive:hover {
   opacity: 1;
 }
 
@@ -281,7 +286,9 @@
 
 /* Banner title is a styled div (not an h4): raw heading elements inside
    a settings tab trip the directory scanner's heading rule, and the
-   Setting.setHeading() row form doesn't fit an inline warning banner. */
+   Setting.setHeading() row form doesn't fit an inline warning banner.
+   The div carries role="heading" aria-level="4" so assistive tech still
+   announces it as a heading — visual and semantic parity with the h4. */
 .ani-rpc-setup-banner .ani-rpc-setup-title {
   margin: 0 0 4px;
   font-size: var(--h4-size);
