@@ -150,6 +150,7 @@ Code ↔ Docs 양방향 링크 시스템:
 | Module structure | 4.1 |
 | Sync architecture | 4.2 |
 | Provider abstraction (multi-DB) | 4.4 |
+| Directory scanner conventions (window timers, async listeners, headings, minAppVersion) | 5.1 |
 | StatusBar abstraction | 5.3 |
 | Error handling (api-errors util) | 6.1 |
 | State management (SyncQueue) | 6.2 |

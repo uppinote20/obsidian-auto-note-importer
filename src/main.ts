@@ -151,7 +151,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'current');
         return true;
       },
     });
@@ -162,7 +162,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'all');
         return true;
       },
     });
@@ -174,7 +174,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'current');
         return true;
       },
     });
@@ -185,7 +185,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'modified');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'modified');
         return true;
       },
     });
@@ -196,7 +196,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'all');
         return true;
       },
     });
@@ -208,7 +208,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current');
         return true;
       },
     });
@@ -219,7 +219,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'modified');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'modified');
         return true;
       },
     });
@@ -230,7 +230,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'all');
         return true;
       },
     });

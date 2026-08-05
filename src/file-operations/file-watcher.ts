@@ -22,7 +22,7 @@ export class FileWatcher {
   private app: App;
   private settings: LegacySettings;
   private pendingFiles: Set<string> = new Set();
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private debounceTimer: number | null = null;
   private onFilesReady: FilesReadyCallback;
   private eventRef: EventRef | null = null;
   private externalSyncing = false;
@@ -83,7 +83,7 @@ export class FileWatcher {
       this.eventRef = null;
     }
     if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
+      window.clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
   }
@@ -119,24 +119,30 @@ export class FileWatcher {
    */
   private scheduleSync(): void {
     if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
+      window.clearTimeout(this.debounceTimer);
     }
 
-    this.debounceTimer = setTimeout(async () => {
-      if (!this.syncing && this.pendingFiles.size > 0) {
-        this.internalSyncing = true;
-        try {
-          const files = this.getPendingFiles();
-          await this.onFilesReady(files);
-          this.pendingFiles.clear();
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
-          new Notice(`Auto Note Importer: File sync failed: ${message}`);
-        } finally {
-          this.internalSyncing = false;
-        }
-      }
+    this.debounceTimer = window.setTimeout(() => {
+      void this.flushPendingFiles();
     }, this.getDebounceTime());
+  }
+
+  /**
+   * Delivers the debounced batch of pending files to the sync callback.
+   */
+  private async flushPendingFiles(): Promise<void> {
+    if (this.syncing || this.pendingFiles.size === 0) return;
+    this.internalSyncing = true;
+    try {
+      const files = this.getPendingFiles();
+      await this.onFilesReady(files);
+      this.pendingFiles.clear();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Auto Note Importer: File sync failed: ${message}`);
+    } finally {
+      this.internalSyncing = false;
+    }
   }
 
   /**

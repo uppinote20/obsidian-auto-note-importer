@@ -152,7 +152,7 @@ export class SupabaseClient implements DatabaseProvider {
         json: err.json,
         text: err.text ?? '',
         arrayBuffer: new ArrayBuffer(0),
-      } as Awaited<ReturnType<typeof requestUrl>>;
+      };
     }
   }
 

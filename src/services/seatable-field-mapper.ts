@@ -126,7 +126,7 @@ class SeaTableFieldMapperImpl implements FieldTypeMapper {
    * avoid `in TYPE_TO_STANDARD` prototype-chain leak. Issue #98.
    */
   isSubfolderSafe(providerType: string): boolean {
-    return (SUBFOLDER_SAFE_TYPES as readonly string[]).includes(providerType);
+    return SUBFOLDER_SAFE_TYPES.includes(providerType);
   }
 
   getFilenameSafeTypes(): readonly string[] {

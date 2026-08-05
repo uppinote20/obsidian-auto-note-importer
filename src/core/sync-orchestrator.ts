@@ -12,6 +12,7 @@
  * @tested tests/core/sync-orchestrator.test.ts
  * @tested e2e:tests/e2e/run-e2e.mjs
  * @tested e2e:tests/e2e/run-seatable-e2e.mjs
+ * @tested e2e:tests/e2e/run-supabase-e2e.mjs
  */
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
@@ -533,6 +534,6 @@ export class SyncOrchestrator {
   }
 
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => window.setTimeout(resolve, ms));
   }
 }

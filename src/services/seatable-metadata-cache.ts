@@ -235,7 +235,7 @@ export class SeaTableMetadataCache {
         json: err.json,
         text: err.text ?? '',
         arrayBuffer: new ArrayBuffer(0),
-      } as RequestUrlResponse;
+      };
     }
   }
 

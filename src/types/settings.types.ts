@@ -23,9 +23,16 @@ export type BasesFileLocation = 'vault-root' | 'synced-folder' | 'custom';
 export type SyncScope = 'current' | 'modified' | 'all';
 
 /**
- * Legacy single-config settings interface.
- * Used by services internally via ConfigInstance.buildSettingsFromConfig().
- * @deprecated Use AutoNoteImporterSettings (v3 multi-config) for plugin-level settings.
+ * Per-config resolved settings — the flat shape consumed by the service
+ * layer (SyncOrchestrator, FileWatcher, providers, ConflictResolver).
+ * Built from a ConfigEntry + Credential via `buildLegacySettings()`;
+ * see handbook §9.8.
+ *
+ * Named "legacy" for its lineage (the pre-multi-config plugin settings
+ * were this exact shape), but it is the supported internal service
+ * contract, not a deprecated API: plugin-level state lives in
+ * AutoNoteImporterSettings, while services deliberately stay
+ * single-config and receive this resolved shape.
  */
 export interface LegacySettings {
   apiKey: string;

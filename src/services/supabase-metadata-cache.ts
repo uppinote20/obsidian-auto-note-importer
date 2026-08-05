@@ -8,6 +8,8 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 9.6-api-patterns
  * @tested tests/services/supabase-metadata-cache.test.ts
+ * @tested e2e:tests/e2e/run-supabase-e2e.mjs
+ * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
  */
 
 import { requestUrl } from 'obsidian';
@@ -130,7 +132,7 @@ export class SupabaseMetadataCache {
         json: err.json,
         text: err.text ?? '',
         arrayBuffer: new ArrayBuffer(0),
-      } as Awaited<ReturnType<typeof requestUrl>>;
+      };
     }
 
     if (response.status === 200) {
@@ -189,7 +191,7 @@ export class SupabaseMetadataCache {
         json: err.json,
         text: err.text ?? '',
         arrayBuffer: new ArrayBuffer(0),
-      } as Awaited<ReturnType<typeof requestUrl>>;
+      };
     }
 
     // PostgREST signals "function does not exist" specifically with code
@@ -219,7 +221,7 @@ export class SupabaseMetadataCache {
     if (definitions === null || typeof definitions !== 'object' || Array.isArray(definitions)) {
       throw new Error('Supabase RPC schema response was not a JSON object.');
     }
-    return { definitions: definitions as Record<string, SupabaseOpenApiSpec['definitions'][string]> } as SupabaseOpenApiSpec;
+    return { definitions: definitions as Record<string, SupabaseOpenApiSpec['definitions'][string]> };
   }
 
   async refresh(credential: SupabaseCredential, schema: string): Promise<void> {

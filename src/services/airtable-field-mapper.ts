@@ -161,7 +161,7 @@ class AirtableFieldMapperImpl implements FieldTypeMapper {
    * 'toString' / 'constructor'. See issue #98.
    */
   isSubfolderSafe(providerType: string): boolean {
-    return (SUBFOLDER_SAFE_TYPES as readonly string[]).includes(providerType);
+    return SUBFOLDER_SAFE_TYPES.includes(providerType);
   }
 
   getFilenameSafeTypes(): readonly string[] {

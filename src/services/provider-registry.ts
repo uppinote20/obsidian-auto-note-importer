@@ -13,6 +13,7 @@
  * @tested tests/services/provider-registry.test.ts
  * @tested tests/services/mapper-parity.test.ts
  * @tested e2e:tests/e2e/run-seatable-e2e.mjs
+ * @tested e2e:tests/e2e/run-supabase-e2e.mjs
  */
 
 import type {

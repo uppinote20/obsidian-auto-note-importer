@@ -599,7 +599,10 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         const c = getContainer();
         const dangerHeading = Array.from(c.querySelectorAll('.setting-item-heading'))
           .find(h => h.textContent.includes('Danger'));
-        const deleteBtn = c.querySelector('.ani-delete-config .mod-warning');
+        // Obsidian 1.13 renamed the class Setting.setWarning() applies from
+        // mod-warning to mod-destructive. The plugin supports both (manifest
+        // minAppVersion 1.4.10), so accept either.
+        const deleteBtn = c.querySelector('.ani-delete-config .mod-warning, .ani-delete-config .mod-destructive');
 
         return JSON.stringify({
           hasDangerHeading: !!dangerHeading,
@@ -778,16 +781,17 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
-        // Inject a fake credential of an unsupported type. Supabase is in
-        // CREDENTIAL_TYPES but has no registered form renderer yet, so it
-        // exercises the "Edit not supported" fallback (provider-aware UI).
+        // Inject a fake credential of an unsupported type. Notion is in
+        // CREDENTIAL_TYPES but has no registered form renderer (epic #11),
+        // so it exercises the "Edit not supported" fallback (provider-aware
+        // UI). Previously this used Supabase — it shipped, so the premise
+        // moved to the next unimplemented provider.
         const fakeId = 'e2e-fake-unsupported-' + Date.now();
         const savedCreds = [...p.settings.credentials];
         p.settings.credentials.push({
           id: fakeId,
-          name: 'Fake Supabase',
-          type: 'supabase',
-          projectUrl: 'https://example.supabase.co',
+          name: 'Fake Notion',
+          type: 'notion',
           apiKey: 'x',
         });
 
@@ -813,11 +817,11 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
     });
 
     await test('credential / unsupported type shows Not yet supported and disabled Save', async () => {
-      // Picks `supabase` — defined in CREDENTIAL_TYPES but no registered
+      // Picks `notion` — defined in CREDENTIAL_TYPES but no registered
       // form renderer, so the dropdown still lists it but the form falls
       // back to the "Not yet supported" placeholder (§4.4 provider-aware
-      // settings UI). Switch to a different unsupported type if Supabase
-      // ever ships.
+      // settings UI). Switch to a different unsupported type if Notion
+      // ever ships (epic #11); `custom-api` is the next one up.
       const r = await run(`(async () => {
         ${HELPERS}
         await openSettingsTab();
@@ -827,7 +831,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         await new Promise(r => setTimeout(r, 300));
 
         const select = c.querySelector('.ani-credential-edit select');
-        select.value = 'supabase';
+        select.value = 'notion';
         select.dispatchEvent(new Event('change'));
         await new Promise(r => setTimeout(r, 400));
 

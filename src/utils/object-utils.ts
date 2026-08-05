@@ -49,8 +49,8 @@ export function areValuesEqual(value1: unknown, value2: unknown): boolean {
 
   // Handle objects
   if (typeof value1 === 'object' && typeof value2 === 'object') {
-    const keys1 = Object.keys(value1 as object);
-    const keys2 = Object.keys(value2 as object);
+    const keys1 = Object.keys(value1);
+    const keys2 = Object.keys(value2);
     if (keys1.length !== keys2.length) return false;
     return keys1.every(key =>
       areValuesEqual(

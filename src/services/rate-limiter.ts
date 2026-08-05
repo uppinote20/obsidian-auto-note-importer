@@ -158,7 +158,7 @@ export class RateLimiter {
    * @param ms Milliseconds to sleep
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => window.setTimeout(resolve, ms));
   }
 
 }

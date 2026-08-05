@@ -10,6 +10,7 @@
  * @handbook 7.3-read-only-field-protection
  * @tested tests/services/supabase-field-mapper.test.ts
  * @tested tests/services/mapper-parity.test.ts
+ * @tested e2e:tests/e2e/run-supabase-e2e.mjs
  */
 
 import type { FieldTypeMapper, StandardFieldType } from '../types';
@@ -118,7 +119,7 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
   }
 
   isFilenameSafe(providerType: string): boolean {
-    return (FILENAME_SAFE_TYPES as readonly string[]).includes(providerType);
+    return FILENAME_SAFE_TYPES.includes(providerType);
   }
 
   /**
@@ -126,7 +127,7 @@ class SupabaseFieldMapperImpl implements FieldTypeMapper {
    * :readonly variant) passes. Issue #98.
    */
   isSubfolderSafe(providerType: string): boolean {
-    return (SUBFOLDER_SAFE_TYPES as readonly string[]).includes(providerType);
+    return SUBFOLDER_SAFE_TYPES.includes(providerType);
   }
 
   getFilenameSafeTypes(): readonly string[] {
