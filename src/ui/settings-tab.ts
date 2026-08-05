@@ -9,6 +9,7 @@
  * @handbook 4.4-provider-abstraction
  * @tested tests/ui/settings-tab-verification-cache.test.ts
  * @tested tests/ui/settings-tab-handlers.test.ts
+ * @tested tests/ui/settings-tab-definitions.test.ts
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
