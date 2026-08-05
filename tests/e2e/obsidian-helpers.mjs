@@ -125,13 +125,16 @@ export function buildSettingsHarnessHelpers({ pluginId }) {
       return app.setting.pluginTabs.find(t => t.id === '${pluginId}');
     }
 
-    // Render through whichever path the host actually uses, mirroring the
-    // plugin's own requestRerender(). Calling display() unconditionally
-    // would force the imperative tree even on Obsidian 1.13+, so the suites
-    // would never exercise the declarative path the host really renders.
+    // Call the plugin's own dispatch rather than re-deriving it here.
+    // TypeScript privacy is erased at runtime, so the suites exercise the
+    // real render-path decision instead of a copy that can drift out of
+    // sync. (Calling display() unconditionally, as this used to, forced the
+    // imperative tree even on Obsidian 1.13+ — so the declarative path the
+    // host actually renders was never under test.)
+    // NOTE: no backticks anywhere in this file — these helpers are injected
+    // as a template literal, so a backtick here terminates the string.
     function renderTab(tab) {
-      if (typeof tab.update === 'function') tab.update();
-      else tab.display();
+      tab.requestRerender();
     }
 
     async function openSettingsTab() {

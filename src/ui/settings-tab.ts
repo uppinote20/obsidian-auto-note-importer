@@ -209,90 +209,85 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
    * registration purely to build the search index, with no render to follow.
    */
   getSettingDefinitions(): SettingDefinitionItem[] {
-    const groups: SettingDefinitionItem[] = [
-      {
-        // No `heading` — renderCredentialsSection draws its own, and the
-        // group heading would render a second copy above it.
-        type: 'group',
-        items: [{
-          name: 'Credentials',
-          desc: 'API keys and tokens for Airtable, SeaTable, and Supabase.',
-          aliases: ['api key', 'api token', 'airtable', 'seatable', 'supabase', 'credential'],
-          render: (setting) => {
-            const host = this.claimSettingHost(setting);
-            this.renderCredentialsSection(host);
-            // The credential form registers listeners on the host it just
-            // built; tearing it down here keeps a re-render from stacking
-            // duplicates the way display() avoids via tearDown + empty().
-            return () => this.tearDownCredentialFormUi();
-          },
-        }],
-      },
-      {
-        type: 'group',
-        items: [{
-          name: 'Debug logging',
-          desc: 'Verbose sync logging to the developer console.',
-          aliases: ['debug', 'log', 'console'],
-          // No cleanup returned: this section registers no listeners
-          // outside the host DOM, which the next render empties anyway.
-          render: (setting) => {
-            this.renderDebugSettings(this.claimSettingHost(setting));
-          },
-        }],
-      },
-      {
-        type: 'group',
-        items: [{
-          name: 'Sync configurations',
-          desc: 'Per-configuration connection, file, Bases, and bidirectional sync settings.',
-          aliases: ['config', 'sync', 'folder', 'template', 'bases', 'bidirectional', 'conflict'],
-          // No cleanup returned: same as Debug — nothing outlives the host
-          // DOM. Only the credential form registers listeners that need an
-          // explicit tear-down.
-          render: (setting) => {
-            const host = this.claimSettingHost(setting);
-            this.renderTabBar(host);
+    return [
+      this.defineSection({
+        name: 'Credentials',
+        desc: 'API keys and tokens for Airtable, SeaTable, and Supabase.',
+        aliases: ['api key', 'api token', 'airtable', 'seatable', 'supabase', 'credential'],
+        render: (host) => {
+          this.renderCredentialsSection(host);
+          // The credential form registers listeners on the host it just
+          // built; tearing it down keeps a re-render from stacking
+          // duplicates the way display() avoids via tearDown + empty().
+          return () => this.tearDownCredentialFormUi();
+        },
+      }),
+      this.defineSection({
+        name: 'Debug logging',
+        desc: 'Verbose sync logging to the developer console.',
+        aliases: ['debug', 'log', 'console'],
+        render: (host) => { this.renderDebugSettings(host); },
+      }),
+      this.defineSection({
+        name: 'Sync configurations',
+        desc: 'Per-configuration connection, file, Bases, and bidirectional sync settings.',
+        aliases: ['config', 'sync', 'folder', 'template', 'bases', 'bidirectional', 'conflict'],
+        render: (host) => {
+          this.renderTabBar(host);
 
-            const config = this.activeConfig;
-            const credential = this.activeCredential;
-            if (!config || !credential) {
-              if (this.plugin.settings.configs.length === 0) {
-                new Setting(host)
-                  .setName('No configuration')
-                  .setDesc('Add a configuration using the + tab above.');
-              }
-              return;
+          const config = this.activeConfig;
+          const credential = this.activeCredential;
+          if (!config || !credential) {
+            if (this.plugin.settings.configs.length === 0) {
+              new Setting(host)
+                .setName('No configuration')
+                .setDesc('Add a configuration using the + tab above.');
             }
+            return;
+          }
 
-            // Async connection cards capture this generation and bail if
-            // it moved, so a declarative re-render must invalidate the
-            // previous render's in-flight fetch. Bumped here rather than in
-            // getSettingDefinitions() because only the render callback runs
-            // on an actual render — the definitions are also built for
-            // search indexing alone. Narrower than display()'s
-            // unconditional bump, which is fine: every async card lives
-            // inside renderConfigCardStack, below this guard.
-            this.renderGeneration++;
-            this.renderConfigHeader(host, config);
-            this.renderConfigCardStack(host, config, credential);
-            this.renderDeleteConfigButton(host, config);
-          },
-        }],
-      },
+          // Invalidate the previous render's in-flight card fetches. Bumped
+          // here rather than in getSettingDefinitions() because only the
+          // render callback runs on an actual render — the definitions are
+          // also built for search indexing alone.
+          this.renderGeneration++;
+          this.renderConfigHeader(host, config);
+          this.renderConfigCardStack(host, config, credential);
+          this.renderDeleteConfigButton(host, config);
+        },
+      }),
     ];
-    return groups;
   }
 
   /**
-   * Turns a declarative setting row into a plain container for the imperative
-   * renderers. They build their own headings and layout, so the row's default
-   * name/control scaffolding is cleared out first.
+   * Wraps one imperative renderer as a searchable declarative section.
+   *
+   * No group `heading`: every renderer draws its own, and a group heading
+   * would render a second copy above it. The renderer is handed a plain
+   * container — the setting row's default name/control scaffolding is
+   * cleared first — and may return a cleanup function for anything that
+   * outlives that DOM (only the credential form's listeners do).
    */
-  private claimSettingHost(setting: Setting): HTMLElement {
-    setting.settingEl.empty();
-    setting.settingEl.addClass('ani-declarative-host');
-    return setting.settingEl;
+  private defineSection(section: {
+    name: string;
+    desc: string;
+    aliases: string[];
+    render: (host: HTMLElement) => void | (() => void);
+  }): SettingDefinitionItem {
+    const { name, desc, aliases, render } = section;
+    return {
+      type: 'group',
+      items: [{
+        name,
+        desc,
+        aliases,
+        render: (setting) => {
+          setting.settingEl.empty();
+          setting.settingEl.addClass('ani-declarative-host');
+          return render(setting.settingEl);
+        },
+      }],
+    };
   }
 
   display(): void {
