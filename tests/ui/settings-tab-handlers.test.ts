@@ -10,14 +10,23 @@
  * @covers src/ui/settings-tab.ts
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Notice } from 'obsidian';
 import type { AutoNoteImporterSettings, Credential, CredentialFormRenderer, SupabaseCredential } from '../../src/types';
 import type { SettingsTabHarness } from './settings-tab-test-utils';
-import { registerCredentialFormRenderer } from '../../src/services';
+import { getCredentialFormRenderer, registerCredentialFormRenderer } from '../../src/services';
 import { createSettingsTabHarness } from './settings-tab-test-utils';
 
 const VERIFY_LABEL = 'I’ve run it — Verify';
+
+// `registerRenderer` swaps the real Supabase renderer out of the module-level
+// provider registry. Vitest isolates modules per file, so this cannot leak into
+// other specs — but restore it anyway so a future describe block in this file
+// starts from the production registration rather than the last mock.
+const realSupabaseRenderer = getCredentialFormRenderer('supabase');
+afterAll(() => {
+  registerCredentialFormRenderer('supabase', realSupabaseRenderer);
+});
 
 type TestableSettingsTab = {
   display: () => void;
