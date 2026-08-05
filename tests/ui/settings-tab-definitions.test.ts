@@ -23,6 +23,8 @@ type TestableSettingsTab = {
   getSettingDefinitions(): SettingDefinitionItem[];
   renderGeneration: number;
   display: () => void;
+  requestRerender(): void;
+  update?: () => void;
 };
 
 const CREDENTIAL: Credential = {
@@ -83,13 +85,40 @@ describe('getSettingDefinitions', () => {
     expect(leafNames(tab.getSettingDefinitions())).toEqual(leafNames(tab.getSettingDefinitions()));
   });
 
+  it('re-renders through update() when the host provides it (1.13+)', () => {
+    // Calling display() here would empty() the container the declarative
+    // host owns and repaint the imperative tree outside its lifecycle, so
+    // the declarative structure would last only until the first click.
+    const tab = createTab();
+    tab.update = vi.fn();
+
+    tab.requestRerender();
+
+    expect(tab.update).toHaveBeenCalledTimes(1);
+    expect(tab.display).not.toHaveBeenCalled();
+  });
+
+  it('falls back to display() on hosts without update() (pre-1.13)', () => {
+    const tab = createTab();
+    expect(tab.update).toBeUndefined();
+
+    tab.requestRerender();
+
+    // Exactly once — an early version of this helper recursed into itself
+    // here and blew the stack on every pre-1.13 re-render.
+    expect(tab.display).toHaveBeenCalledTimes(1);
+  });
+
   it('omits group headings so the imperative renderers own their own', () => {
     // renderCredentialsSection() and friends draw their own headings; a group
     // heading would render a second copy above them (observed on 1.13.4).
+    // Read the key directly — `'heading' in def` is false for every current
+    // group, so an `in` guard would make this assert nothing at all.
     const defs = createTab().getSettingDefinitions();
 
+    expect(defs.length).toBeGreaterThan(0);
     for (const def of defs) {
-      if ('heading' in def) expect(def.heading).toBeUndefined();
+      expect((def as Record<string, unknown>).heading).toBeUndefined();
     }
   });
 });

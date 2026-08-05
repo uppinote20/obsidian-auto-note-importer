@@ -244,7 +244,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         const tab = getSettingsTab();
         await openSettingsTab();
         tab.editingCredentialId = '${E2E_CRED_ID}';
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 300));
 
         const c = getContainer();
@@ -252,7 +252,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         const testBtn = Array.from(c.querySelectorAll('button')).find(b => b.textContent === 'Test');
 
         tab.editingCredentialId = null;
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 200));
 
         return JSON.stringify({

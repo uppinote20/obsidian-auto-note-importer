@@ -130,12 +130,36 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     return this.plugin.settings.credentials.find(c => c.id === config.credentialId);
   }
 
+  /**
+   * Re-render the tab through whichever path the host is actually using.
+   *
+   * Every interaction handler must go through here, never `display()`
+   * directly: on Obsidian >= 1.13 the tab is rendered from
+   * `getSettingDefinitions()`, and calling `display()` would `empty()` the
+   * container the host owns and repaint the imperative tree outside the
+   * settings-definition lifecycle — the declarative structure would survive
+   * only until the user's first click.
+   *
+   * `update()` re-reads the definitions and repaints; it does not exist
+   * before 1.13, where `display()` is the real render path.
+   */
+  private requestRerender(): void {
+    const update = (this as { update?: () => void }).update;
+    if (typeof update === 'function') {
+      update.call(this);
+      return;
+    }
+    // The pre-1.13 render path. This is the one place display() may still
+    // be called directly — everywhere else must route through here.
+    this.display();
+  }
+
   private debounceDisplay(delay = 100): void {
     if (this.debounceTimer) {
       window.clearTimeout(this.debounceTimer);
     }
     this.debounceTimer = window.setTimeout(() => {
-      this.display();
+      this.requestRerender();
     }, delay);
   }
 
@@ -210,6 +234,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           name: 'Debug logging',
           desc: 'Verbose sync logging to the developer console.',
           aliases: ['debug', 'log', 'console'],
+          // No cleanup returned: this section registers no listeners
+          // outside the host DOM, which the next render empties anyway.
           render: (setting) => {
             this.renderDebugSettings(this.claimSettingHost(setting));
           },
@@ -221,6 +247,9 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           name: 'Sync configurations',
           desc: 'Per-configuration connection, file, Bases, and bidirectional sync settings.',
           aliases: ['config', 'sync', 'folder', 'template', 'bases', 'bidirectional', 'conflict'],
+          // No cleanup returned: same as Debug — nothing outlives the host
+          // DOM. Only the credential form registers listeners that need an
+          // explicit tear-down.
           render: (setting) => {
             const host = this.claimSettingHost(setting);
             this.renderTabBar(host);
@@ -236,9 +265,14 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
               return;
             }
 
-            // Async connection cards capture this generation and bail if it
-            // moved, so bump it here exactly as display() does — a declarative
-            // re-render must invalidate the previous render's in-flight fetch.
+            // Async connection cards capture this generation and bail if
+            // it moved, so a declarative re-render must invalidate the
+            // previous render's in-flight fetch. Bumped here rather than in
+            // getSettingDefinitions() because only the render callback runs
+            // on an actual render — the definitions are also built for
+            // search indexing alone. Narrower than display()'s
+            // unconditional bump, which is fine: every async card lives
+            // inside renderConfigCardStack, below this guard.
             this.renderGeneration++;
             this.renderConfigHeader(host, config);
             this.renderConfigCardStack(host, config, credential);
@@ -407,7 +441,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       const addBtn = addContainer.createEl('button', { text: '+ Add credential' });
       addBtn.addEventListener('click', () => {
         this.addingCredential = true;
-        this.display();
+        this.requestRerender();
       });
     }
   }
@@ -433,7 +467,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       const setLink = keyCell.createSpan({ cls: 'ani-cred-key-set', text: 'Set credential' });
       setLink.addEventListener('click', () => {
         this.editingCredentialId = cred.id;
-        this.display();
+        this.requestRerender();
       });
     } else {
       keyCell.createSpan({ cls: 'ani-cred-key-na', text: '\u2014' });
@@ -446,7 +480,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     editBtn.title = 'Edit credential';
     editBtn.addEventListener('click', () => {
       this.editingCredentialId = cred.id;
-      this.display();
+      this.requestRerender();
     });
 
     const isPendingDelete = this.pendingDeleteCredentialId === cred.id;
@@ -472,13 +506,13 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         return;
       }
       this.pendingDeleteCredentialId = cred.id;
-      this.display();
+      this.requestRerender();
       return;
     }
     this.pendingDeleteCredentialId = null;
     this.plugin.settings.credentials = this.plugin.settings.credentials.filter(c => c.id !== cred.id);
     await this.plugin.saveSettings();
-    this.display();
+    this.requestRerender();
   }
 
   private renderCredentialEditRow(containerEl: HTMLElement, cred: Credential): void {
@@ -543,7 +577,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           }
           await this.plugin.saveSettings();
           this.editingCredentialId = null;
-          this.display();
+          this.requestRerender();
         });
       })
       .addButton(button => {
@@ -564,7 +598,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .setButtonText('Cancel')
         .onClick(() => {
           this.editingCredentialId = null;
-          this.display();
+          this.requestRerender();
         }));
   }
 
@@ -626,7 +660,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .onClick(() => {
             this.addingCredential = false;
             this.addingCredentialType = 'airtable';
-            this.display();
+            this.requestRerender();
           }));
       return;
     }
@@ -675,7 +709,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           this.addingCredential = false;
           this.addingCredentialType = 'airtable';
-          this.display();
+          this.requestRerender();
         });
       })
       .addButton(button => {
@@ -697,7 +731,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .onClick(() => {
           this.addingCredential = false;
           this.addingCredentialType = 'airtable';
-          this.display();
+          this.requestRerender();
         }));
   }
 
@@ -789,14 +823,14 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private async activateConfig(configId: string): Promise<void> {
     this.plugin.settings.activeConfigId = configId;
     await this.plugin.saveSettings();
-    this.display();
+    this.requestRerender();
   }
 
   private async addConfigFromTabBar(): Promise<void> {
     if (this.plugin.settings.credentials.length === 0) {
       new Notice('Auto Note Importer: Add a credential first before creating a configuration.');
       this.addingCredential = true;
-      this.display();
+      this.requestRerender();
       return;
     }
     const { configs } = this.plugin.settings;
@@ -813,7 +847,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     this.plugin.settings.configs.push(newConfig);
     this.plugin.settings.activeConfigId = newConfig.id;
     await this.plugin.saveSettings();
-    this.display();
+    this.requestRerender();
   }
 
   // ─── Config Header ─────────────────────────────────────────────────
@@ -895,7 +929,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           .onClick(async () => {
             if (!isPending) {
               this.pendingDeleteConfigId = config.id;
-              this.display();
+              this.requestRerender();
               return;
             }
             const { configs } = this.plugin.settings;
@@ -907,7 +941,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
             this.plugin.settings.configs = configs.filter(c => c.id !== config.id);
             this.plugin.settings.activeConfigId = this.plugin.settings.configs[0]?.id ?? '';
             await this.plugin.saveSettings();
-            this.display();
+            this.requestRerender();
           });
         if (isPending) {
           button.buttonEl.addClass('mod-destructive');
@@ -918,7 +952,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .setButtonText('Cancel')
         .onClick(() => {
           this.pendingDeleteConfigId = null;
-          this.display();
+          this.requestRerender();
         }));
     }
     setting.settingEl.addClass('ani-delete-config');
@@ -956,7 +990,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       } else {
         this.expandedSections.add(sectionId);
       }
-      this.display();
+      this.requestRerender();
     });
 
     if (isExpanded) {

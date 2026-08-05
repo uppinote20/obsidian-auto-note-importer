@@ -125,20 +125,29 @@ export function buildSettingsHarnessHelpers({ pluginId }) {
       return app.setting.pluginTabs.find(t => t.id === '${pluginId}');
     }
 
+    // Render through whichever path the host actually uses, mirroring the
+    // plugin's own requestRerender(). Calling display() unconditionally
+    // would force the imperative tree even on Obsidian 1.13+, so the suites
+    // would never exercise the declarative path the host really renders.
+    function renderTab(tab) {
+      if (typeof tab.update === 'function') tab.update();
+      else tab.display();
+    }
+
     async function openSettingsTab() {
       app.setting.open();
       await new Promise(r => setTimeout(r, 200));
       const tab = getSettingsTab();
       if (!tab) throw new Error('Plugin settings tab not found');
       app.setting.openTab(tab);
-      tab.display();
+      renderTab(tab);
       await new Promise(r => setTimeout(r, 400));
       return tab;
     }
 
     async function rerenderTab() {
       const tab = getSettingsTab();
-      if (tab) tab.display();
+      if (tab) renderTab(tab);
       await new Promise(r => setTimeout(r, 300));
       return tab;
     }

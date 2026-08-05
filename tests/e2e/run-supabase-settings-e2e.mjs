@@ -300,7 +300,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         // renderCredentialAddDetails initializes credentialFormUi.
         tab.addingCredential = true;
         tab.addingCredentialType = 'supabase';
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 200));
 
         const c = getContainer();
@@ -343,7 +343,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
         // Cleanup form
         tab.addingCredential = false;
-        tab.display();
+        renderTab(tab);
 
         return JSON.stringify(result);
       })()`, 15000);
@@ -367,7 +367,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
         tab.addingCredential = true;
         tab.addingCredentialType = 'supabase';
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 200));
 
         const c = getContainer();
@@ -425,7 +425,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
         // Cleanup form
         tab.addingCredential = false;
-        tab.display();
+        renderTab(tab);
 
         return JSON.stringify({ beforeReset, afterReset });
       })()`, 15000);
