@@ -27,7 +27,7 @@ export class FileSuggest extends AbstractInputSuggest<string> {
   }
 
   public override renderSuggestion(path: string, el: HTMLElement): void {
-    el.createEl("div", { text: path });
+    el.createDiv({ text: path });
   }
 
   public override selectSuggestion(path: string): void {
