@@ -15,7 +15,7 @@
  */
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
-import type { ExtraButtonComponent, Plugin } from "obsidian";
+import type { ExtraButtonComponent, Plugin, SettingDefinitionItem } from "obsidian";
 import {
   FieldCache,
   SeaTableMetadataCache,
@@ -165,6 +165,101 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     }
   }
 
+  /**
+   * Declarative settings definitions (Obsidian >= 1.13).
+   *
+   * When this returns a non-empty array the host renders from it and never
+   * calls `display()`; on older Obsidian the method simply is not called and
+   * `display()` runs instead. That is why `minAppVersion` stays at 1.4.10 —
+   * the typings sanction keeping `display()` "as a fallback for plugins that
+   * need to support Obsidian versions older than 1.13.0".
+   *
+   * Each section is a group whose single `render` item delegates to the same
+   * private renderer `display()` uses, so the two entry points cannot drift.
+   * The declared `name` / `desc` / `aliases` are what Obsidian's settings
+   * search indexes — the reason the directory scanner asks for this API
+   * (obsidianmd/settings-tab/prefer-setting-definitions).
+   *
+   * Must stay side-effect free: the host also calls this once at tab
+   * registration purely to build the search index, with no render to follow.
+   */
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    const groups: SettingDefinitionItem[] = [
+      {
+        // No `heading` — renderCredentialsSection draws its own, and the
+        // group heading would render a second copy above it.
+        type: 'group',
+        items: [{
+          name: 'Credentials',
+          desc: 'API keys and tokens for Airtable, SeaTable, and Supabase.',
+          aliases: ['api key', 'api token', 'airtable', 'seatable', 'supabase', 'credential'],
+          render: (setting) => {
+            const host = this.claimSettingHost(setting);
+            this.renderCredentialsSection(host);
+            // The credential form registers listeners on the host it just
+            // built; tearing it down here keeps a re-render from stacking
+            // duplicates the way display() avoids via tearDown + empty().
+            return () => this.tearDownCredentialFormUi();
+          },
+        }],
+      },
+      {
+        type: 'group',
+        items: [{
+          name: 'Debug logging',
+          desc: 'Verbose sync logging to the developer console.',
+          aliases: ['debug', 'log', 'console'],
+          render: (setting) => {
+            this.renderDebugSettings(this.claimSettingHost(setting));
+          },
+        }],
+      },
+      {
+        type: 'group',
+        items: [{
+          name: 'Sync configurations',
+          desc: 'Per-configuration connection, file, Bases, and bidirectional sync settings.',
+          aliases: ['config', 'sync', 'folder', 'template', 'bases', 'bidirectional', 'conflict'],
+          render: (setting) => {
+            const host = this.claimSettingHost(setting);
+            this.renderTabBar(host);
+
+            const config = this.activeConfig;
+            const credential = this.activeCredential;
+            if (!config || !credential) {
+              if (this.plugin.settings.configs.length === 0) {
+                new Setting(host)
+                  .setName('No configuration')
+                  .setDesc('Add a configuration using the + tab above.');
+              }
+              return;
+            }
+
+            // Async connection cards capture this generation and bail if it
+            // moved, so bump it here exactly as display() does — a declarative
+            // re-render must invalidate the previous render's in-flight fetch.
+            this.renderGeneration++;
+            this.renderConfigHeader(host, config);
+            this.renderConfigCardStack(host, config, credential);
+            this.renderDeleteConfigButton(host, config);
+          },
+        }],
+      },
+    ];
+    return groups;
+  }
+
+  /**
+   * Turns a declarative setting row into a plain container for the imperative
+   * renderers. They build their own headings and layout, so the row's default
+   * name/control scaffolding is cleared out first.
+   */
+  private claimSettingHost(setting: Setting): HTMLElement {
+    setting.settingEl.empty();
+    setting.settingEl.addClass('ani-declarative-host');
+    return setting.settingEl;
+  }
+
   display(): void {
     this.renderGeneration++;
     this.tearDownCredentialFormUi();
@@ -195,7 +290,22 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     // Config header: name, enabled toggle, credential selector
     this.renderConfigHeader(containerEl, config);
 
-    // Summary card stack
+    this.renderConfigCardStack(containerEl, config, credential);
+
+    // Delete config button
+    this.renderDeleteConfigButton(containerEl, config);
+  }
+
+  /**
+   * The per-config summary card stack. Extracted from `display()` so the
+   * declarative `getSettingDefinitions()` path renders the exact same
+   * cards — the two entry points must not drift.
+   */
+  private renderConfigCardStack(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: Credential,
+  ): void {
     const cardStack = containerEl.createDiv({ cls: 'ani-card-stack' });
 
     // The card renders by credential type alone — missing secrets just
@@ -256,9 +366,6 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       badge: config.bidirectionalSync ? { status: 'ok', text: 'On' } : { status: 'off', text: 'Off' },
       renderContent: (c) => this.renderBidirectionalSyncSettings(c, config),
     });
-
-    // Delete config button
-    this.renderDeleteConfigButton(containerEl, config);
   }
 
   // ─── Credentials Section ───────────────────────────────────────────
