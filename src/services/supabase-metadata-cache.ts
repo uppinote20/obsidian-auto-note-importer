@@ -8,6 +8,8 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 9.6-api-patterns
  * @tested tests/services/supabase-metadata-cache.test.ts
+ * @tested e2e:tests/e2e/run-supabase-e2e.mjs
+ * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
  */
 
 import { requestUrl } from 'obsidian';

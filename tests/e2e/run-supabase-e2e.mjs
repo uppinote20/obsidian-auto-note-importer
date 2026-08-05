@@ -11,6 +11,7 @@
  * @covers src/services/provider-registry.ts
  * @covers src/core/sync-orchestrator.ts
  * @covers src/core/config-instance.ts
+ * @covers src/core/config-manager.ts
  *
  * Prerequisites:
  *   1. Obsidian running with --remote-debugging-port=9222
