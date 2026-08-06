@@ -110,7 +110,10 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       ${HELPERS}
       ensureSupabaseCredentialAndConfig();
       await getPlugin().saveSettings();
-      await openSettingsTab();
+      const tab = await openSettingsTab();
+      resetSettingsTabState(tab);   // do not inherit a prior suite's UI state (#116)
+      renderTab(tab);
+      await new Promise(r => setTimeout(r, 300));
       return JSON.stringify({ ok: true });
     })()`, 10000);
 
