@@ -148,9 +148,20 @@ export function buildSettingsHarnessHelpers({ pluginId }) {
       if (!tab) return;
       tab.editingCredentialId = null;
       tab.addingCredential = false;
+      // Reset the type too, not just the open/closed flag: the Supabase
+      // suite leaves it on 'supabase', so the next suite's first Add
+      // Credential click would open the wrong provider form.
+      tab.addingCredentialType = 'airtable';
       tab.pendingDeleteConfigId = null;
       tab.pendingDeleteCredentialId = null;
+      // Tear down rather than null out — credentialFormUi holds listener
+      // removal handles that would otherwise leak.
+      tab.tearDownCredentialFormUi();
       tab.expandedSections.clear();
+      // Keep in sync with the Set initialiser in src/ui/settings-tab.ts.
+      // A provider added for epic #11 needs its card id here too, or its
+      // suite will query a collapsed card and read an empty body — the
+      // exact symptom this helper exists to prevent.
       ['airtable-connection', 'seatable-connection', 'supabase-connection']
         .forEach(id => tab.expandedSections.add(id));
     }
