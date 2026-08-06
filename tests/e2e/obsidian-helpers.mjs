@@ -137,6 +137,24 @@ export function buildSettingsHarnessHelpers({ pluginId }) {
       tab.requestRerender();
     }
 
+    // Transient UI state lives on the settings-tab instance, which outlives
+    // a suite run — only a plugin reload recreates it. A suite must set up
+    // its own starting state instead of inheriting the previous suite's
+    // leftovers: run-settings-e2e clears expandedSections and never
+    // restores it, so later suites queried collapsed cards and saw empty
+    // connection bodies (#116). Values mirror the field initialisers in
+    // src/ui/settings-tab.ts.
+    function resetSettingsTabState(tab) {
+      if (!tab) return;
+      tab.editingCredentialId = null;
+      tab.addingCredential = false;
+      tab.pendingDeleteConfigId = null;
+      tab.pendingDeleteCredentialId = null;
+      tab.expandedSections.clear();
+      ['airtable-connection', 'seatable-connection', 'supabase-connection']
+        .forEach(id => tab.expandedSections.add(id));
+    }
+
     async function openSettingsTab() {
       app.setting.open();
       await new Promise(r => setTimeout(r, 200));
