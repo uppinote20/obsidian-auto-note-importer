@@ -87,16 +87,17 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
             tabBarExists: !!tabBar,
           });
         }
-        // Check DOM order: debug should come before tab bar
-        const allEls = Array.from(c.children);
-        const debugIdx = allEls.indexOf(debug);
-        const tabBarIdx = allEls.indexOf(tabBar);
+        // Document order, not child index: on Obsidian 1.13+ the sections
+        // are nested inside declarative setting rows, so neither element is
+        // a direct child of the container. The invariant under test is the
+        // visual order, which compareDocumentPosition expresses on both
+        // the imperative and the declarative render path.
+        const debugBeforeTabBar =
+          !!(debug.compareDocumentPosition(tabBar) & Node.DOCUMENT_POSITION_FOLLOWING);
         return JSON.stringify({
           debugExists: true,
           tabBarExists: true,
-          debugBeforeTabBar: debugIdx < tabBarIdx,
-          debugIdx,
-          tabBarIdx,
+          debugBeforeTabBar,
         });
       })()`, 10000);
       const pass = r.debugExists && r.tabBarExists && r.debugBeforeTabBar;
@@ -127,12 +128,16 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         ${HELPERS}
         const c = getContainer();
         const stack = c.querySelector('.ani-card-stack');
+        // contains(), not parentElement: the declarative path (1.13+) nests
+        // the stack inside a setting row. What must hold either way is that
+        // the stack lives in the tab's container rather than floating
+        // detached or leaking into another tab.
         return JSON.stringify({
           exists: !!stack,
-          parentIsContainer: stack?.parentElement === c,
+          insideContainer: !!(stack && c.contains(stack)),
         });
       })()`, 10000);
-      return { pass: r.exists && r.parentIsContainer, detail: `exists=${r.exists} parent=${r.parentIsContainer}` };
+      return { pass: r.exists && r.insideContainer, detail: `exists=${r.exists} inside=${r.insideContainer}` };
     });
 
     // ════════════════════════════════════════════════════════════════
@@ -451,7 +456,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         // Clear state so all cards start collapsed
         const tab = getSettingsTab();
         tab.expandedSections.clear();
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 400));
 
         const cards = queryCards();
@@ -533,7 +538,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         const tab = getSettingsTab();
         tab.expandedSections.clear();
         tab.expandedSections.add('bidirectional-sync');
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 400));
 
         const cards = queryCards();
@@ -561,7 +566,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         // Clear expandedSections to ensure all cards start collapsed
         const tab = getSettingsTab();
         tab.expandedSections?.clear();
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 400));
 
         // Verify first card starts collapsed
@@ -753,7 +758,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         const tab = getSettingsTab();
         await openSettingsTab();
         tab.editingCredentialId = cred.id;
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 300));
 
         const c = getContainer();
@@ -763,7 +768,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
 
         // Cleanup
         tab.editingCredentialId = null;
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 200));
 
         return JSON.stringify({
@@ -798,7 +803,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         await openSettingsTab();
         const tab = getSettingsTab();
         tab.editingCredentialId = fakeId;
-        tab.display();
+        renderTab(tab);
         await new Promise(r => setTimeout(r, 300));
 
         const c = getContainer();
