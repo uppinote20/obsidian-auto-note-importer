@@ -80,7 +80,9 @@ if [ -n "$TARGET_ID" ]; then
 
   if [ -n "$PLUGIN_DIR" ] && [ -d "$PLUGIN_DIR" ]; then
     echo "→ Deploying to ${PLUGIN_DIR}..."
-    cp main.js manifest.json "$PLUGIN_DIR/"
+    # styles.css too — the settings tab's layout depends on it, and a stale
+    # copy in the vault masks (or fakes) visual regressions.
+    cp main.js manifest.json styles.css "$PLUGIN_DIR/"
     echo "✓ Plugin deployed"
 
     # Reload plugin

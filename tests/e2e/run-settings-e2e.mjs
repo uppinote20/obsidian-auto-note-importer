@@ -143,6 +143,62 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       return { pass: r.exists && r.insideContainer, detail: `exists=${r.exists} inside=${r.insideContainer}` };
     });
 
+    await test('layout / declarative hosts stack children vertically at full width', async () => {
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const c = getContainer();
+        // Obsidian 1.13+ renders each section into a declarative setting
+        // row (.ani-declarative-host). The host's base .setting-item rule
+        // is a horizontal flex row, so without the plugin's block-flow
+        // override the section children string out sideways at content
+        // width: the config section overflowed its box and the credential
+        // form width jumped between providers. Pre-1.13 the imperative
+        // path renders no hosts — nothing to measure, report and pass.
+        const hosts = Array.from(c.querySelectorAll('.ani-declarative-host'));
+        if (hosts.length === 0) {
+          return JSON.stringify({ path: 'imperative', ok: true });
+        }
+        const reports = hosts.map((host, i) => {
+          const cs = getComputedStyle(host);
+          const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+          const contentWidth = host.clientWidth - pad;
+          const kids = Array.from(host.children).filter(k => {
+            const b = k.getBoundingClientRect();
+            return b.width > 0 || b.height > 0;   // ignore display:none children
+          });
+          // Block stretch: each child's border box spans the host's content
+          // width minus the child's own horizontal margins (e.g. the tab
+          // bar keeps a 16px margin-right by design). Flex-row shrinks
+          // children to content size instead, which is what this catches.
+          const fullWidth = kids.every(k => {
+            const kcs = getComputedStyle(k);
+            const margins = parseFloat(kcs.marginLeft) + parseFloat(kcs.marginRight);
+            return k.getBoundingClientRect().width >= contentWidth - margins - 2;
+          });
+          const stacked = kids.slice(1).every((k, j) => {
+            const prev = kids[j].getBoundingClientRect();   // j indexes the unsliced predecessor
+            return k.getBoundingClientRect().top >= prev.bottom - 1;
+          });
+          return {
+            host: i,
+            childCount: kids.length,
+            fullWidth,
+            stacked,
+            overflowX: host.scrollWidth - host.clientWidth,
+          };
+        });
+        const ok = reports.every(rep => rep.fullWidth && rep.stacked && rep.overflowX <= 1);
+        return JSON.stringify({ path: 'declarative', ok, reports });
+      })()`, 10000);
+      const pass = r.ok === true;
+      return {
+        pass,
+        detail: r.path === 'imperative'
+          ? 'imperative path (pre-1.13), no hosts'
+          : JSON.stringify(r.reports),
+      };
+    });
+
     // ════════════════════════════════════════════════════════════════
     // Group 2: Badge Status — Individual Card Boundaries
     // ════════════════════════════════════════════════════════════════

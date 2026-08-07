@@ -2,6 +2,16 @@
  * Auto Note Importer plugin styles.
  */
 
+/* ─── Declarative Section Host (Obsidian 1.13+) ──────────────────── */
+
+/* @handbook 5.1-ui-components */
+
+/* Obsidian 1.13 renders sections into .setting-item flex rows; block flow
+   restores the vertical stacking the imperative containerEl path provides. */
+.setting-item.ani-declarative-host {
+  display: block;
+}
+
 /* ─── Credentials Table ──────────────────────────────────────────── */
 
 .ani-credentials-section {
