@@ -6,14 +6,8 @@
 
 /* @handbook 5.1-ui-components */
 
-/* defineSection() empties one declarative setting row and renders a whole
-   section into it (settings-tab.ts). Obsidian's base `.setting-item` rule
-   lays setting rows out as a horizontal flex line (display: flex;
-   align-items: center), which strings the section's children out sideways
-   at content width — the config section overflowed its group box and the
-   credential form width changed with the selected provider. Block flow
-   restores the container semantics the imperative display() path gives
-   the same renderers via containerEl. */
+/* Obsidian 1.13 renders sections into .setting-item flex rows; block flow
+   restores the vertical stacking the imperative containerEl path provides. */
 .setting-item.ani-declarative-host {
   display: block;
 }
