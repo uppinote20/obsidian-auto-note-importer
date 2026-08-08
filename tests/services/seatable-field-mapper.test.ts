@@ -142,6 +142,13 @@ describe('seatableFieldMapper', () => {
       expect(seatableFieldMapper.isPushable('geolocation')).toBe(false);
     });
 
+    it('should return false for attachment/link fields (object / object-array API value, does not round-trip through YAML) but true for image (URL-string array) (#107)', () => {
+      expect(seatableFieldMapper.isPushable('file')).toBe(false);
+      expect(seatableFieldMapper.isPushable('digital-sign')).toBe(false);
+      expect(seatableFieldMapper.isPushable('link')).toBe(false);
+      expect(seatableFieldMapper.isPushable('image')).toBe(true);
+    });
+
     it('should fail closed for unknown and prototype-chain names', () => {
       for (const t of ['bogusType', '', 'toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
         expect(seatableFieldMapper.isPushable(t)).toBe(false);

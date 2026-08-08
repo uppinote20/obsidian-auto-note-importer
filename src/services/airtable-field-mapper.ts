@@ -100,6 +100,7 @@ const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
   'aiText',           // { state, value, … }
   'externalSyncSource', // { id, name }
   'lookup',           // array of any shape (depends on rolled-up field)
+  'multipleAttachments', // array of { id, url, filename, size, type }
 ]);
 
 // Subfolder accepts any known Airtable type that stringifies to a reasonable

@@ -77,12 +77,20 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
 
 // Types whose SeaTable API value is an object, NOT a scalar string.
 // collaborator → array of { name, email, … }; geolocation → { lng, lat,
-// country_region }; button → link-formula-like object. Their standard-type
+// country_region }; button → link-formula-like object; file → array of
+// { name, size, type, url, upload_time }; digital-sign → { username,
+// sign_image_url, sign_time }; link → array of { row_id, display_value }
+// (source: SeaTable API reference /reference/models). `image` is
+// deliberately excluded — its API value is an array of URL strings, which
+// round-trips through YAML frontmatter fine. Their standard-type
 // classification doesn't capture this — explicit exclusion.
 const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
   'collaborator',
   'geolocation',
   'button',
+  'file',
+  'digital-sign',
+  'link',
 ]);
 
 // Excludes attachment (image / file / digital-sign) and link types — they
