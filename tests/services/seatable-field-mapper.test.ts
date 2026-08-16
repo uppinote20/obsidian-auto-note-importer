@@ -92,6 +92,7 @@ describe('seatableFieldMapper', () => {
       expect(seatableFieldMapper.isReadOnly('number')).toBe(false);
       expect(seatableFieldMapper.isReadOnly('image')).toBe(false);
       expect(seatableFieldMapper.isReadOnly('file')).toBe(false);
+      expect(seatableFieldMapper.isReadOnly('digital-sign')).toBe(false);
       expect(seatableFieldMapper.isReadOnly('link')).toBe(false);
     });
 
@@ -158,8 +159,8 @@ describe('seatableFieldMapper', () => {
 
   describe('isSubfolderSafe', () => {
     it('should return true for stringifiable known SeaTable types', () => {
-      // Excludes OBJECT_SHAPED_TYPES (collaborator / geolocation / button) —
-      // covered by a separate test below.
+      // Excludes OBJECT_SHAPED_TYPES (collaborator / geolocation / button /
+      // file / digital-sign / link) — covered by a separate test below.
       const stringifiable = [
         'text', 'long-text', 'email', 'url',
         'number', 'duration', 'rate',

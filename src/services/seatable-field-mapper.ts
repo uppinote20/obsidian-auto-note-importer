@@ -95,8 +95,11 @@ const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
 
 // Excludes attachment (image / file / digital-sign) and link types — they
 // stringify to JSON / record-id garbage when used as folder names — and
-// explicit object-shaped types (see OBJECT_SHAPED_TYPES). Sorted for
-// deterministic enumeration across providers.
+// explicit object-shaped types (see OBJECT_SHAPED_TYPES). file / digital-sign
+// / link are redundantly listed in both filters (attachment/link std-type AND
+// OBJECT_SHAPED_TYPES) — belt-and-suspenders, matching the Airtable-side
+// comment on its SUBFOLDER_SAFE_TYPES. Sorted for deterministic enumeration
+// across providers.
 const SUBFOLDER_SAFE_TYPES = Object.entries(TYPE_TO_STANDARD)
   .filter(([t, std]) =>
     std !== 'attachment' &&

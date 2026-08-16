@@ -181,7 +181,8 @@ describe('airtableFieldMapper', () => {
     // [object Object] / record-id JSON — produces garbage folder names.
     it('should return true for stringifiable known types (text / number / date / select / formula / system)', () => {
       // Excludes OBJECT_SHAPED_TYPES (collaborator / barcode / button / aiText /
-      // externalSyncSource / lookup) — covered by a separate test below.
+      // externalSyncSource / lookup / multipleAttachments) — covered by a
+      // separate test below.
       const stringifiable = [
         'singleLineText', 'multilineText', 'richText', 'email', 'phoneNumber', 'url',
         'number', 'currency', 'percent', 'rating', 'duration',
