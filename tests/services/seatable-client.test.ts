@@ -329,6 +329,7 @@ describe('SeaTableClient', () => {
     it('should send batch-shaped body to PUT /rows/ for a single update', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ metadata: { tables: [] } }))
         .mockResolvedValueOnce(mockResponse({ success: true }));
 
       const result = await client.updateRecord('r1', { Name: 'Updated' });
@@ -339,7 +340,7 @@ describe('SeaTableClient', () => {
         updatedFields: { Name: 'Updated' },
       });
 
-      const writeCall = mockRequestUrl.mock.calls[1][0];
+      const writeCall = mockRequestUrl.mock.calls[2][0];
       expect(writeCall.method).toBe('PUT');
       expect(writeCall.url).toContain('/api/v2/dtables/uuid-xxx/rows/');
       const headers = writeCall.headers as Record<string, string>;
@@ -356,6 +357,7 @@ describe('SeaTableClient', () => {
     it('should return failure result on non-200', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ metadata: { tables: [] } }))
         .mockResolvedValueOnce(mockResponse({ error_msg: 'Field not found' }, 400));
 
       const result = await client.updateRecord('r1', { Bad: 'x' });
@@ -368,6 +370,7 @@ describe('SeaTableClient', () => {
     it('should catch thrown errors and return failure', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ metadata: { tables: [] } }))
         .mockRejectedValueOnce(new Error('Network down'));
 
       const result = await client.updateRecord('r1', {});
@@ -394,6 +397,7 @@ describe('SeaTableClient', () => {
     it('should batch update rows via PUT /rows/ with updates array', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ metadata: { tables: [] } }))
         .mockResolvedValueOnce(mockResponse({ success: true }));
 
       const results = await client.batchUpdate([
@@ -404,7 +408,7 @@ describe('SeaTableClient', () => {
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({ success: true, recordId: 'r1', updatedFields: { Name: 'A' } });
 
-      const writeCall = mockRequestUrl.mock.calls[1][0];
+      const writeCall = mockRequestUrl.mock.calls[2][0];
       expect(writeCall.method).toBe('PUT');
       // Path is `/rows/` (single endpoint handles both single + batch),
       // not the deprecated `/batch-update-rows/` path.
@@ -440,6 +444,7 @@ describe('SeaTableClient', () => {
     it('should return failure for all records on non-200', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ metadata: { tables: [] } }))
         .mockResolvedValueOnce(mockResponse({ error_msg: 'Server error' }, 500));
 
       const results = await client.batchUpdate([
@@ -454,6 +459,7 @@ describe('SeaTableClient', () => {
     it('should return failure for all records on thrown error', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ metadata: { tables: [] } }))
         .mockRejectedValueOnce(new Error('Connection lost'));
 
       const results = await client.batchUpdate([{ recordId: 'r1', fields: {} }]);
@@ -466,6 +472,7 @@ describe('SeaTableClient', () => {
     it('accepts 2xx statuses other than 200 as success (e.g. 201 from a proxy)', async () => {
       mockRequestUrl
         .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ metadata: { tables: [] } }))
         .mockResolvedValueOnce(mockResponse({ success: true }, 201));
 
       const results = await client.batchUpdate([{ recordId: 'r1', fields: { Name: 'A' } }]);
@@ -473,6 +480,106 @@ describe('SeaTableClient', () => {
       expect(results).toEqual([
         { success: true, recordId: 'r1', updatedFields: { Name: 'A' } },
       ]);
+    });
+
+    it('drops file/digital-sign/link-typed columns but keeps image/text-typed ones', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          metadata: {
+            tables: [{
+              _id: '0000',
+              name: 'Table1',
+              columns: [
+                { key: '0k', name: 'Notes', type: 'text' },
+                { key: '1k', name: 'Cover', type: 'image' },
+                { key: '2k', name: 'Attachment', type: 'file' },
+                { key: '3k', name: 'Signature', type: 'digital-sign' },
+                { key: '4k', name: 'Related', type: 'link' },
+              ],
+            }],
+          },
+        }))
+        .mockResolvedValueOnce(mockResponse({ success: true }));
+
+      const results = await client.batchUpdate([{
+        recordId: 'r1',
+        fields: { Notes: 'hi', Cover: ['url'], Attachment: 'x', Signature: 'y', Related: 'z' },
+      }]);
+
+      const writeCall = mockRequestUrl.mock.calls[2][0];
+      const body = JSON.parse(writeCall.body as string);
+      expect(body.updates[0].row).toEqual({ Notes: 'hi', Cover: ['url'] });
+
+      // (b) updatedFields echoes only the filtered set
+      expect(results[0]).toEqual({
+        success: true,
+        recordId: 'r1',
+        updatedFields: { Notes: 'hi', Cover: ['url'] },
+      });
+    });
+
+    it('sends all fields unchanged when metadata fetch fails', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ error_msg: 'Forbidden' }, 403))
+        .mockResolvedValueOnce(mockResponse({ success: true }));
+
+      const results = await client.batchUpdate([{
+        recordId: 'r1',
+        fields: { Attachment: 'x', Notes: 'hi' },
+      }]);
+
+      const writeCall = mockRequestUrl.mock.calls[2][0];
+      const body = JSON.parse(writeCall.body as string);
+      expect(body.updates[0].row).toEqual({ Attachment: 'x', Notes: 'hi' });
+      expect(results[0]).toEqual({
+        success: true,
+        recordId: 'r1',
+        updatedFields: { Attachment: 'x', Notes: 'hi' },
+      });
+    });
+
+    it('passes through a column name absent from metadata unfiltered', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          metadata: { tables: [{ _id: '0000', name: 'Table1', columns: [] }] },
+        }))
+        .mockResolvedValueOnce(mockResponse({ success: true }));
+
+      const results = await client.batchUpdate([{
+        recordId: 'r1',
+        fields: { UnknownColumn: 'still sent' },
+      }]);
+
+      const writeCall = mockRequestUrl.mock.calls[2][0];
+      const body = JSON.parse(writeCall.body as string);
+      expect(body.updates[0].row).toEqual({ UnknownColumn: 'still sent' });
+      expect(results[0]).toEqual({
+        success: true,
+        recordId: 'r1',
+        updatedFields: { UnknownColumn: 'still sent' },
+      });
+    });
+
+    it('fetches metadata once then caches it across two batchUpdate calls', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          metadata: { tables: [{ _id: '0000', name: 'Table1', columns: [{ name: 'Attachment', type: 'file' }] }] },
+        }))
+        .mockResolvedValueOnce(mockResponse({ success: true }))
+        .mockResolvedValueOnce(mockResponse({ success: true }));
+
+      await client.batchUpdate([{ recordId: 'r1', fields: { Attachment: 'x' } }]);
+      await client.batchUpdate([{ recordId: 'r2', fields: { Attachment: 'y' } }]);
+
+      // token (1) + metadata (1) + writes (2) = 4 total, not 6.
+      expect(mockRequestUrl).toHaveBeenCalledTimes(4);
+      const secondWriteCall = mockRequestUrl.mock.calls[3][0];
+      const body = JSON.parse(secondWriteCall.body as string);
+      expect(body.updates[0].row).toEqual({});
     });
   });
 

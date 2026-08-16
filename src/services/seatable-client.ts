@@ -87,6 +87,10 @@ export class SeaTableClient implements DatabaseProvider {
   private config: ConfigEntry;
   private rateLimiter: RateLimiter;
   private cachedToken: CachedBaseToken | null = null;
+  // Best-effort column-name → column-type map for the active tableId.
+  // Populated lazily by loadColumnTypes() and only cached on success — a
+  // fetch failure isn't remembered so the next batchUpdate can retry.
+  private columnTypesCache: Map<string, string> | null = null;
 
   constructor(
     credential: SeaTableCredential,
@@ -112,6 +116,15 @@ export class SeaTableClient implements DatabaseProvider {
       credential.serverUrl !== this.credential.serverUrl
     ) {
       this.cachedToken = null;
+    }
+    // Column types are keyed on tableId too — a table swap invalidates the
+    // cache even when the credential is unchanged.
+    if (
+      credential.apiToken !== this.credential.apiToken ||
+      credential.serverUrl !== this.credential.serverUrl ||
+      config.tableId !== this.config.tableId
+    ) {
+      this.columnTypesCache = null;
     }
     this.credential = credential;
     this.config = config;
@@ -174,6 +187,52 @@ export class SeaTableClient implements DatabaseProvider {
 
   private buildDtableUrl(token: CachedBaseToken, path: string): string {
     return `${token.dtableServer}/api/v2/dtables/${token.dtableUuid}/${path}`;
+  }
+
+  /**
+   * Best-effort GET of the base's `/metadata/` endpoint to resolve the
+   * active tableId's column-name → column-type map, so batchUpdate can
+   * filter out read-only / object-shaped columns via
+   * `seatableFieldMapper.isPushable` before writing (#121 — orchestrator's
+   * FieldCache is Airtable-only and gates on `settings.apiKey`, which is
+   * always `''` for SeaTable, so the guard has to live here).
+   *
+   * Tables are matched by `_id` — `config.tableId` always stores the
+   * table's `_id`, never its display name (see settings-tab.ts table
+   * dropdown). Returns `null` on any fetch/parse failure or when the
+   * table isn't found, so callers can fail open ("send everything").
+   * Success is cached on the instance; failures are not, so the next
+   * batchUpdate call gets another chance.
+   */
+  private async loadColumnTypes(): Promise<Map<string, string> | null> {
+    if (this.columnTypesCache) return this.columnTypesCache;
+
+    try {
+      const token = await this.getBaseToken();
+      const url = this.buildDtableUrl(token, 'metadata/');
+      const response = await this.rateLimiter.execute(() =>
+        requestUrl({ url, method: 'GET', headers: this.buildHeaders(token) }),
+      );
+
+      if (response.status < 200 || response.status >= 300) return null;
+
+      const json = response.json as
+        | { metadata?: { tables?: Array<{ _id?: string; columns?: Array<{ name?: string; type?: string }> }> } }
+        | undefined;
+      const table = json?.metadata?.tables?.find(t => t._id === this.config.tableId);
+      if (!table) return null;
+
+      const columnTypes = new Map<string, string>();
+      for (const c of table.columns ?? []) {
+        if (typeof c.name === 'string' && typeof c.type === 'string') {
+          columnTypes.set(c.name, c.type);
+        }
+      }
+      this.columnTypesCache = columnTypes;
+      return columnTypes;
+    } catch {
+      return null;
+    }
   }
 
   private buildHeaders(token: CachedBaseToken): Record<string, string> {
@@ -293,9 +352,30 @@ export class SeaTableClient implements DatabaseProvider {
       const token = await this.getBaseToken();
       const headers = this.buildHeaders(token);
       const url = this.buildDtableUrl(token, 'rows/');
+
+      // Column-type lookup is best-effort — failures fall through to
+      // "send everything unchanged" rather than blocking the sync.
+      // isPushable is applied here, at body composition (not inside
+      // loadColumnTypes), so a formula/file/link/digital-sign column's
+      // structured remote value is preserved instead of getting
+      // clobbered by a scalar frontmatter string. A column name absent
+      // from the metadata (custom alias, race with a freshly added
+      // column) passes through unfiltered — fail-open per field.
+      const columnTypes = await this.loadColumnTypes();
+      const filteredFields = updates.map(u => {
+        if (!columnTypes) return u.fields;
+        const filtered: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(u.fields)) {
+          const providerType = columnTypes.get(k);
+          if (providerType && !seatableFieldMapper.isPushable(providerType)) continue;
+          filtered[k] = v;
+        }
+        return filtered;
+      });
+
       const body = JSON.stringify({
         table_id: this.config.tableId,
-        updates: updates.map(u => ({ row_id: u.recordId, row: u.fields })),
+        updates: updates.map((u, i) => ({ row_id: u.recordId, row: filteredFields[i] })),
       });
       const response = await this.rateLimiter.execute(() =>
         requestUrl({ url, method: 'PUT', headers, body }),
@@ -307,12 +387,12 @@ export class SeaTableClient implements DatabaseProvider {
       }
 
       // SeaTable's PUT /rows/ returns `{success: true}` without echoing
-      // the updated fields, so we mirror back the requested fields as
-      // confirmed updates — matching the SyncResult contract.
-      return updates.map(u => ({
+      // the updated fields, so we mirror back the requested (post-filter)
+      // fields as confirmed updates — matching the SyncResult contract.
+      return updates.map((u, i) => ({
         success: true as const,
         recordId: u.recordId,
-        updatedFields: u.fields,
+        updatedFields: filteredFields[i],
       }));
     } catch (error) {
       return buildBatchFailures(updates, error instanceof Error ? error.message : 'Unknown error occurred');
