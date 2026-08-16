@@ -845,17 +845,17 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
       const r = await run(`(async () => {
         ${HELPERS}
         const p = getPlugin();
-        // Inject a fake credential of an unsupported type. Notion is in
-        // CREDENTIAL_TYPES but has no registered form renderer (epic #11),
-        // so it exercises the "Edit not supported" fallback (provider-aware
-        // UI). Previously this used Supabase — it shipped, so the premise
-        // moved to the next unimplemented provider.
+        // Inject a fake credential of an unsupported type. custom-api is in
+        // CREDENTIAL_TYPES but has no registered form renderer (#55 closed,
+        // epic #11), so it exercises the "Edit not supported" fallback
+        // (provider-aware UI). Previously this used Supabase, then Notion —
+        // both shipped, so the premise moved to the last unimplemented type.
         const fakeId = 'e2e-fake-unsupported-' + Date.now();
         const savedCreds = [...p.settings.credentials];
         p.settings.credentials.push({
           id: fakeId,
-          name: 'Fake Notion',
-          type: 'notion',
+          name: 'Fake Custom API',
+          type: 'custom-api',
           apiKey: 'x',
         });
 
@@ -881,11 +881,11 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
     });
 
     await test('credential / unsupported type shows Not yet supported and disabled Save', async () => {
-      // Picks `notion` — defined in CREDENTIAL_TYPES but no registered
-      // form renderer, so the dropdown still lists it but the form falls
-      // back to the "Not yet supported" placeholder (§4.4 provider-aware
-      // settings UI). Switch to a different unsupported type if Notion
-      // ever ships (epic #11); `custom-api` is the next one up.
+      // Picks `custom-api` — defined in CREDENTIAL_TYPES but no registered
+      // form renderer (#55 closed), so the dropdown still lists it but the
+      // form falls back to the "Not yet supported" placeholder (§4.4
+      // provider-aware settings UI). Notion shipped (#54) and moved off
+      // this role; custom-api is the last unimplemented type.
       const r = await run(`(async () => {
         ${HELPERS}
         await openSettingsTab();
@@ -895,7 +895,7 @@ const setConfigAndQuery = makeSetConfigAndQuery({ helpers: HELPERS, run });
         await new Promise(r => setTimeout(r, 300));
 
         const select = c.querySelector('.ani-credential-edit select');
-        select.value = 'notion';
+        select.value = 'custom-api';
         select.dispatchEvent(new Event('change'));
         await new Promise(r => setTimeout(r, 400));
 
