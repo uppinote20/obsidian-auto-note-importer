@@ -13,7 +13,7 @@
 import { Plugin, normalizePath } from "obsidian";
 import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
 import { DEFAULT_SETTINGS, CREDENTIAL_TYPE_LABELS } from './types';
-import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache } from './services';
+import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache, NotionSchemaCache } from './services';
 import { ConfigManager } from './core';
 import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
@@ -31,6 +31,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
   fieldCache!: FieldCache;
   seatableMetadataCache!: SeaTableMetadataCache;
   supabaseMetadataCache!: SupabaseMetadataCache;
+  notionSchemaCache!: NotionSchemaCache;
   private commandFingerprint = '';
 
   async onload() {
@@ -46,12 +47,14 @@ export default class AutoNoteImporterPlugin extends Plugin {
     this.fieldCache = new FieldCache();
     this.seatableMetadataCache = new SeaTableMetadataCache();
     this.supabaseMetadataCache = new SupabaseMetadataCache();
+    this.notionSchemaCache = new NotionSchemaCache();
 
     const shared: SharedServices = {
       rateLimiters: new Map(),
       fieldCache: this.fieldCache,
       seatableMetadataCache: this.seatableMetadataCache,
       supabaseMetadataCache: this.supabaseMetadataCache,
+      notionSchemaCache: this.notionSchemaCache,
       frontmatterParser: new FrontmatterParser(this.app),
       statusBarFactory: () => this.addStatusBarItem(),
       getDebugMode: () => this.settings.debugMode,
@@ -66,6 +69,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       this.fieldCache,
       this.seatableMetadataCache,
       this.supabaseMetadataCache,
+      this.notionSchemaCache,
     );
     this.addSettingTab(this.settingTab);
   }

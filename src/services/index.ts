@@ -3,9 +3,11 @@ export { FieldCache } from './field-cache';
 export { SeaTableMetadataCache } from './seatable-metadata-cache';
 export { SupabaseMetadataCache, SupabaseSchemaRpcMissingError } from './supabase-metadata-cache';
 export type { SeaTableTable, SeaTableColumn, SeaTableView } from './seatable-metadata-cache';
+export { NotionSchemaCache } from './notion-schema-cache';
 export { AirtableClient } from './airtable-client';
 export { SeaTableClient } from './seatable-client';
 export { SupabaseClient } from './supabase-client';
+export { NotionClient } from './notion-client';
 export {
   registerProvider,
   createProvider,

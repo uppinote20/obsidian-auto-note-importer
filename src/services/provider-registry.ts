@@ -36,6 +36,9 @@ import { seatableCredentialFormRenderer } from './seatable-credential-form';
 import { SupabaseClient } from './supabase-client';
 import { supabaseFieldMapper } from './supabase-field-mapper';
 import { supabaseCredentialFormRenderer } from './supabase-credential-form';
+import { NotionClient } from './notion-client';
+import { notionFieldMapper } from './notion-field-mapper';
+import { notionCredentialFormRenderer } from './notion-credential-form';
 
 /**
  * Factory signature for creating a provider instance.
@@ -177,3 +180,16 @@ registerProvider('supabase', (credential, config, rateLimiter, _debugMode, share
 
 registerFieldTypeMapper('supabase', supabaseFieldMapper);
 registerCredentialFormRenderer('supabase', supabaseCredentialFormRenderer);
+
+// Notion providers use SharedServices.notionSchemaCache for property-type
+// schema caching — see notion-client.ts's fail-fast deviation from the
+// SeaTable/Supabase fail-open precedent.
+registerProvider('notion', (credential, config, rateLimiter, debugMode, shared) => {
+  if (credential.type !== 'notion') {
+    throw new Error(`Notion factory received non-notion credential: ${credential.type}`);
+  }
+  return new NotionClient(credential, config, rateLimiter, debugMode, shared.notionSchemaCache);
+});
+
+registerFieldTypeMapper('notion', notionFieldMapper);
+registerCredentialFormRenderer('notion', notionCredentialFormRenderer);

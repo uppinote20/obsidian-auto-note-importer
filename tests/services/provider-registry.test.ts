@@ -111,7 +111,6 @@ describe('provider-registry', () => {
     });
 
     it('should not register pending providers by default', () => {
-      expect(hasProvider('notion')).toBe(false);
       expect(hasProvider('custom-api')).toBe(false);
     });
 
@@ -126,7 +125,7 @@ describe('provider-registry', () => {
     });
 
     it('should not register pending field type mappers by default', () => {
-      expect(hasFieldTypeMapper('notion')).toBe(false);
+      expect(hasFieldTypeMapper('custom-api')).toBe(false);
     });
 
     it('should register airtable credential form renderer on module load', () => {
@@ -140,14 +139,14 @@ describe('provider-registry', () => {
     });
 
     it('should not register pending credential form renderers by default', () => {
-      expect(hasCredentialFormRenderer('notion')).toBe(false);
+      expect(hasCredentialFormRenderer('custom-api')).toBe(false);
     });
   });
 
   describe('getFieldTypeMapper', () => {
     it('should throw when no mapper is registered for credential type', () => {
-      expect(() => getFieldTypeMapper('notion')).toThrow(
-        /No field type mapper registered for credential type: notion/,
+      expect(() => getFieldTypeMapper('custom-api')).toThrow(
+        /No field type mapper registered for credential type: custom-api/,
       );
     });
 
@@ -169,8 +168,8 @@ describe('provider-registry', () => {
 
   describe('getCredentialFormRenderer', () => {
     it('should throw when no renderer is registered for credential type', () => {
-      expect(() => getCredentialFormRenderer('notion')).toThrow(
-        /No credential form renderer registered for credential type: notion/,
+      expect(() => getCredentialFormRenderer('custom-api')).toThrow(
+        /No credential form renderer registered for credential type: custom-api/,
       );
     });
 
@@ -235,15 +234,17 @@ describe('provider-registry', () => {
     it('should throw when no factory is registered for credential type', () => {
       const credential: Credential = {
         id: 'cred-2',
-        name: 'Notion',
-        type: 'notion',
-        integrationToken: 'secret_xxx',
+        name: 'Custom',
+        type: 'custom-api',
+        baseUrl: 'https://api.example.com',
+        authHeader: 'X-API-Key',
+        authValue: 'secret',
       };
       const config = createConfig();
       const rateLimiter = new RateLimiter(0);
 
       expect(() => createProvider(credential, config, rateLimiter, false, dummyShared)).toThrow(
-        /No provider registered for credential type: notion/,
+        /No provider registered for credential type: custom-api/,
       );
     });
 
@@ -279,11 +280,11 @@ describe('provider-registry', () => {
   describe('registerProvider', () => {
     it('should add a new factory that hasProvider detects', () => {
       const fakeFactory = vi.fn();
-      expect(hasProvider('notion')).toBe(false);
+      expect(hasProvider('custom-api')).toBe(false);
 
-      registerProvider('notion', fakeFactory);
+      registerProvider('custom-api', fakeFactory);
 
-      expect(hasProvider('notion')).toBe(true);
+      expect(hasProvider('custom-api')).toBe(true);
     });
 
     it('should overwrite an existing factory for the same type', () => {

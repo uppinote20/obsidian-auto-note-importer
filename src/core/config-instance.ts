@@ -23,6 +23,7 @@ import type {
   DatabaseProvider,
 } from '../types';
 import { RateLimiter, createProvider } from '../services';
+import { PROVIDER_RATE_LIMIT_INTERVALS, RATE_LIMIT_INTERVAL_MS } from '../constants';
 import { SyncQueue, ConflictResolver, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
 import { FileWatcher } from '../file-operations';
@@ -66,7 +67,7 @@ export class ConfigInstance {
     this.settings = buildLegacySettings(config, credential, shared.getDebugMode());
 
     // 1. Get or create RateLimiter (shared per credential)
-    this.rateLimiter = this.getOrCreateRateLimiter(credential.id);
+    this.rateLimiter = this.getOrCreateRateLimiter(credential);
 
     // 2. Create DatabaseProvider via registry (based on credential.type)
     this.databaseProvider = createProvider(
@@ -155,7 +156,7 @@ export class ConfigInstance {
     this.settings = buildLegacySettings(config, credential, this.shared.getDebugMode());
 
     // Update RateLimiter if credential changed
-    const newRateLimiter = this.getOrCreateRateLimiter(credential.id);
+    const newRateLimiter = this.getOrCreateRateLimiter(credential);
     if (newRateLimiter !== this.rateLimiter) {
       this.rateLimiter = newRateLimiter;
     }
@@ -190,13 +191,15 @@ export class ConfigInstance {
 
   /**
    * Gets or creates a shared RateLimiter for the given credential.
+   * Uses the credential's per-type interval override (e.g. Notion's
+   * tighter 334ms) when one exists, falling back to the shared default.
    */
-  private getOrCreateRateLimiter(credentialId: string): RateLimiter {
-    let limiter = this.shared.rateLimiters.get(credentialId);
+  private getOrCreateRateLimiter(credential: Credential): RateLimiter {
+    let limiter = this.shared.rateLimiters.get(credential.id);
     if (!limiter) {
-      limiter = new RateLimiter();
+      limiter = new RateLimiter(PROVIDER_RATE_LIMIT_INTERVALS[credential.type] ?? RATE_LIMIT_INTERVAL_MS);
       limiter.setDebugMode(this.shared.getDebugMode());
-      this.shared.rateLimiters.set(credentialId, limiter);
+      this.shared.rateLimiters.set(credential.id, limiter);
     }
     return limiter;
   }
