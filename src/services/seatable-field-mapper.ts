@@ -77,18 +77,29 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
 
 // Types whose SeaTable API value is an object, NOT a scalar string.
 // collaborator → array of { name, email, … }; geolocation → { lng, lat,
-// country_region }; button → link-formula-like object. Their standard-type
+// country_region }; button → link-formula-like object; file → array of
+// { name, size, type, url, upload_time }; digital-sign → { username,
+// sign_image_url, sign_time }; link → array of { row_id, display_value }
+// (source: SeaTable API reference /reference/models). `image` is
+// deliberately excluded — its API value is an array of URL strings, which
+// round-trips through YAML frontmatter fine. Their standard-type
 // classification doesn't capture this — explicit exclusion.
 const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
   'collaborator',
   'geolocation',
   'button',
+  'file',
+  'digital-sign',
+  'link',
 ]);
 
 // Excludes attachment (image / file / digital-sign) and link types — they
 // stringify to JSON / record-id garbage when used as folder names — and
-// explicit object-shaped types (see OBJECT_SHAPED_TYPES). Sorted for
-// deterministic enumeration across providers.
+// explicit object-shaped types (see OBJECT_SHAPED_TYPES). file / digital-sign
+// / link are redundantly listed in both filters (attachment/link std-type AND
+// OBJECT_SHAPED_TYPES) — belt-and-suspenders, matching the Airtable-side
+// comment on its SUBFOLDER_SAFE_TYPES. Sorted for deterministic enumeration
+// across providers.
 const SUBFOLDER_SAFE_TYPES = Object.entries(TYPE_TO_STANDARD)
   .filter(([t, std]) =>
     std !== 'attachment' &&

@@ -162,6 +162,11 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.isPushable('multipleCollaborators')).toBe(false);
     });
 
+    it('should return false for attachment fields (object-array API value, does not round-trip through YAML) but true for id-string link fields (#107)', () => {
+      expect(airtableFieldMapper.isPushable('multipleAttachments')).toBe(false);
+      expect(airtableFieldMapper.isPushable('multipleRecordLinks')).toBe(true);
+    });
+
     it('should fail closed for unknown and prototype-chain names', () => {
       for (const t of ['bogusType', '', 'toString', 'constructor', 'hasOwnProperty', 'valueOf', '__proto__']) {
         expect(airtableFieldMapper.isPushable(t)).toBe(false);
@@ -176,7 +181,8 @@ describe('airtableFieldMapper', () => {
     // [object Object] / record-id JSON — produces garbage folder names.
     it('should return true for stringifiable known types (text / number / date / select / formula / system)', () => {
       // Excludes OBJECT_SHAPED_TYPES (collaborator / barcode / button / aiText /
-      // externalSyncSource / lookup) — covered by a separate test below.
+      // externalSyncSource / lookup / multipleAttachments) — covered by a
+      // separate test below.
       const stringifiable = [
         'singleLineText', 'multilineText', 'richText', 'email', 'phoneNumber', 'url',
         'number', 'currency', 'percent', 'rating', 'duration',
