@@ -777,6 +777,42 @@ describe('SupabaseClient.fetchFieldMetadata', () => {
     expect(metadata).toBeNull();
   });
 
+  it('reads columns from the base table, not the view, even when viewId is set (#127 P1)', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:     { type: 'string', description: '<pk/>' },
+            title:  { type: 'string' },
+            status: { type: 'string' },
+          },
+          required: ['id'],
+        },
+        // Projection view exposes fewer columns than the base table.
+        active_notes: {
+          properties: {
+            id:    { type: 'string', description: '<pk/>' },
+            title: { type: 'string' },
+          },
+          required: ['id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+    const c = new SupabaseClient(cred, makeConfig({ viewId: 'active_notes' }), new RateLimiter(), cache);
+
+    const metadata = await c.fetchFieldMetadata();
+
+    // Must reflect the base table's `status` column, not just the view's columns.
+    expect(metadata).toEqual([
+      { name: 'id', type: 'string' },
+      { name: 'title', type: 'string' },
+      { name: 'status', type: 'string' },
+    ]);
+  });
+
   it('serves from the metadata cache so two calls make one underlying request', async () => {
     const cache = new SupabaseMetadataCache();
     mockRequestUrl.mockResolvedValueOnce({

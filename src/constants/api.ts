@@ -87,6 +87,11 @@ export const SEATABLE_BASE_TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 export const SEATABLE_BASE_TOKEN_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
+ * TTL for the cached column-name → column-type map (loadColumnTypes).
+ */
+export const SEATABLE_METADATA_TTL_MS = 10 * 60 * 1000;
+
+/**
  * Default PostgreSQL schema exposed by Supabase. Most user tables live here.
  */
 export const SUPABASE_DEFAULT_SCHEMA = 'public';

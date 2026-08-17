@@ -336,9 +336,11 @@ describe('AirtableClient', () => {
       }));
 
       const metadata = await client.fetchFieldMetadata();
+      // RemoteFieldInfo only contracts name/type — `id` is an
+      // AirtableField-internal detail that callers must not rely on.
       expect(metadata).toEqual([
-        { id: 'fld1', name: 'Name', type: 'singleLineText' },
-        { id: 'fld2', name: 'Attachment', type: 'multipleAttachments' },
+        expect.objectContaining({ name: 'Name', type: 'singleLineText' }),
+        expect.objectContaining({ name: 'Attachment', type: 'multipleAttachments' }),
       ]);
     });
 

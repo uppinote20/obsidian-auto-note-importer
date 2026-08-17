@@ -104,7 +104,11 @@ export class NotionClient implements DatabaseProvider {
     try {
       const schema = await this.schemaCache.getSchema(this.credential, this.config.tableId);
       return Array.from(schema, ([name, type]) => ({ name, type }));
-    } catch {
+    } catch (error) {
+      if (this.debugMode) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Field metadata unavailable: ${message}`);
+      }
       return null;
     }
   }

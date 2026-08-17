@@ -394,7 +394,11 @@ export class SyncOrchestrator {
     // fails open with null (#124). The defensive catch is belt-and-suspenders —
     // the contract already forbids rejection.
     let remoteFields: RemoteFieldInfo[] | null = null;
-    try { remoteFields = await this.provider.fetchFieldMetadata(); } catch { remoteFields = null; }
+    try {
+      remoteFields = await this.provider.fetchFieldMetadata();
+    } catch {
+      remoteFields = null;
+    }
 
     const batchUpdates: BatchUpdate[] = [];
     let errorCount = 0;

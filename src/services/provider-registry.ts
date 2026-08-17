@@ -159,11 +159,11 @@ registerCredentialFormRenderer('airtable', airtableCredentialFormRenderer);
 // SeaTable providers read auth fields directly from their narrowed credential
 // (per handbook §4.4 step 6) — they bypass buildLegacySettings's `apiKey`
 // reservation entirely.
-registerProvider('seatable', (credential, config, rateLimiter, _debugMode, _shared) => {
+registerProvider('seatable', (credential, config, rateLimiter, debugMode, _shared) => {
   if (credential.type !== 'seatable') {
     throw new Error(`SeaTable factory received non-seatable credential: ${credential.type}`);
   }
-  return new SeaTableClient(credential, config, rateLimiter);
+  return new SeaTableClient(credential, config, rateLimiter, debugMode);
 });
 
 registerFieldTypeMapper('seatable', seatableFieldMapper);
@@ -171,11 +171,11 @@ registerCredentialFormRenderer('seatable', seatableCredentialFormRenderer);
 
 // Supabase providers use SharedServices.supabaseMetadataCache for OpenAPI
 // schema caching — the factory is registered here alongside mapper and renderer.
-registerProvider('supabase', (credential, config, rateLimiter, _debugMode, shared) => {
+registerProvider('supabase', (credential, config, rateLimiter, debugMode, shared) => {
   if (credential.type !== 'supabase') {
     throw new Error(`Supabase factory received non-supabase credential: ${credential.type}`);
   }
-  return new SupabaseClient(credential, config, rateLimiter, shared.supabaseMetadataCache);
+  return new SupabaseClient(credential, config, rateLimiter, shared.supabaseMetadataCache, debugMode);
 });
 
 registerFieldTypeMapper('supabase', supabaseFieldMapper);
