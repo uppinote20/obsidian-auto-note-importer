@@ -170,6 +170,10 @@ export class NotionClient implements DatabaseProvider {
     }
 
     const json = response.json as NotionPage;
+    // A trashed page still resolves by ID — treat it like 404 so single-note
+    // pulls and conflict lookups never re-hydrate trashed content (mirrors
+    // the fetchNotes guard).
+    if (json.in_trash) return null;
     return { id: json.id, primaryField: json.id, fields: flattenNotionProperties(json.properties) };
   }
 
