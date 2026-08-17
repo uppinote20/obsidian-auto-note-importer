@@ -312,3 +312,171 @@ describe('NotionClient.fetchFieldMetadata', () => {
     expect(mockRequestUrl).not.toHaveBeenCalled();
   });
 });
+
+describe('NotionClient capabilities.bodySync', () => {
+  it('advertises bodySync: pull', () => {
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    expect(c.capabilities.bodySync).toBe('pull');
+  });
+});
+
+describe('NotionClient.fetchBody', () => {
+  function childrenResponse(results: unknown[], overrides: Record<string, unknown> = {}) {
+    return { status: 200, json: { results, has_more: false, next_cursor: null, ...overrides } };
+  }
+
+  it('throws when recordId is empty', async () => {
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    await expect(c.fetchBody('')).rejects.toThrow(/empty/i);
+  });
+
+  it('merges paginated root children and threads the cursor', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce(childrenResponse(
+        [{ id: 'b1', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', plain_text: 'first' }] } }],
+        { has_more: true, next_cursor: 'cursor-1' },
+      ))
+      .mockResolvedValueOnce(childrenResponse(
+        [{ id: 'b2', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', plain_text: 'second' }] } }],
+      ));
+
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    const body = await c.fetchBody('page-1');
+
+    expect(body).toBe('first\n\nsecond');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+
+    const firstUrl = mockRequestUrl.mock.calls[0][0].url as string;
+    expect(firstUrl).toContain('/blocks/page-1/children');
+    expect(firstUrl).toContain('page_size=100');
+    expect(firstUrl).not.toContain('start_cursor');
+
+    const secondUrl = mockRequestUrl.mock.calls[1][0].url as string;
+    expect(secondUrl).toContain('start_cursor=cursor-1');
+  });
+
+  it('fetches nested children and converts them to markdown', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce(childrenResponse([
+        { id: 'p1', type: 'paragraph', has_children: true, paragraph: { rich_text: [{ type: 'text', plain_text: 'parent' }] } },
+      ]))
+      .mockResolvedValueOnce(childrenResponse([
+        { id: 'c1', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', plain_text: 'child' }] } },
+      ]));
+
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    const body = await c.fetchBody('page-1');
+
+    expect(body).toBe('parent\n\nchild');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns null when the root page is not found (404)', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 404, json: {} });
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    expect(await c.fetchBody('missing-page')).toBeNull();
+  });
+
+  it('throws on a non-404 root fetch failure', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 500, json: { message: 'boom' } });
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    await expect(c.fetchBody('page-1')).rejects.toThrow(/page-1/);
+  });
+
+  it('degrades a child fetch failure to a subtree marker instead of throwing', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce(childrenResponse([
+        { id: 'p1', type: 'paragraph', has_children: true, paragraph: { rich_text: [{ type: 'text', plain_text: 'parent' }] } },
+      ]))
+      .mockResolvedValueOnce({ status: 500, json: { message: 'boom' } });
+
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    const body = await c.fetchBody('page-1');
+
+    expect(body).toBe('parent\n\n<!-- Body truncated: children unavailable -->');
+  });
+
+  it('degrades a 404 child fetch to a subtree marker but still returns the rest of the body', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce(childrenResponse([
+        { id: 'p1', type: 'paragraph', has_children: true, paragraph: { rich_text: [{ type: 'text', plain_text: 'parent' }] } },
+      ]))
+      .mockResolvedValueOnce({ status: 404, json: {} });
+
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    const body = await c.fetchBody('page-1');
+
+    expect(body).toBe('parent\n\n<!-- Body truncated: children unavailable -->');
+  });
+
+  it('returns an empty string for a root page with no blocks', async () => {
+    mockRequestUrl.mockResolvedValueOnce(childrenResponse([]));
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    expect(await c.fetchBody('page-1')).toBe('');
+  });
+
+  it('skips in_trash root blocks', async () => {
+    mockRequestUrl.mockResolvedValueOnce(childrenResponse([
+      { id: 'b1', type: 'paragraph', in_trash: true, paragraph: { rich_text: [{ type: 'text', plain_text: 'gone' }] } },
+      { id: 'b2', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', plain_text: 'kept' }] } },
+    ]));
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    expect(await c.fetchBody('page-1')).toBe('kept');
+  });
+
+  it('paces every request through the rate limiter', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce(childrenResponse([
+        { id: 'p1', type: 'paragraph', has_children: true, paragraph: { rich_text: [{ type: 'text', plain_text: 'parent' }] } },
+      ]))
+      .mockResolvedValueOnce(childrenResponse([]));
+
+    const limiter = new RateLimiter(0);
+    const executeSpy = vi.spyOn(limiter, 'execute');
+    const client = new NotionClient(cred, makeConfig(), limiter, false, new NotionSchemaCache());
+    await client.fetchBody('page-1');
+
+    expect(executeSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops descending once the per-note request budget is exhausted and reports a truncation marker', async () => {
+    const WIDTH = 100;
+    const rootChildren = Array.from({ length: WIDTH }, (_, i) => ({
+      id: `child-${i}`,
+      type: 'paragraph',
+      has_children: true,
+      paragraph: { rich_text: [{ type: 'text', plain_text: `node-${i}` }] },
+    }));
+
+    mockRequestUrl.mockImplementation((opts?: { url: string }) => {
+      if (opts?.url.includes('/blocks/page-1/children')) {
+        return Promise.resolve(childrenResponse(rootChildren));
+      }
+      // Every grandchild request returns no further children, terminating recursion.
+      return Promise.resolve(childrenResponse([]));
+    });
+
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    const body = await c.fetchBody('page-1');
+
+    expect(body).toContain('<!-- Body truncated: children unavailable -->');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(60); // NOTION_BODY_MAX_REQUESTS_PER_NOTE
+  });
+
+  it('appends the pagination-truncation marker when the root list itself spans more pages than the budget covers', async () => {
+    let call = 0;
+    mockRequestUrl.mockImplementation(() => {
+      call++;
+      return Promise.resolve(childrenResponse(
+        [{ id: `b${call}`, type: 'paragraph', paragraph: { rich_text: [{ type: 'text', plain_text: `n${call}` }] } }],
+        { has_more: true, next_cursor: `cursor-${call}` },
+      ));
+    });
+
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    const body = await c.fetchBody('page-1');
+
+    expect(body?.endsWith('<!-- Body truncated: request budget exhausted -->')).toBe(true);
+    expect(mockRequestUrl).toHaveBeenCalledTimes(60); // NOTION_BODY_MAX_REQUESTS_PER_NOTE
+  });
+});

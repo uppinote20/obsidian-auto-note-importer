@@ -8,6 +8,18 @@ import { getNestedValue, formatYamlValue, formatFieldForBases } from '../utils';
 import type { RemoteNote } from '../types';
 
 /**
+ * Resolves a placeholder key against a note's fields, with a special-cased
+ * `body` fallback to `note.body` (the separately-fetched page body) — a
+ * `body` entry in `note.fields` always wins for backward compat.
+ */
+function resolvePlaceholderValue(record: Record<string, unknown>, note: RemoteNote, key: string): unknown {
+  if (key === 'body' && !Object.prototype.hasOwnProperty.call(record, 'body')) {
+    return note.body ?? '';
+  }
+  return getNestedValue(record, key);
+}
+
+/**
  * Replaces placeholders in a template string with values from a RemoteNote object.
  * Supports nested field access using dot notation (e.g., {{Attachment.0.url}}).
  */
@@ -25,7 +37,7 @@ export function parseTemplate(template: string, note: RemoteNote): string {
 
     frontmatter = frontmatter.replace(placeholderInQuotesRegex, (match, keyPrefix, placeholderKey) => {
       const key = placeholderKey.trim();
-      const value = getNestedValue(record, key);
+      const value = resolvePlaceholderValue(record, note, key);
 
       if (value && String(value).includes('\n')) {
         const indentMatch = keyPrefix.match(/^\s*/);
@@ -46,7 +58,7 @@ export function parseTemplate(template: string, note: RemoteNote): string {
   // Replace all placeholders
   return processedTemplate.replace(/\{\{(.*?)\}\}/g, (match, rawKey, offset, originalString) => {
     const key = String(rawKey).trim();
-    const value = getNestedValue(record, key);
+    const value = resolvePlaceholderValue(record, note, key);
 
     if (value == null) return "";
 
@@ -88,7 +100,9 @@ export function buildMarkdownContent(note: RemoteNote): string {
   const fields = note.fields;
 
   const metadata = buildBasesMetadata(note);
-  const contentSections = buildContentSections(fields);
+  const contentSections = note.body && note.body.trim() !== ''
+    ? note.body
+    : buildContentSections(fields);
 
   return `${metadata}\n\n${contentSections}`;
 }
@@ -146,5 +160,5 @@ function buildContentSections(fields: Record<string, unknown>): string {
     sections.push(`## Content\n${fields.script}`);
   }
 
-  return sections.join('\n\n') || '<!-- Content imported from Airtable -->';
+  return sections.join('\n\n') || '<!-- No content fields found -->';
 }

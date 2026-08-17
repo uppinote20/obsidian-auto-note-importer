@@ -2138,6 +2138,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     if (!selectedDataSource) {
       this.renderNotionFieldDropdowns(containerEl, config, mapper, new Map());
       this.renderSubfolderSlashToggle(containerEl, config);
+      if (config.tableId) this.renderSyncPageBodyToggle(containerEl, config);
       return;
     }
 
@@ -2158,6 +2159,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       this.renderNotionDataSourcePicker(containerEl, config, credential, dataSources, labelFor);
       this.renderNotionFieldDropdowns(containerEl, config, mapper, schema);
       this.renderSubfolderSlashToggle(containerEl, config);
+      this.renderSyncPageBodyToggle(containerEl, config);
     }).catch(error => {
       if (this.renderGeneration !== gen) return;
       const message = error instanceof Error ? error.message : 'Check integration token or network.';
@@ -2343,6 +2345,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }));
 
     this.renderSubfolderSlashToggle(containerEl, config);
+    if (config.tableId) this.renderSyncPageBodyToggle(containerEl, config);
   }
 
   private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {
@@ -2692,6 +2695,24 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         .setValue(config.subfolderTreatSlashAsLiteral ?? false)
         .onChange(async value => {
           config.subfolderTreatSlashAsLiteral = value;
+          await this.plugin.saveSettings();
+        }));
+  }
+
+  /**
+   * Notion-only: pulls the page body (below the properties) into the note
+   * body on every pull. Gated on the Notion card's own render paths — no
+   * separate capability check needed here since only Notion configs reach
+   * this helper. See handbook §9.8 / issue #122.
+   */
+  private renderSyncPageBodyToggle(containerEl: HTMLElement, config: ConfigEntry): void {
+    new Setting(containerEl)
+      .setName('Sync page body (pull-only)')
+      .setDesc('Fetches the Notion page content below the properties into the note body on every pull. Local edits to the body are overwritten — Notion is the source of truth. Adds one or more API requests per note.')
+      .addToggle(toggle => toggle
+        .setValue(config.syncPageBody ?? false)
+        .onChange(async value => {
+          config.syncPageBody = value;
           await this.plugin.saveSettings();
         }));
   }

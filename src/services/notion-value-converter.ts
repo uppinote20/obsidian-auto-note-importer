@@ -16,7 +16,7 @@ import type { NotionPropertyValue } from '../types';
 
 type RichTextItem = { plain_text?: string };
 
-function joinRichText(items: unknown): string | null {
+export function joinRichText(items: unknown): string | null {
   if (!Array.isArray(items) || items.length === 0) return null;
   return (items as RichTextItem[]).map(i => i.plain_text ?? '').join('');
 }

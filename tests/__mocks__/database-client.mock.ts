@@ -14,6 +14,7 @@ export type MockDatabaseProvider = {
   fetchFieldMetadata: ReturnType<typeof vi.fn>;
   updateRecord: ReturnType<typeof vi.fn>;
   batchUpdate: ReturnType<typeof vi.fn>;
+  fetchBody?: ReturnType<typeof vi.fn>;
   reconfigure: ReturnType<typeof vi.fn>;
 };
 

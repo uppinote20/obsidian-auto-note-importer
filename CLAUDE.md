@@ -61,6 +61,7 @@ src/
 │   ├── notion-client.ts                 # Notion DatabaseProvider impl (REST API, per-page PATCH batchUpdate)
 │   ├── notion-field-mapper.ts           # Notion type → StandardFieldType
 │   ├── notion-value-converter.ts        # Notion property value flatten (pull) / wrap (push)
+│   ├── notion-block-converter.ts        # Notion block tree → Markdown body (pull-only, injected fetcher)
 │   ├── notion-credential-form.ts        # Notion settings form + connection test
 │   ├── notion-schema-cache.ts           # Data source list + property schema cache (per credential + data source)
 │   ├── provider-registry.ts             # Factory + mapper + form-renderer registry by CredentialType
@@ -112,7 +113,8 @@ src/
 ### Key Design Decisions
 
 - `primaryField` in frontmatter is always the **remote record id** (provider-agnostic immutable identifier)
-- Read-only fields (formula / rollup / lookup / `_ctime` / etc.) are filtered out via `FieldTypeMapper.isReadOnly()` — fail-closed for unknown types
+- Read-only fields (formula / rollup / lookup / `_ctime` / etc.) are filtered out via `FieldTypeMapper.isReadOnly()` — fail-closed for unknown types; push filtering is gated uniformly through `DatabaseProvider.fetchFieldMetadata()` (null = fail-open, handbook §4.4)
+- Page body sync (Notion) is **pull-only** and opt-in per config (`syncPageBody`, default off): `fetchBody()` + `capabilities.bodySync`, body rendered via `{{body}}` or default placement — local body edits are overwritten on pull (follows `allowOverwrite`)
 - Conflict resolution modes: `obsidian-wins`, `remote-wins`, `manual` (renamed from `airtable-wins` in #64)
 - Services receive settings updates via `updateSettings()` — `ConfigInstance.updateSettings()` propagates to all owned services
 - `FileWatcher` is reconfigured on settings change (no reload needed for `watchForChanges`)

@@ -31,6 +31,12 @@ export interface RemoteNote {
   id: string;
   primaryField: string;
   fields: Record<string, unknown>;
+  /**
+   * Markdown note body. Not populated by `fetchNotes()` / `fetchRecord()` —
+   * fetched separately via `DatabaseProvider.fetchBody()` and filled in by
+   * the sync orchestrator only when the config opts into body sync.
+   */
+  body?: string;
 }
 
 /**
@@ -83,6 +89,13 @@ export interface ProviderCapabilities {
    * won't call `batchUpdate()` when `bidirectional` is false.
    */
   batchUpdateMaxSize: number;
+  /**
+   * Whether the provider supports fetching a note's markdown body via
+   * `fetchBody()`. `'pull'` is the only implemented direction; the string
+   * (rather than boolean) reserves `'bidirectional'` for a future push
+   * path. Absent means the provider has no body concept.
+   */
+  bodySync?: 'pull';
 }
 
 /**
@@ -127,6 +140,16 @@ export interface DatabaseProvider {
    * than a per-call failure. See handbook §6.1.
    */
   batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]>;
+
+  /**
+   * Fetches a record's markdown body. Optional — only present when
+   * `capabilities.bodySync` is set. `null` means the page/record is gone
+   * or the body is unavailable; callers proceed fields-only in that case.
+   * Implementations MUST pace every request through the provider's own
+   * rate limiter and MUST bound their own request count (a body can be an
+   * arbitrarily deep/large block tree).
+   */
+  fetchBody?(recordId: string): Promise<string | null>;
 
   /**
    * Reconfigures the provider with new credential, config, and rate limiter.

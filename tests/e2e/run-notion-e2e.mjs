@@ -8,6 +8,7 @@
  * @covers src/services/notion-field-mapper.ts
  * @covers src/services/notion-value-converter.ts
  * @covers src/services/notion-schema-cache.ts
+ * @covers src/services/notion-block-converter.ts
  * @covers src/core/sync-orchestrator.ts
  *
  * Prerequisites:
@@ -32,6 +33,11 @@
  *      and mutates whatever the integration can see, and asserts
  *      *relationships* (Doubled === 2 × Score) rather than fixed seed
  *      values, since the row's prior contents are arbitrary.
+ *   5. The body-sync test is self-contained: it creates its own page (via
+ *      direct Notion API calls from the Node process) with a fixed block
+ *      tree, pulls it with `syncPageBody` flipped on, then archives the
+ *      page (`in_trash: true`) in a `finally` — no schema/manual seeding
+ *      required for that case.
  *
  * Usage:
  *   node tests/e2e/run-notion-e2e.mjs              # leaves rows in place
@@ -62,6 +68,29 @@ const ENV = {
 if (!ENV.token || !ENV.dataSourceId) {
   console.error('Missing NOTION_TOKEN or NOTION_DATA_SOURCE_ID in .env (see tests/e2e/.env.example).');
   process.exit(2);
+}
+
+const NOTION_API_BASE_URL = 'https://api.notion.com/v1';
+const NOTION_VERSION = '2025-09-03';
+
+// Direct-API helper for the body-sync test: it needs to create/mutate a
+// page from the Node process itself (not through the plugin), so it talks
+// to Notion straight rather than routing through CDP like the other tests.
+async function notionApi(path, method = 'GET', body) {
+  const resp = await fetch(`${NOTION_API_BASE_URL}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${ENV.token}`,
+      'Notion-Version': NOTION_VERSION,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const json = await resp.json();
+  if (!resp.ok) {
+    throw new Error(`Notion API ${method} ${path} failed: ${resp.status} ${JSON.stringify(json)}`);
+  }
+  return json;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +296,86 @@ async function cleanup() {
       const expectedDoubled = r.score * 2;
       const pass = r.doubledAfter === expectedDoubled && r.doubledAfter !== 999999;
       return { pass, detail: `score=${r.score} doubledAfter=${r.doubledAfter} (expected ${expectedDoubled}, not 999999)` };
+    });
+
+    // ── Body sync ────────────────────────────────────────────────────
+
+    await test('body / pull converts page blocks to markdown (syncPageBody on)', async () => {
+      let created = null;
+      try {
+        created = await notionApi('/pages', 'POST', {
+          parent: { type: 'data_source_id', data_source_id: ENV.dataSourceId },
+          properties: {
+            Name: { title: [{ text: { content: 'E2E Body Page' } }] },
+            Score: { number: 777 },
+          },
+        });
+
+        await notionApi(`/blocks/${created.id}/children`, 'PATCH', {
+          children: [
+            { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ text: { content: 'plain intro **not bold**' } }] } },
+            { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ text: { content: 'Section' } }] } },
+            { object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ text: { content: 'A bullet' } }] } },
+            { object: 'block', type: 'to_do', to_do: { rich_text: [{ text: { content: 'Done task' } }], checked: true } },
+            { object: 'block', type: 'code', code: { language: 'javascript', rich_text: [{ text: { content: 'const x = 1;' } }] } },
+            {
+              object: 'block',
+              type: 'toggle',
+              toggle: {
+                rich_text: [{ text: { content: 'More' } }],
+                children: [
+                  { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ text: { content: 'Nested inside toggle' } }] } },
+                ],
+              },
+            },
+            { object: 'block', type: 'divider', divider: {} },
+          ],
+        });
+
+        const r = await run(`(async () => {
+          ${HELPERS}
+          const cfg = getConfig();
+          const cred = getCredential(cfg);
+          cfg.syncPageBody = true;
+          getInstance(cfg).updateSettings(cfg, cred);
+          setMode('manual', false, cfg);
+          await enqueueSync('pull', 'all', cfg);
+          await new Promise(r => setTimeout(r, 6000));
+          const file = targetFolderFiles().find(f => f.basename === 'E2E Body Page');
+          if (!file) return JSON.stringify({ found: false });
+          const raw = await app.vault.read(file);
+          // Frontmatter always opens at offset 0 with '---' — skip past it
+          // to find the closing delimiter rather than regex-splitting,
+          // since the body itself may legitimately contain '---' (divider).
+          const body = raw.slice(raw.indexOf('---', 3) + 3);
+          return JSON.stringify({ found: true, body });
+        })()`, 60000);
+
+        if (!r.found) return { pass: false, detail: 'E2E Body Page.md not found in vault after pull' };
+        const body = r.body;
+        const checks = {
+          paragraph: body.includes('plain intro **not bold**'),
+          heading: body.includes('## Section'),
+          todo: body.includes('- [x]'),
+          codeFence: body.includes('```javascript') && body.includes('const x = 1;'),
+          toggle: body.includes('> [!note]+ More') && body.includes('> Nested inside toggle'),
+          divider: body.includes('---'),
+        };
+        const pass = Object.values(checks).every(Boolean);
+        return { pass, detail: `checks=${JSON.stringify(checks)}` };
+      } finally {
+        await run(`(async () => {
+          ${HELPERS}
+          const cfg = getConfig();
+          const cred = getCredential(cfg);
+          cfg.syncPageBody = false;
+          getInstance(cfg).updateSettings(cfg, cred);
+          return JSON.stringify({ ok: true });
+        })()`, 10000).catch(() => {});
+        if (created) {
+          await notionApi(`/pages/${created.id}`, 'PATCH', { in_trash: true }).catch(() => {});
+        }
+      }
     });
 
     // ── Summary ─────────────────────────────────────────────────────

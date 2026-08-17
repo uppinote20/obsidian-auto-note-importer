@@ -77,6 +77,33 @@ describe('parseTemplate', () => {
     expect(result).toBe('[Object]');
   });
 
+  it('should resolve {{body}} to note.body when no body field exists', () => {
+    const note: RemoteNote = { id: 'rec123', primaryField: 'rec123', fields: {}, body: 'Body text' };
+    const result = parseTemplate('# {{title}}\n{{body}}', note);
+    expect(result).toBe('# \nBody text');
+  });
+
+  it('should let an actual body field win over note.body', () => {
+    const note: RemoteNote = {
+      id: 'rec123', primaryField: 'rec123',
+      fields: { body: 'Field body' }, body: 'Note body'
+    };
+    const result = parseTemplate('{{body}}', note);
+    expect(result).toBe('Field body');
+  });
+
+  it('should insert multiline body raw (not YAML-escaped) in the body region', () => {
+    const note: RemoteNote = { id: 'rec123', primaryField: 'rec123', fields: {}, body: 'Line one\nLine two' };
+    const result = parseTemplate('# Note\n\n{{body}}', note);
+    expect(result).toBe('# Note\n\nLine one\nLine two');
+  });
+
+  it('should resolve {{body}} to empty string when note.body is undefined', () => {
+    const note: RemoteNote = { id: 'rec123', primaryField: 'rec123', fields: {} };
+    const result = parseTemplate('{{body}}', note);
+    expect(result).toBe('');
+  });
+
   it('should handle whitespace in placeholder keys', () => {
     const note = createNote({ title: 'Test' });
     const result = parseTemplate('{{  title  }}', note);
@@ -141,6 +168,35 @@ describe('buildMarkdownContent', () => {
   it('should include content comment when no content fields exist', () => {
     const note = createNote({});
     const result = buildMarkdownContent(note);
-    expect(result).toContain('<!-- Content imported from Airtable -->');
+    expect(result).toContain('<!-- No content fields found -->');
+  });
+
+  it('should replace default content sections with note.body when present', () => {
+    const note: RemoteNote = {
+      id: 'rec123', primaryField: 'rec123',
+      fields: { description: 'Test description' },
+      body: 'Page body content',
+    };
+    const result = buildMarkdownContent(note);
+    expect(result).toContain('Page body content');
+    expect(result).not.toContain('## Description');
+  });
+
+  it('should fall back to default content sections when note.body is empty/whitespace', () => {
+    const note: RemoteNote = {
+      id: 'rec123', primaryField: 'rec123',
+      fields: { description: 'Test description' },
+      body: '   ',
+    };
+    const result = buildMarkdownContent(note);
+    expect(result).toContain('## Description');
+    expect(result).toContain('Test description');
+  });
+
+  it('should stay byte-identical without note.body (no template)', () => {
+    const note = createNote({ description: 'Test description' });
+    const withoutBody = buildMarkdownContent(note);
+    const withUndefinedBody: RemoteNote = { ...note, body: undefined };
+    expect(buildMarkdownContent(withUndefinedBody)).toBe(withoutBody);
   });
 });

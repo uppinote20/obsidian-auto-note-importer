@@ -46,6 +46,7 @@ export interface LegacySettings {
   filenameFieldName: string;
   subfolderFieldName: string;
   subfolderTreatSlashAsLiteral: boolean;
+  syncPageBody: boolean;
   bidirectionalSync: boolean;
   conflictResolution: ConflictResolutionMode;
   watchForChanges: boolean;
@@ -91,6 +92,7 @@ export const DEFAULT_LEGACY_SETTINGS: LegacySettings = {
   filenameFieldName: 'title',
   subfolderFieldName: '',
   subfolderTreatSlashAsLiteral: false,
+  syncPageBody: false,
   bidirectionalSync: false,
   conflictResolution: 'manual',
   watchForChanges: true,
