@@ -124,7 +124,7 @@ Each provider's native types map to a normalized taxonomy (`text` / `number` / `
 
 **Supabase** — filename-safe: `string`, `string:uuid`, `integer` (+ `:readonly` variants) · read-only: anything the PostgREST spec flags `readOnly` (generated columns, view columns) · mapping: `text`/`uuid` → text, `integer`/`numeric` → number, `boolean` → boolean, `date`/`timestamptz` → date, `json(b)` → text, arrays → multi-select
 
-**Notion** — filename-safe: `title`, `select`, `status`, `number`, `email`, `phone_number`, `unique_id` · read-only: `formula`, `rollup`, `created_time/by`, `last_edited_time/by`, `unique_id`, `button` · pushable even though object-valued (the plugin rebuilds the API shape): `title`, `rich_text`, `select`, `status`, `multi_select`, `date` · never pushed: `people`, `files`, `relation`
+**Notion** — filename-safe: `title`, `select`, `status`, `number`, `email`, `phone_number`, `unique_id` · read-only: `formula`, `rollup`, `created_time/by`, `last_edited_time/by`, `unique_id`, `button` · pushable: `title`, `rich_text`, `number`, `checkbox`, `select`, `status`, `multi_select`, `date`, `url`, `email`, `phone_number` (object-valued ones are rebuilt into the API shape on push) · never pushed: `people`, `files`, `relation`
 </details>
 
 ## 🔄 How It Works

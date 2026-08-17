@@ -2,15 +2,15 @@
 
 All suites drive a real Obsidian instance over the Chrome DevTools Protocol. Prerequisites for every suite:
 
-1. Obsidian running with `--remote-debugging-port=9222` (the `*:full` scripts launch it for you)
-2. The plugin built and deployed to the open vault (`*:full` also does this)
-3. Provider credentials in a repo-root `.env` — see `.env.example`
+1. Obsidian running with `--remote-debugging-port=9222` — the `*:full` scripts launch it for you, **macOS only** (`start-e2e.sh` hardcodes `/Applications/Obsidian.app`; on Linux/Windows start Obsidian with the flag yourself and use the non-`full` commands)
+2. The plugin **installed in the vault at least once** (folder `.obsidian/plugins/auto-note-importer` must exist) — `*:full` copies a fresh build into an existing install but does not create it on a brand-new vault
+3. Provider credentials in a **repo-root `.env`** (not inside `tests/e2e/`) — annotated template: [`tests/e2e/.env.example`](./.env.example)
 
 | Suite | Command | Needs |
 |:---|:---|:---|
-| Airtable sync / settings | `npm run test:e2e` · `test:e2e:settings` | An Airtable credential configured in the vault |
+| Airtable sync / settings | `npm run test:e2e` · `test:e2e:settings` | An Airtable credential configured in the vault **plus `AIRTABLE_E2E_BASE_ID` + `AIRTABLE_E2E_TABLE_ID` in `.env`** (`run-e2e.mjs` exits without them) |
 | SeaTable | `test:e2e:seatable{,:settings,:full}` | `SEATABLE_*` in `.env` |
-| Supabase | `test:e2e:supabase{,:settings,:full}` | `SUPABASE_*` in `.env` + demo schema below |
+| Supabase | `test:e2e:supabase{,:settings,:full}` | `SUPABASE_URL` + `SUPABASE_KEY` in `.env` + demo schema below |
 | Notion | `test:e2e:notion{,:settings,:full}` | `NOTION_*` in `.env` + a data source shared with the integration |
 
 Run e2e with only the target vault open in Obsidian — the harness attaches to the first Obsidian window it finds.
@@ -65,11 +65,18 @@ The body-sync scenario creates and archives its own page — no manual cleanup n
 ## .env keys
 
 ```ini
-SEATABLE_SERVER_URL=…   SEATABLE_API_TOKEN=…   SEATABLE_TABLE_ID=…
+# Airtable (token itself is reused from the vault's first Airtable credential)
+AIRTABLE_E2E_BASE_ID=app…        AIRTABLE_E2E_TABLE_ID=tbl…      AIRTABLE_E2E_FOLDER_PATH=Airtable-E2E
+# SeaTable
+SEATABLE_SERVER_URL=https://cloud.seatable.io
+SEATABLE_API_TOKEN=…             SEATABLE_TABLE_ID=0000
+SEATABLE_VIEW_ID=                SEATABLE_FOLDER_PATH=SeaTable-E2E
+# Supabase
 SUPABASE_URL=https://<ref>.supabase.co
 SUPABASE_KEY=sb_publishable_…
-NOTION_TOKEN=ntn_…
-NOTION_DATA_SOURCE_ID=…
+# Notion
+NOTION_TOKEN=ntn_…               NOTION_DATA_SOURCE_ID=…
+NOTION_DATABASE_ID=              NOTION_FOLDER_PATH=NotionE2E
 ```
 
-See `.env.example` for the full annotated list.
+[`./.env.example`](./.env.example) carries the fully annotated version (copy it to the repo root as `.env`).
