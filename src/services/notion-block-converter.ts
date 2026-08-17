@@ -29,6 +29,27 @@ const UNRESOLVED_SYNCED_BLOCK_MARKER = '<!-- Unresolved synced block -->';
 type FetchChildren = (blockId: string) => Promise<NotionBlock[] | null>;
 
 /**
+ * Remote Notion content is untrusted (a shared workspace means other
+ * people author it) — values landing in structural Markdown positions
+ * must not be able to break out of them.
+ *
+ * Link/image targets: only http(s)/mailto schemes survive (kills
+ * `javascript:` payloads); characters that terminate or corrupt a
+ * `](…)` target are percent-encoded. Returns null for rejected URLs so
+ * callers degrade to plain text.
+ */
+function sanitizeUrl(url: string | undefined): string | null {
+  const u = (url ?? '').trim();
+  if (!/^(https?:\/\/|mailto:)/i.test(u)) return null;
+  return u.replace(/[\s<>()]/g, ch => `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
+}
+
+/** Keeps HTML-comment markers unescapable: `-->` can never form. */
+function sanitizeForComment(value: string): string {
+  return value.replace(/[^a-z0-9_]/gi, '_');
+}
+
+/**
  * Renders a Notion `rich_text` array into inline Markdown. Annotations are
  * applied innermost-first: code, then bold, italic, strikethrough, then
  * underline (`<u>`) and background-color highlight (`==`); a link href
@@ -51,7 +72,8 @@ function renderRichTextItem(item: NotionRichTextItem): string {
   if (a?.strikethrough) text = `~~${text}~~`;
   if (a?.underline) text = `<u>${text}</u>`;
   if (a?.color && a.color.endsWith('_background')) text = `==${text}==`;
-  if (item.href) text = `[${text}](${item.href})`;
+  const safeHref = sanitizeUrl(item.href ?? undefined);
+  if (safeHref) text = `[${text}](${safeHref})`;
   return text;
 }
 
@@ -244,9 +266,14 @@ async function renderCallout(
 
 function renderCode(block: NotionBlock): string {
   const data = block.code as { rich_text?: NotionRichTextItem[]; language?: string } | undefined;
-  const lang = data?.language === 'plain text' ? '' : data?.language ?? '';
+  // Language lands on the fence line — strip backticks/whitespace so a
+  // crafted value can't break or extend the fence.
+  const lang = (data?.language === 'plain text' ? '' : data?.language ?? '').replace(/[`\s]/g, '');
   const content = (data?.rich_text ?? []).map(i => i.plain_text ?? '').join('');
-  return `\`\`\`${lang}\n${content}\n\`\`\``;
+  // A backtick run in the content must never close the fence — grow it.
+  const longestRun = (content.match(/`+/g) ?? []).reduce((m, r) => Math.max(m, r.length), 0);
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return `${fence}${lang}\n${content}\n${fence}`;
 }
 
 function renderEquationBlock(block: NotionBlock): string {
@@ -262,7 +289,7 @@ async function renderTable(block: NotionBlock, fetchChildren: FetchChildren): Pr
   const rowCells = rows.map(row => {
     const cells = (row.table_row as { cells?: NotionRichTextItem[][] } | undefined)?.cells ?? [];
     return cells.map(cell => {
-      const rendered = richTextToMarkdown(cell ?? []).replace(/\n/g, '<br>');
+      const rendered = richTextToMarkdown(cell ?? []).replace(/\|/g, '\\|').replace(/\n/g, '<br>');
       return rendered === '' ? ' ' : rendered;
     });
   });
@@ -309,8 +336,8 @@ function renderImage(block: NotionBlock): string {
     file?: { url?: string };
   } | undefined;
   const caption = richTextToMarkdown(data?.caption ?? []);
-  const url = data?.external?.url ?? data?.file?.url ?? '';
-  return `![${caption}](${url})`;
+  const url = sanitizeUrl(data?.external?.url ?? data?.file?.url);
+  return url ? `![${caption}](${url})` : caption;
 }
 
 function renderFileLikeBlock(block: NotionBlock): string {
@@ -321,17 +348,17 @@ function renderFileLikeBlock(block: NotionBlock): string {
     file?: { url?: string };
   } | undefined;
   const caption = richTextToMarkdown(data?.caption ?? []);
-  const url = data?.external?.url ?? data?.file?.url ?? '';
+  const url = sanitizeUrl(data?.external?.url ?? data?.file?.url);
   const label = data?.name || caption || 'attachment';
-  return `[${label}](${url})`;
+  return url ? `[${label}](${url})` : label;
 }
 
 function renderLinkBlock(block: NotionBlock): string {
   const data = block[block.type] as { url?: string; caption?: NotionRichTextItem[] } | undefined;
-  const url = data?.url ?? '';
+  const url = sanitizeUrl(data?.url);
   const caption = richTextToMarkdown(data?.caption ?? []);
-  const label = caption || url;
-  return `[${label}](${url})`;
+  const label = caption || url || '';
+  return url ? `[${label}](${url})` : label;
 }
 
 async function renderSyncedBlock(
@@ -442,7 +469,7 @@ async function renderBlock(
     case 'child_database':
       return renderChildDatabase(block);
     default:
-      return `<!-- Unsupported block: ${block.type} -->`;
+      return `<!-- Unsupported block: ${sanitizeForComment(block.type)} -->`;
   }
 }
 

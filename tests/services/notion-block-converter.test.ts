@@ -367,3 +367,69 @@ describe('blocksToMarkdown', () => {
     expect(md).toBe('- level1\n    - level2\n        <!-- Body truncated: max depth -->');
   });
 });
+
+// Remote Notion content is untrusted (shared workspaces) — structural
+// markdown sinks must not be escapable by crafted values.
+describe('untrusted-content hardening', () => {
+  const noChildren = async () => [];
+
+  it('drops non-http(s) URLs from links and images (label preserved, no link)', async () => {
+    const md = await blocksToMarkdown([
+      { id: 'b1', type: 'image', image: { external: { url: 'javascript:alert(1)' }, caption: [{ plain_text: 'pic' }] } },
+      { id: 'b2', type: 'bookmark', bookmark: { url: 'javascript:alert(2)', caption: [{ plain_text: 'bm' }] } },
+    ], noChildren);
+    expect(md).not.toContain('javascript:');
+    expect(md).toContain('pic');
+    expect(md).toContain('bm');
+  });
+
+  it('percent-encodes URL characters that break the markdown link target', async () => {
+    const md = await blocksToMarkdown([
+      { id: 'b1', type: 'bookmark', bookmark: { url: 'https://x.test/a b(c)<d>' } },
+    ], noChildren);
+    expect(md).toContain('https://x.test/a%20b%28c%29%3Cd%3E');
+    expect(md).not.toMatch(/\]\([^)]*[ (<]/);
+  });
+
+  it('sanitizes javascript: hrefs in rich text but keeps the text', () => {
+    const md = richTextToMarkdown([
+      { plain_text: 'click', href: 'javascript:alert(1)' },
+      { plain_text: 'ok', href: 'https://x.test/p' },
+    ]);
+    expect(md).toContain('click');
+    expect(md).not.toContain('javascript:');
+    expect(md).toContain('[ok](https://x.test/p)');
+  });
+
+  it('grows the code fence beyond any backtick run in the content', async () => {
+    const md = await blocksToMarkdown([
+      { id: 'b1', type: 'code', code: { language: 'js', rich_text: [{ plain_text: 'x\n```\nescaped?' }] } },
+    ], noChildren);
+    const fence = md.split('\n')[0];
+    expect(fence.startsWith('````')).toBe(true);
+    expect(md.endsWith(fence.replace('js', ''))).toBe(true);
+  });
+
+  it('strips fence-breaking characters from the code language', async () => {
+    const md = await blocksToMarkdown([
+      { id: 'b1', type: 'code', code: { language: 'js`\ninjected', rich_text: [{ plain_text: 'c' }] } },
+    ], noChildren);
+    expect(md.split('\n')[0]).toBe('```jsinjected');
+  });
+
+  it('sanitizes unknown block types before interpolating into the HTML comment', async () => {
+    const md = await blocksToMarkdown([
+      { id: 'b1', type: 'weird --> <script>' },
+    ], noChildren);
+    expect(md).not.toContain('-->  <script>');
+    expect(md).not.toContain('--> <');
+    expect(md).toMatch(/^<!-- Unsupported block: [a-z0-9_]+ -->$/i);
+  });
+
+  it('escapes pipe characters inside table cells', async () => {
+    const table = { id: 't1', type: 'table', has_children: true, table: { table_width: 1 } };
+    const row = { id: 'r1', type: 'table_row', table_row: { cells: [[{ plain_text: 'a|b' }]] } };
+    const md = await blocksToMarkdown([table], async id => (id === 't1' ? [row] : []));
+    expect(md).toContain('a\\|b');
+  });
+});
