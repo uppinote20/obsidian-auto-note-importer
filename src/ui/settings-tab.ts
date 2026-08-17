@@ -2138,7 +2138,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     if (!selectedDataSource) {
       this.renderNotionFieldDropdowns(containerEl, config, mapper, new Map());
       this.renderSubfolderSlashToggle(containerEl, config);
-      this.renderSyncPageBodyToggle(containerEl, config);
+      if (config.tableId) this.renderSyncPageBodyToggle(containerEl, config);
       return;
     }
 
@@ -2345,7 +2345,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }));
 
     this.renderSubfolderSlashToggle(containerEl, config);
-    this.renderSyncPageBodyToggle(containerEl, config);
+    if (config.tableId) this.renderSyncPageBodyToggle(containerEl, config);
   }
 
   private renderBaseSelector(containerEl: HTMLElement, config: ConfigEntry, credential: AirtableCredential): void {

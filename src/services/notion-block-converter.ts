@@ -24,7 +24,14 @@ import { NOTION_BODY_MAX_DEPTH } from '../constants';
 import { joinRichText } from './notion-value-converter';
 import type { NotionBlock, NotionRichTextItem } from '../types';
 
-const BUDGET_EXHAUSTED_MARKER = '<!-- Body truncated: request budget exhausted -->';
+// Reused verbatim by NotionClient.fetchBody (notion-client.ts) for the
+// PAGINATION-partial case — when a list's own multi-page fetch runs out of
+// budget mid-`has_more`. Exported so both call sites stay byte-identical.
+export const BUDGET_EXHAUSTED_MARKER = '<!-- Body truncated: request budget exhausted -->';
+// `fetchChildren` returning null covers both budget-at-zero AND child
+// fetch failure (404 / non-2xx) — this marker's wording stays agnostic to
+// the specific cause.
+const CHILDREN_UNAVAILABLE_MARKER = '<!-- Body truncated: children unavailable -->';
 const MAX_DEPTH_MARKER = '<!-- Body truncated: max depth -->';
 const UNRESOLVED_SYNCED_BLOCK_MARKER = '<!-- Unresolved synced block -->';
 
@@ -125,7 +132,7 @@ async function renderChildren(
   }
   const children = await fetchChildren(blockId);
   if (children === null) {
-    return BUDGET_EXHAUSTED_MARKER;
+    return CHILDREN_UNAVAILABLE_MARKER;
   }
   if (children.length === 0) return '';
   return renderBlockList(children, depth + 1, visited, maxDepth, fetchChildren);
@@ -268,9 +275,10 @@ async function renderCallout(
 
 function renderCode(block: NotionBlock): string {
   const data = block.code as { rich_text?: NotionRichTextItem[]; language?: string } | undefined;
-  // Language lands on the fence line — strip backticks/whitespace so a
-  // crafted value can't break or extend the fence.
-  const lang = (data?.language === 'plain text' ? '' : data?.language ?? '').replace(/[`\s]/g, '');
+  // Language lands on the fence line — allowlist to Notion's language enum
+  // alphabet (letters/digits plus `+ # _ -` for 'c++', 'c#', 'objective-c')
+  // so a crafted value can't break or extend the fence.
+  const lang = (data?.language === 'plain text' ? '' : data?.language ?? '').replace(/[^a-z0-9+#_-]/gi, '');
   const content = joinRichText(data?.rich_text) ?? '';
   // A backtick run in the content must never close the fence — grow it.
   const longestRun = (content.match(/`+/g) ?? []).reduce((m, r) => Math.max(m, r.length), 0);
@@ -285,7 +293,7 @@ function renderEquationBlock(block: NotionBlock): string {
 
 async function renderTable(block: NotionBlock, fetchChildren: FetchChildren): Promise<string> {
   const rows = await fetchChildren(block.id);
-  if (rows === null) return BUDGET_EXHAUSTED_MARKER;
+  if (rows === null) return CHILDREN_UNAVAILABLE_MARKER;
   if (rows.length === 0) return '';
 
   const rowCells = rows.map(row => {
@@ -312,7 +320,7 @@ async function renderColumnList(
   fetchChildren: FetchChildren,
 ): Promise<string> {
   const columns = await fetchChildren(block.id);
-  if (columns === null) return BUDGET_EXHAUSTED_MARKER;
+  if (columns === null) return CHILDREN_UNAVAILABLE_MARKER;
 
   const parts: string[] = [];
   for (let i = 0; i < columns.length; i++) {
@@ -320,7 +328,7 @@ async function renderColumnList(
     const colChildren = await fetchChildren(col.id);
     let colMd: string;
     if (colChildren === null) {
-      colMd = BUDGET_EXHAUSTED_MARKER;
+      colMd = CHILDREN_UNAVAILABLE_MARKER;
     } else if (colChildren.length === 0) {
       colMd = '';
     } else {
@@ -378,15 +386,28 @@ async function renderSyncedBlock(
   }
 
   const targetId = data.synced_from.block_id;
+  // Recursion-stack semantics (not "ever visited"): a target is only
+  // "visited" while its subtree is actively being rendered on the current
+  // path, so two sibling copies of the same original both render, and a
+  // failed fetch doesn't poison a later reference to the same target.
   if (!targetId || visited.has(targetId)) {
     return UNRESOLVED_SYNCED_BLOCK_MARKER;
   }
+  if (depth + 1 > maxDepth) {
+    return MAX_DEPTH_MARKER;
+  }
   visited.add(targetId);
-
-  const children = await fetchChildren(targetId);
-  if (children === null) return UNRESOLVED_SYNCED_BLOCK_MARKER;
-  if (children.length === 0) return '';
-  return renderBlockList(children, depth + 1, visited, maxDepth, fetchChildren);
+  try {
+    const children = await fetchChildren(targetId);
+    if (children === null) return UNRESOLVED_SYNCED_BLOCK_MARKER;
+    if (children.length === 0) return '';
+    // Must be awaited here (not `return renderBlockList(...)`) — a bare
+    // return only hands back the pending promise, letting `finally` pop
+    // the stack entry before the subtree actually finishes rendering.
+    return await renderBlockList(children, depth + 1, visited, maxDepth, fetchChildren);
+  } finally {
+    visited.delete(targetId);
+  }
 }
 
 function renderChildPage(block: NotionBlock): string {

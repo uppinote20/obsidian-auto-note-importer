@@ -393,7 +393,7 @@ describe('NotionClient.fetchBody', () => {
     const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
     const body = await c.fetchBody('page-1');
 
-    expect(body).toBe('parent\n\n<!-- Body truncated: request budget exhausted -->');
+    expect(body).toBe('parent\n\n<!-- Body truncated: children unavailable -->');
   });
 
   it('degrades a 404 child fetch to a subtree marker but still returns the rest of the body', async () => {
@@ -406,7 +406,7 @@ describe('NotionClient.fetchBody', () => {
     const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
     const body = await c.fetchBody('page-1');
 
-    expect(body).toBe('parent\n\n<!-- Body truncated: request budget exhausted -->');
+    expect(body).toBe('parent\n\n<!-- Body truncated: children unavailable -->');
   });
 
   it('returns an empty string for a root page with no blocks', async () => {
@@ -459,7 +459,24 @@ describe('NotionClient.fetchBody', () => {
     const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
     const body = await c.fetchBody('page-1');
 
-    expect(body).toContain('<!-- Body truncated: request budget exhausted -->');
+    expect(body).toContain('<!-- Body truncated: children unavailable -->');
+    expect(mockRequestUrl).toHaveBeenCalledTimes(60); // NOTION_BODY_MAX_REQUESTS_PER_NOTE
+  });
+
+  it('appends the pagination-truncation marker when the root list itself spans more pages than the budget covers', async () => {
+    let call = 0;
+    mockRequestUrl.mockImplementation(() => {
+      call++;
+      return Promise.resolve(childrenResponse(
+        [{ id: `b${call}`, type: 'paragraph', paragraph: { rich_text: [{ type: 'text', plain_text: `n${call}` }] } }],
+        { has_more: true, next_cursor: `cursor-${call}` },
+      ));
+    });
+
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    const body = await c.fetchBody('page-1');
+
+    expect(body?.endsWith('<!-- Body truncated: request budget exhausted -->')).toBe(true);
     expect(mockRequestUrl).toHaveBeenCalledTimes(60); // NOTION_BODY_MAX_REQUESTS_PER_NOTE
   });
 });

@@ -48,7 +48,7 @@ import type {
   SyncResult,
 } from '../types';
 import { buildBatchFailures, extractApiErrorDetails, formatBatchLimitError } from '../utils';
-import { blocksToMarkdown } from './notion-block-converter';
+import { blocksToMarkdown, BUDGET_EXHAUSTED_MARKER } from './notion-block-converter';
 import { flattenNotionProperties, wrapForNotionPush } from './notion-value-converter';
 import { notionFieldMapper } from './notion-field-mapper';
 import type { NotionSchemaCache } from './notion-schema-cache';
@@ -223,8 +223,10 @@ export class NotionClient implements DatabaseProvider {
    *   truncation marker so the rest of the body still gets delivered.
    * - Budget exhaustion: `fetchChildren` returns `null` with no request at
    *   all once the budget hits zero. If the budget runs out mid-pagination
-   *   of a single call (root or child), pagination stops and whatever pages
-   *   were already collected are returned instead of discarding them.
+   *   of a single call (root or child), pagination stops, whatever pages
+   *   were already collected are returned instead of discarding them, and
+   *   the returned Markdown is suffixed with the converter's
+   *   `BUDGET_EXHAUSTED_MARKER` so the truncation isn't silent.
    */
   async fetchBody(recordId: string): Promise<string | null> {
     this.validateConfig();
@@ -233,12 +235,22 @@ export class NotionClient implements DatabaseProvider {
     }
 
     let requestsRemaining = NOTION_BODY_MAX_REQUESTS_PER_NOTE;
+    // Set only for the PAGINATION-partial case: a single list (root or
+    // child) spans more pages than the remaining budget covers, so we stop
+    // mid-`has_more` and silently keep whatever pages were already
+    // collected. `fetchChildren` refusing at 0 budget is a separate,
+    // already-marked case (converter emits its own marker there) and must
+    // not set this flag.
+    let truncated = false;
 
     const paginate = async (blockId: string, errorMode: 'throw' | 'null'): Promise<NotionBlock[] | null> => {
       const collected: NotionBlock[] = [];
       let cursor: string | undefined;
       do {
-        if (requestsRemaining <= 0) return collected;
+        if (requestsRemaining <= 0) {
+          if (cursor) truncated = true;
+          return collected;
+        }
         requestsRemaining--;
 
         const url = `${NOTION_API_BASE_URL}/blocks/${blockId}/children?page_size=${NOTION_PAGE_SIZE}${cursor ? `&start_cursor=${cursor}` : ''}`;
@@ -271,9 +283,10 @@ export class NotionClient implements DatabaseProvider {
 
     const rootBlocks = await paginate(recordId, 'throw');
     if (rootBlocks === null) return null;
-    if (rootBlocks.length === 0) return '';
+    if (rootBlocks.length === 0) return truncated ? BUDGET_EXHAUSTED_MARKER : '';
 
-    return blocksToMarkdown(rootBlocks, fetchChildren, { maxDepth: NOTION_BODY_MAX_DEPTH });
+    const markdown = await blocksToMarkdown(rootBlocks, fetchChildren, { maxDepth: NOTION_BODY_MAX_DEPTH });
+    return truncated ? `${markdown}\n\n${BUDGET_EXHAUSTED_MARKER}` : markdown;
   }
 
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult> {

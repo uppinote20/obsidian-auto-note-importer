@@ -324,6 +324,57 @@ describe('blocksToMarkdown', () => {
     expect(md).toBe('<!-- Unresolved synced block -->');
   });
 
+  it('renders two sibling copies of the same synced_block target (stack, not ever-visited)', async () => {
+    const copy1: NotionBlock = {
+      id: 's1',
+      type: 'synced_block',
+      synced_block: { synced_from: { block_id: 'orig1' } },
+    };
+    const copy2: NotionBlock = {
+      id: 's2',
+      type: 'synced_block',
+      synced_block: { synced_from: { block_id: 'orig1' } },
+    };
+    const child: NotionBlock = { id: 'c1', type: 'paragraph', paragraph: { rich_text: [rt('shared')] } };
+    const md = await blocksToMarkdown([copy1, copy2], childrenMap({ orig1: [child] }));
+    expect(md).toBe('shared\n\nshared');
+  });
+
+  it('lets a synced_block target render on retry after an earlier failed fetch', async () => {
+    let calls = 0;
+    const fetchChildren = async (blockId: string): Promise<NotionBlock[] | null> => {
+      if (blockId !== 'orig1') return [];
+      calls++;
+      if (calls === 1) return null; // first reference: fetch failure
+      return [{ id: 'c1', type: 'paragraph', paragraph: { rich_text: [rt('recovered')] } }];
+    };
+    const copy1: NotionBlock = {
+      id: 's1',
+      type: 'synced_block',
+      synced_block: { synced_from: { block_id: 'orig1' } },
+    };
+    const copy2: NotionBlock = {
+      id: 's2',
+      type: 'synced_block',
+      synced_block: { synced_from: { block_id: 'orig1' } },
+    };
+    const md = await blocksToMarkdown([copy1, copy2], fetchChildren);
+    expect(md).toBe('<!-- Unresolved synced block -->\n\nrecovered');
+  });
+
+  it('stops a synced_block chain at max depth instead of descending further', async () => {
+    // s1 (depth0) resolves to origA's content, which is itself a synced_block
+    // (nestedSynced, depth1) resolving to origB's content (depth2, beyond maxDepth:1).
+    const s1: NotionBlock = { id: 's1', type: 'synced_block', synced_block: { synced_from: { block_id: 'origA' } } };
+    const nestedSynced: NotionBlock = { id: 'n1', type: 'synced_block', synced_block: { synced_from: { block_id: 'origB' } } };
+    const fetchChildren = childrenMap({
+      origA: [nestedSynced],
+      origB: [{ id: 'p1', type: 'paragraph', paragraph: { rich_text: [rt('too deep')] } }],
+    });
+    const md = await blocksToMarkdown([s1], fetchChildren, { maxDepth: 1 });
+    expect(md).toBe('<!-- Body truncated: max depth -->');
+  });
+
   it('renders child_page and child_database as bold titles', async () => {
     const blocks: NotionBlock[] = [
       { id: 'cp1', type: 'child_page', child_page: { title: 'Sub Page' } },
@@ -347,7 +398,7 @@ describe('blocksToMarkdown', () => {
       paragraph: { rich_text: [rt('parent')] },
     };
     const md = await blocksToMarkdown([parent], childrenMap({ p1: null }));
-    expect(md).toBe('parent\n\n<!-- Body truncated: request budget exhausted -->');
+    expect(md).toBe('parent\n\n<!-- Body truncated: children unavailable -->');
   });
 
   it('emits a truncation marker at the configured max depth', async () => {
@@ -415,6 +466,23 @@ describe('untrusted-content hardening', () => {
       { id: 'b1', type: 'code', code: { language: 'js`\ninjected', rich_text: [{ plain_text: 'c' }] } },
     ], noChildren);
     expect(md.split('\n')[0]).toBe('```jsinjected');
+  });
+
+  it('allowlists code language to letters/digits/+#_- (keeps Notion enum values like c++/c#/objective-c)', async () => {
+    const md = await blocksToMarkdown([
+      { id: 'b1', type: 'code', code: { language: 'c++', rich_text: [{ plain_text: 'x' }] } },
+      { id: 'b2', type: 'code', code: { language: 'c#', rich_text: [{ plain_text: 'x' }] } },
+      { id: 'b3', type: 'code', code: { language: 'objective-c', rich_text: [{ plain_text: 'x' }] } },
+    ], noChildren);
+    const fences = md.split('\n\n').map(block => block.split('\n')[0]);
+    expect(fences).toEqual(['```c++', '```c#', '```objective-c']);
+  });
+
+  it('strips arbitrary non-allowlisted characters from the code language', async () => {
+    const md = await blocksToMarkdown([
+      { id: 'b1', type: 'code', code: { language: 'js;alert(1)//', rich_text: [{ plain_text: 'x' }] } },
+    ], noChildren);
+    expect(md.split('\n')[0]).toBe('```jsalert1');
   });
 
   it('sanitizes unknown block types before interpolating into the HTML comment', async () => {
