@@ -8,10 +8,6 @@ import { getNestedValue, formatYamlValue, formatFieldForBases } from '../utils';
 import type { RemoteNote } from '../types';
 
 /**
- * Replaces placeholders in a template string with values from a RemoteNote object.
- * Supports nested field access using dot notation (e.g., {{Attachment.0.url}}).
- */
-/**
  * Resolves a placeholder key against a note's fields, with a special-cased
  * `body` fallback to `note.body` (the separately-fetched page body) — a
  * `body` entry in `note.fields` always wins for backward compat.
@@ -23,6 +19,10 @@ function resolvePlaceholderValue(record: Record<string, unknown>, note: RemoteNo
   return getNestedValue(record, key);
 }
 
+/**
+ * Replaces placeholders in a template string with values from a RemoteNote object.
+ * Supports nested field access using dot notation (e.g., {{Attachment.0.url}}).
+ */
 export function parseTemplate(template: string, note: RemoteNote): string {
   const record = note.fields;
   let processedTemplate = template;
@@ -160,5 +160,5 @@ function buildContentSections(fields: Record<string, unknown>): string {
     sections.push(`## Content\n${fields.script}`);
   }
 
-  return sections.join('\n\n') || '<!-- Content imported from Airtable -->';
+  return sections.join('\n\n') || '<!-- No content fields found -->';
 }

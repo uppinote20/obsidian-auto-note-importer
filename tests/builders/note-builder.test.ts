@@ -168,7 +168,7 @@ describe('buildMarkdownContent', () => {
   it('should include content comment when no content fields exist', () => {
     const note = createNote({});
     const result = buildMarkdownContent(note);
-    expect(result).toContain('<!-- Content imported from Airtable -->');
+    expect(result).toContain('<!-- No content fields found -->');
   });
 
   it('should replace default content sections with note.body when present', () => {
