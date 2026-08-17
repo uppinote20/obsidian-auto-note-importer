@@ -100,6 +100,7 @@ describe('FieldTypeMapper parity', () => {
       'airtable',
       'seatable',
       'supabase',
+      'notion',
     ]));
   });
 

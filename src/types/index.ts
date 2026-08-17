@@ -15,6 +15,14 @@ export type {
 } from './airtable.types';
 
 export type {
+  NotionDataSourceSummary,
+  NotionPropertySchemaMap,
+  NotionPropertyValue,
+  NotionPage,
+  NotionListResponse,
+} from './notion.types';
+
+export type {
   SyncMode,
   SyncRequest,
   NoteCreationResult,

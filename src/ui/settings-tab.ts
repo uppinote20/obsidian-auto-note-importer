@@ -13,6 +13,8 @@
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
+ * @tested tests/ui/settings-tab-notion-autofill.test.ts
+ * @tested e2e:tests/e2e/run-notion-settings-e2e.mjs
  */
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
@@ -21,6 +23,7 @@ import {
   FieldCache,
   SeaTableMetadataCache,
   SupabaseMetadataCache,
+  NotionSchemaCache,
   SupabaseSchemaRpcMissingError,
   getFieldTypeMapper,
   hasFieldTypeMapper,
@@ -28,8 +31,8 @@ import {
   hasCredentialFormRenderer,
 } from '../services';
 import type { SeaTableTable } from '../services';
-import type { CredentialFormState, CredentialFormRenderer, SetupRequirement } from '../types';
-import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, SupabaseCredential, SupabaseOpenApiSpec, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
+import type { CredentialFormState, CredentialFormRenderer, SetupRequirement, NotionDataSourceSummary } from '../types';
+import type { AutoNoteImporterSettings, ConfigEntry, Credential, AirtableCredential, SeaTableCredential, SupabaseCredential, SupabaseOpenApiSpec, NotionCredential, CredentialType, ConflictResolutionMode, BasesFileLocation } from '../types';
 import { DEFAULT_CONFIG_ENTRY, CREDENTIAL_TYPES, CREDENTIAL_TYPE_LABELS } from '../types';
 import { SUPABASE_DEFAULT_SCHEMA, SUPABASE_RPC_SCHEMA_SQL } from '../constants';
 import { FolderSuggest, FileSuggest } from './suggest';
@@ -79,6 +82,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   private fieldCache: FieldCache;
   private seatableMetadataCache: SeaTableMetadataCache;
   private supabaseMetadataCache: SupabaseMetadataCache;
+  private notionSchemaCache: NotionSchemaCache;
   private debounceTimer: number | null = null;
 
   /**
@@ -94,7 +98,7 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   // Both connection-card ids are seeded so whichever provider's card
   // renders for the active credential starts expanded; the inactive one
   // is harmless (no card = no element to apply the class to).
-  private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection', 'supabase-connection']);
+  private expandedSections: Set<string> = new Set(['airtable-connection', 'seatable-connection', 'supabase-connection', 'notion-connection']);
   private pendingDeleteConfigId: string | null = null;
   private pendingDeleteCredentialId: string | null = null;
   private credentialFormUi: CredentialFormUiState | null = null;
@@ -105,12 +109,14 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     fieldCache: FieldCache,
     seatableMetadataCache: SeaTableMetadataCache,
     supabaseMetadataCache: SupabaseMetadataCache,
+    notionSchemaCache: NotionSchemaCache,
   ) {
     super(app, plugin);
     this.plugin = plugin;
     this.fieldCache = fieldCache;
     this.seatableMetadataCache = seatableMetadataCache;
     this.supabaseMetadataCache = supabaseMetadataCache;
+    this.notionSchemaCache = notionSchemaCache;
   }
 
   /**
@@ -212,8 +218,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     return [
       this.defineSection({
         name: 'Credentials',
-        desc: 'API keys and tokens for Airtable, SeaTable, and Supabase.',
-        aliases: ['api key', 'api token', 'airtable', 'seatable', 'supabase', 'credential'],
+        desc: 'API keys and tokens for Airtable, SeaTable, Supabase, and Notion.',
+        aliases: ['api key', 'api token', 'airtable', 'seatable', 'supabase', 'notion', 'credential'],
         render: (host) => {
           this.renderCredentialsSection(host);
           // The credential form registers listeners on the host it just
@@ -373,6 +379,15 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         summary: this.getConnectionSummary(config),
         badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
         renderContent: (c) => { void this.renderSupabaseConnection(c, config, supabaseCred); },
+      });
+    } else if (credential.type === 'notion') {
+      const notionCred = credential;
+      const connected = !!(notionCred.integrationToken && config.tableId);
+      this.renderSummaryCard(cardStack, {
+        sectionId: 'notion-connection', icon: '\u{1F4E1}', title: 'Notion Connection',
+        summary: this.getConnectionSummary(config),
+        badge: connected ? { status: 'ok', text: 'Connected' } : { status: 'off', text: 'Setup required' },
+        renderContent: (c) => { void this.renderNotionConnection(c, config, notionCred); },
       });
     }
 
@@ -2037,6 +2052,291 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
       .addText(text => text
         .setValue(config.subfolderFieldName)
         .setPlaceholder('category')
+        .onChange(value => {
+          config.subfolderFieldName = value.trim();
+          debouncedSave();
+        }));
+
+    this.renderSubfolderSlashToggle(containerEl, config);
+  }
+
+  // ─── Notion Connection ──────────────────────────────────────────────
+
+  private async renderNotionConnection(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: NotionCredential,
+  ): Promise<void> {
+    // Symmetric with Supabase/SeaTable — bail early if the mapper isn't
+    // registered so the dropdown render path can use getFieldTypeMapper
+    // safely below.
+    if (!hasFieldTypeMapper(credential.type)) {
+      new Setting(containerEl)
+        .setName('Field type mapper missing')
+        .setDesc(`No field type mapper registered for ${credential.type}.`);
+      return;
+    }
+
+    if (!credential.integrationToken?.trim()) {
+      this.renderNotionTextFallback(containerEl, config);
+      return;
+    }
+
+    containerEl.empty();
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Loading Notion data sources…',
+    });
+
+    // Capture the current render generation so a subsequent display() (tab
+    // switch, cred edit) can mark our callback as stale and skip populating
+    // a now-detached containerEl. Same guard SeaTable/Supabase use.
+    const gen = this.renderGeneration;
+    try {
+      const dataSources = await this.notionSchemaCache.listDataSources(credential);
+      if (this.renderGeneration !== gen) return;
+      this.renderNotionDropdowns(containerEl, config, credential, dataSources);
+    } catch (error) {
+      if (this.renderGeneration !== gen) return;
+      const message = error instanceof Error ? error.message : 'Check integration token or network.';
+      new Notice(`Auto Note Importer: Failed to load Notion data sources. ${message}`);
+      this.renderNotionTextFallback(containerEl, config);
+    }
+  }
+
+  private renderNotionDropdowns(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: NotionCredential,
+    dataSources: NotionDataSourceSummary[],
+  ): void {
+    const mapper = getFieldTypeMapper(credential.type);
+    containerEl.empty();
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Pick the data source and columns to sync. The list is populated from every data source your integration can access.',
+    });
+
+    // Disambiguate duplicate titles with the parent database id — most
+    // workspaces have unique data source titles, so the plain title is
+    // shown unless a collision is detected.
+    const titleCounts = new Map<string, number>();
+    for (const ds of dataSources) {
+      titleCounts.set(ds.title, (titleCounts.get(ds.title) ?? 0) + 1);
+    }
+    const labelFor = (ds: NotionDataSourceSummary): string =>
+      (titleCounts.get(ds.title) ?? 0) > 1 && ds.databaseId
+        ? `${ds.title} (${ds.databaseId})`
+        : ds.title;
+
+    const selectedDataSource = dataSources.find(ds => ds.id === config.tableId);
+    this.renderNotionDataSourcePicker(containerEl, config, credential, dataSources, labelFor);
+
+    // Filename / Subfolder field dropdowns — populated from the selected
+    // data source's schema (property name → Notion type).
+    const gen = this.renderGeneration;
+    if (!selectedDataSource) {
+      this.renderNotionFieldDropdowns(containerEl, config, mapper, new Map());
+      this.renderSubfolderSlashToggle(containerEl, config);
+      return;
+    }
+
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Loading data source schema…',
+    });
+    void this.notionSchemaCache.getSchema(credential, selectedDataSource.id).then(schema => {
+      if (this.renderGeneration !== gen) return;
+      containerEl.empty();
+      containerEl.createEl('p', {
+        cls: 'ani-credential-desc',
+        text: 'Pick the data source and columns to sync. The list is populated from every data source your integration can access.',
+      });
+      // Re-render the data source picker so the schema-dependent fields
+      // below stay in the same containerEl (avoids a second empty()
+      // fighting the first render pass).
+      this.renderNotionDataSourcePicker(containerEl, config, credential, dataSources, labelFor);
+      this.renderNotionFieldDropdowns(containerEl, config, mapper, schema);
+      this.renderSubfolderSlashToggle(containerEl, config);
+    }).catch(error => {
+      if (this.renderGeneration !== gen) return;
+      const message = error instanceof Error ? error.message : 'Check integration token or network.';
+      new Notice(`Auto Note Importer: Failed to load Notion schema. ${message}`);
+    });
+  }
+
+  /**
+   * Re-render helper for the data source dropdown alone — used after an
+   * async schema fetch replaces the whole card body so the picker and the
+   * schema-dependent field dropdowns render as one coherent pass.
+   */
+  private renderNotionDataSourcePicker(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    credential: NotionCredential,
+    dataSources: NotionDataSourceSummary[],
+    labelFor: (ds: NotionDataSourceSummary) => string,
+  ): void {
+    new Setting(containerEl)
+      .setName('Data source')
+      .setDesc('Required. Notion data source to sync.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- Select data source --');
+        for (const ds of dataSources) dropdown.addOption(ds.id, labelFor(ds));
+        dropdown.setValue(config.tableId);
+        dropdown.onChange(async value => {
+          const ds = dataSources.find(d => d.id === value);
+          config.tableId = value;
+          config.baseId = ds?.databaseId ?? '';
+          config.filenameFieldName = '';
+          config.subfolderFieldName = '';
+          await this.plugin.saveSettings();
+          if (ds) {
+            void this.autoFillNotionFilenameField(config, credential, ds.id);
+          }
+          this.debounceDisplay();
+        });
+      })
+      .addExtraButton(button => this.configureRefreshButton(button, 'Refresh data sources', () => {
+        this.notionSchemaCache.clearForCred(credential.id);
+      }));
+  }
+
+  private renderNotionFieldDropdowns(
+    containerEl: HTMLElement,
+    config: ConfigEntry,
+    mapper: ReturnType<typeof getFieldTypeMapper>,
+    schema: Map<string, string>,
+  ): void {
+    const properties = [...schema.entries()].map(([name, providerType]) => ({ name, providerType }));
+
+    const filenameCandidates = properties.filter(p => mapper.isFilenameSafe(p.providerType));
+    const safeTypesList = mapper.getFilenameSafeTypes().join(', ');
+    const staleFilenameValue =
+      properties.length > 0 && config.filenameFieldName &&
+      !filenameCandidates.some(p => p.name === config.filenameFieldName)
+        ? config.filenameFieldName
+        : null;
+
+    new Setting(containerEl)
+      .setName('Filename field')
+      .setDesc(`Property whose value becomes the note filename. Filtered to: ${safeTypesList}.`)
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- Select filename property --');
+        for (const p of filenameCandidates) dropdown.addOption(p.name, p.name);
+        if (staleFilenameValue) {
+          dropdown.addOption(staleFilenameValue, `${staleFilenameValue} (unsupported / hidden)`);
+        }
+        dropdown.setValue(config.filenameFieldName);
+        dropdown.setDisabled(properties.length === 0);
+        dropdown.onChange(async value => {
+          config.filenameFieldName = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    const subfolderCandidates = properties.filter(p => mapper.isSubfolderSafe(p.providerType));
+    const staleSubfolderValue =
+      properties.length > 0 && config.subfolderFieldName &&
+      !subfolderCandidates.some(p => p.name === config.subfolderFieldName)
+        ? config.subfolderFieldName
+        : null;
+
+    new Setting(containerEl)
+      .setName('Subfolder field (optional)')
+      .setDesc('Property used for subfolder organization. Leave empty for flat layout.')
+      .addDropdown(dropdown => {
+        dropdown.addOption('', '-- No subfolder property --');
+        for (const p of subfolderCandidates) dropdown.addOption(p.name, p.name);
+        if (staleSubfolderValue) {
+          dropdown.addOption(staleSubfolderValue, `${staleSubfolderValue} (unsupported / hidden)`);
+        }
+        dropdown.setValue(config.subfolderFieldName);
+        dropdown.setDisabled(properties.length === 0);
+        dropdown.onChange(async value => {
+          config.subfolderFieldName = value;
+          await this.plugin.saveSettings();
+        });
+      });
+  }
+
+  /**
+   * Mirrors Supabase's primary-key auto-fill precedent: when a data source
+   * is freshly selected and `filenameFieldName` is empty, auto-fill it with
+   * the schema's title-type property (every Notion data source has exactly
+   * one) so the common case needs zero extra clicks.
+   */
+  private async autoFillNotionFilenameField(
+    config: ConfigEntry,
+    credential: NotionCredential,
+    dataSourceId: string,
+  ): Promise<void> {
+    if (config.filenameFieldName) return;
+    try {
+      const schema = await this.notionSchemaCache.getSchema(credential, dataSourceId);
+      // A→B fast-switch race (PR #125 Codex P2): if the user already moved
+      // on to a different data source while this fetch was in flight, the
+      // resolved schema belongs to the stale selection — discard it.
+      if (config.tableId !== dataSourceId) return;
+      const titleProp = [...schema.entries()].find(([, type]) => type === 'title');
+      if (!titleProp || config.filenameFieldName) return;
+      config.filenameFieldName = titleProp[0];
+      await this.plugin.saveSettings();
+      this.debounceDisplay();
+    } catch {
+      // Best-effort auto-fill — the dropdown render's own schema fetch
+      // will surface any real failure via Notice.
+    }
+  }
+
+  private renderNotionTextFallback(containerEl: HTMLElement, config: ConfigEntry): void {
+    containerEl.empty();
+    containerEl.createEl('p', {
+      cls: 'ani-credential-desc',
+      text: 'Enter Notion config manually. Once an integration token is saved, this card switches to dropdowns automatically.',
+    });
+
+    const debouncedSave = this.makeFieldDebouncer();
+
+    new Setting(containerEl)
+      .setName('Data source ID')
+      .setDesc('Required. Notion data source id to sync.')
+      .addText(text => text
+        .setValue(config.tableId)
+        .setPlaceholder('data source id')
+        .onChange(value => {
+          config.tableId = value.trim();
+          debouncedSave();
+        }));
+
+    new Setting(containerEl)
+      .setName('Database ID (optional)')
+      .setDesc('Parent database id, for display purposes only.')
+      .addText(text => text
+        .setValue(config.baseId)
+        .setPlaceholder('database id')
+        .onChange(value => {
+          config.baseId = value.trim();
+          debouncedSave();
+        }));
+
+    new Setting(containerEl)
+      .setName('Filename field')
+      .setDesc('Property whose value becomes the note filename.')
+      .addText(text => text
+        .setValue(config.filenameFieldName)
+        .setPlaceholder('Name')
+        .onChange(value => {
+          config.filenameFieldName = value.trim();
+          debouncedSave();
+        }));
+
+    new Setting(containerEl)
+      .setName('Subfolder field (optional)')
+      .setDesc('Property used for subfolder organization. Leave empty for flat layout.')
+      .addText(text => text
+        .setValue(config.subfolderFieldName)
+        .setPlaceholder('Category')
         .onChange(value => {
           config.subfolderFieldName = value.trim();
           debouncedSave();

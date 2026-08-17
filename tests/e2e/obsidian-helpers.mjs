@@ -162,7 +162,7 @@ export function buildSettingsHarnessHelpers({ pluginId }) {
       // A provider added for epic #11 needs its card id here too, or its
       // suite will query a collapsed card and read an empty body — the
       // exact symptom this helper exists to prevent.
-      ['airtable-connection', 'seatable-connection', 'supabase-connection']
+      ['airtable-connection', 'seatable-connection', 'supabase-connection', 'notion-connection']
         .forEach(id => tab.expandedSections.add(id));
     }
 

@@ -21,6 +21,9 @@ npm run test:e2e:seatable:full     # Build + deploy + run SeaTable e2e
 npm run test:e2e:supabase          # Supabase sync e2e (.env required)
 npm run test:e2e:supabase:settings # Supabase settings UI e2e
 npm run test:e2e:supabase:full     # Build + deploy + run Supabase e2e
+npm run test:e2e:notion            # Notion sync e2e (.env required)
+npm run test:e2e:notion:settings   # Notion settings UI e2e
+npm run test:e2e:notion:full       # Build + deploy + run Notion e2e
 ```
 
 ## Architecture Overview
@@ -55,6 +58,11 @@ src/
 │   ├── supabase-field-mapper.ts         # PG/PostgREST type → StandardFieldType (colon-format providerType)
 │   ├── supabase-credential-form.ts      # Supabase settings form + key-kind auto-detect + connection test
 │   ├── supabase-metadata-cache.ts       # PostgREST OpenAPI spec cache (per credential + schema)
+│   ├── notion-client.ts                 # Notion DatabaseProvider impl (REST API, per-page PATCH batchUpdate)
+│   ├── notion-field-mapper.ts           # Notion type → StandardFieldType
+│   ├── notion-value-converter.ts        # Notion property value flatten (pull) / wrap (push)
+│   ├── notion-credential-form.ts        # Notion settings form + connection test
+│   ├── notion-schema-cache.ts           # Data source list + property schema cache (per credential + data source)
 │   ├── provider-registry.ts             # Factory + mapper + form-renderer registry by CredentialType
 │   ├── rate-limiter.ts                  # Per-credential request throttling + 429 retry + transient retry
 │   └── field-cache.ts                   # Airtable field metadata cache (Meta API)

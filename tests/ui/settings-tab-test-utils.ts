@@ -10,7 +10,7 @@ import { vi } from 'vitest';
 import type { AutoNoteImporterSettings } from '../../src/types';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import { AutoNoteImporterSettingTab } from '../../src/ui/settings-tab';
-import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache } from '../../src/services';
+import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache, NotionSchemaCache } from '../../src/services';
 
 export interface SettingsTabHarness {
   tab: unknown;
@@ -33,6 +33,7 @@ export function createSettingsTabHarness(
     new FieldCache(),
     new SeaTableMetadataCache(),
     new SupabaseMetadataCache(),
+    new NotionSchemaCache(),
   );
   return { tab, plugin };
 }

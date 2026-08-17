@@ -9,6 +9,7 @@ import type { RateLimiter } from '../services/rate-limiter';
 import type { FieldCache } from '../services/field-cache';
 import type { SeaTableMetadataCache } from '../services/seatable-metadata-cache';
 import type { SupabaseMetadataCache } from '../services/supabase-metadata-cache';
+import type { NotionSchemaCache } from '../services/notion-schema-cache';
 import type { FrontmatterParser } from '../file-operations/frontmatter-parser';
 
 export interface SharedServices {
@@ -16,6 +17,7 @@ export interface SharedServices {
   fieldCache: FieldCache;
   seatableMetadataCache: SeaTableMetadataCache;
   supabaseMetadataCache: SupabaseMetadataCache;
+  notionSchemaCache: NotionSchemaCache;
   frontmatterParser: FrontmatterParser;
   statusBarFactory: () => HTMLElement;
   getDebugMode: () => boolean;

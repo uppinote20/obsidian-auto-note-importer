@@ -3,6 +3,8 @@
  * @handbook 9.6-api-patterns
  */
 
+import type { CredentialType } from '../types/credential.types';
+
 /**
  * Airtable API batch size limit.
  */
@@ -105,3 +107,51 @@ export const SUPABASE_PAGE_SIZE = 1000;
  * TTL for the cached OpenAPI spec per (credential, schema) tuple.
  */
 export const SUPABASE_METADATA_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Notion REST API base URL.
+ */
+export const NOTION_API_BASE_URL = 'https://api.notion.com/v1';
+
+/**
+ * Notion-Version header value. Pinned so API responses don't shift under us.
+ */
+export const NOTION_VERSION = '2025-09-03';
+
+/**
+ * Minimum interval between Notion API requests (in milliseconds).
+ * Notion enforces an average rate limit of ~3 requests/second per
+ * integration; 334ms keeps us just under that.
+ */
+export const NOTION_RATE_LIMIT_INTERVAL_MS = 334;
+
+/**
+ * Default page size for Notion query/search pagination (API maximum).
+ */
+export const NOTION_PAGE_SIZE = 100;
+
+/**
+ * Notion has no native batch-update endpoint; pages are updated one at a
+ * time via PATCH /pages/{id}. This caps how many concurrent in-flight
+ * updates the client issues per batchUpdate() call.
+ */
+export const NOTION_BATCH_SIZE = 10;
+
+/**
+ * TTL for the cached data-source schema (property name → type map).
+ */
+export const NOTION_SCHEMA_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Notion rich_text content blocks are capped at 2000 characters each;
+ * longer strings must be chunked into multiple segments.
+ */
+export const NOTION_RICH_TEXT_MAX_LEN = 2000;
+
+/**
+ * Per-provider override for the default RATE_LIMIT_INTERVAL_MS. Providers
+ * not listed here fall back to the shared default in rate-limiter.ts.
+ */
+export const PROVIDER_RATE_LIMIT_INTERVALS: Partial<Record<CredentialType, number>> = {
+  notion: NOTION_RATE_LIMIT_INTERVAL_MS,
+};

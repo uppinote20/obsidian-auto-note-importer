@@ -67,6 +67,17 @@ describe('getSettingDefinitions', () => {
     expect(leafNames(defs)).toContain('Credentials');
   });
 
+  it('indexes Notion under the Credentials section (aliases + desc)', () => {
+    const defs = createTab().getSettingDefinitions();
+    const credentialsItem = defs
+      .flatMap(d => ('items' in d && d.items ? d.items : []))
+      .find(i => 'name' in i && i.name === 'Credentials') as { desc?: string; aliases?: string[] } | undefined;
+
+    expect(credentialsItem).toBeDefined();
+    expect(credentialsItem?.aliases).toContain('notion');
+    expect(credentialsItem?.desc).toMatch(/Notion/);
+  });
+
   // The host calls this at tab registration purely for search indexing, with
   // no render to follow. Side effects there would hit live UI state.
   it('does not touch render state when only building definitions', () => {

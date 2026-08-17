@@ -22,7 +22,7 @@ import type {
   SharedServices,
   DatabaseProvider,
 } from '../types';
-import { RateLimiter, createProvider } from '../services';
+import { RateLimiter, createProvider, getOrCreateRateLimiter as getOrCreateSharedRateLimiter } from '../services';
 import { SyncQueue, ConflictResolver, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
 import { FileWatcher } from '../file-operations';
@@ -66,7 +66,7 @@ export class ConfigInstance {
     this.settings = buildLegacySettings(config, credential, shared.getDebugMode());
 
     // 1. Get or create RateLimiter (shared per credential)
-    this.rateLimiter = this.getOrCreateRateLimiter(credential.id);
+    this.rateLimiter = this.getOrCreateRateLimiter(credential);
 
     // 2. Create DatabaseProvider via registry (based on credential.type)
     this.databaseProvider = createProvider(
@@ -155,7 +155,7 @@ export class ConfigInstance {
     this.settings = buildLegacySettings(config, credential, this.shared.getDebugMode());
 
     // Update RateLimiter if credential changed
-    const newRateLimiter = this.getOrCreateRateLimiter(credential.id);
+    const newRateLimiter = this.getOrCreateRateLimiter(credential);
     if (newRateLimiter !== this.rateLimiter) {
       this.rateLimiter = newRateLimiter;
     }
@@ -190,15 +190,11 @@ export class ConfigInstance {
 
   /**
    * Gets or creates a shared RateLimiter for the given credential.
+   * Uses the credential's per-type interval override (e.g. Notion's
+   * tighter 334ms) when one exists, falling back to the shared default.
    */
-  private getOrCreateRateLimiter(credentialId: string): RateLimiter {
-    let limiter = this.shared.rateLimiters.get(credentialId);
-    if (!limiter) {
-      limiter = new RateLimiter();
-      limiter.setDebugMode(this.shared.getDebugMode());
-      this.shared.rateLimiters.set(credentialId, limiter);
-    }
-    return limiter;
+  private getOrCreateRateLimiter(credential: Credential): RateLimiter {
+    return getOrCreateSharedRateLimiter(this.shared.rateLimiters, credential, this.shared.getDebugMode());
   }
 
   /**
