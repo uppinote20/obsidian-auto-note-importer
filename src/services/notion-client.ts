@@ -35,6 +35,7 @@ import type {
   NotionPage,
   NotionPropertySchemaMap,
   ProviderCapabilities,
+  RemoteFieldInfo,
   RemoteNote,
   SyncResult,
 } from '../types';
@@ -91,6 +92,21 @@ export class NotionClient implements DatabaseProvider {
     this.config = config;
     this.rateLimiter = rateLimiter;
     this.debugMode = debugMode;
+  }
+
+  /**
+   * Fetches property-type schema for the active data source, cache-first
+   * via `NotionSchemaCache`. Never rejects — see
+   * `DatabaseProvider.fetchFieldMetadata`. The TTL cache means batchUpdate's
+   * own `getSchema()` call stays a cache hit within the same sync.
+   */
+  async fetchFieldMetadata(): Promise<RemoteFieldInfo[] | null> {
+    try {
+      const schema = await this.schemaCache.getSchema(this.credential, this.config.tableId);
+      return Array.from(schema, ([name, type]) => ({ name, type }));
+    } catch {
+      return null;
+    }
   }
 
   private validateConfig(): void {

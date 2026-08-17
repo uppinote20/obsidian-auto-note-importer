@@ -27,6 +27,7 @@ import type {
   DatabaseProvider,
   FieldTypeMapper,
   ProviderCapabilities,
+  RemoteFieldInfo,
   RemoteNote,
   SupabaseCredential,
   SyncResult,
@@ -153,6 +154,30 @@ export class SupabaseClient implements DatabaseProvider {
         text: err.text ?? '',
         arrayBuffer: new ArrayBuffer(0),
       };
+    }
+  }
+
+  /**
+   * Fetches all column metadata for the active table/view, cache-first via
+   * `SupabaseMetadataCache`. Returns `null` when the writable column count
+   * is zero — otherwise (once the commit ② parser strips non-pushable
+   * fields) every field would be filtered out and files would be silently
+   * skipped instead of reaching batchUpdate's non-updatable-view failure
+   * (see `loadWritableColumns` above). Any error, including
+   * `SupabaseSchemaRpcMissingError`, resolves to `null` — never rejects,
+   * see `DatabaseProvider.fetchFieldMetadata`.
+   */
+  async fetchFieldMetadata(): Promise<RemoteFieldInfo[] | null> {
+    try {
+      const schema = this.getSchema();
+      const tableName = this.getEndpoint();
+      const spec = await this.metadataCache.getSpec(this.credential, schema);
+      const columns = this.metadataCache.getColumns(spec, tableName);
+      const hasWritableColumn = columns.some(c => !supabaseFieldMapper.isReadOnly(c.providerType));
+      if (!hasWritableColumn) return null;
+      return columns.map(c => ({ name: c.name, type: c.providerType }));
+    } catch {
+      return null;
     }
   }
 

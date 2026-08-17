@@ -30,6 +30,7 @@ export type {
 
 export type {
   RemoteNote,
+  RemoteFieldInfo,
   SyncResult,
   ConflictInfo,
   BatchUpdate,

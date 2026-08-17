@@ -651,4 +651,55 @@ describe('SeaTableClient', () => {
       );
     });
   });
+
+  describe('fetchFieldMetadata', () => {
+    it('returns field metadata on success', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          metadata: {
+            tables: [{ _id: '0000', name: 'Table1', columns: [
+              { key: '0k', name: 'Notes', type: 'text' },
+              { key: '1k', name: 'Attachment', type: 'file' },
+            ] },
+          ] },
+        }));
+
+      const metadata = await client.fetchFieldMetadata();
+      expect(metadata).toEqual([
+        { name: 'Notes', type: 'text' },
+        { name: 'Attachment', type: 'file' },
+      ]);
+    });
+
+    it('never rejects and returns null on fetch failure', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ error_msg: 'Forbidden' }, 403));
+
+      const metadata = await client.fetchFieldMetadata();
+      expect(metadata).toBeNull();
+    });
+
+    it('returns null when the table is missing from the token exchange rejection', async () => {
+      mockRequestUrl.mockRejectedValueOnce(new Error('Network error'));
+
+      const metadata = await client.fetchFieldMetadata();
+      expect(metadata).toBeNull();
+    });
+
+    it('serves from the column-types cache so two calls make one metadata request', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          metadata: { tables: [{ _id: '0000', name: 'Table1', columns: [{ name: 'Notes', type: 'text' }] }] },
+        }));
+
+      await client.fetchFieldMetadata();
+      await client.fetchFieldMetadata();
+
+      // token (1) + metadata (1) = 2 total, not 4.
+      expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+    });
+  });
 });

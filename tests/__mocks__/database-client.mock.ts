@@ -11,6 +11,7 @@ export type MockDatabaseProvider = {
   fieldTypeMapper: FieldTypeMapper;
   fetchNotes: ReturnType<typeof vi.fn>;
   fetchRecord: ReturnType<typeof vi.fn>;
+  fetchFieldMetadata: ReturnType<typeof vi.fn>;
   updateRecord: ReturnType<typeof vi.fn>;
   batchUpdate: ReturnType<typeof vi.fn>;
   reconfigure: ReturnType<typeof vi.fn>;
@@ -44,6 +45,7 @@ export function createMockDatabaseProvider(
     fieldTypeMapper: NOOP_MAPPER,
     fetchNotes: vi.fn().mockResolvedValue([]),
     fetchRecord: vi.fn().mockResolvedValue(null),
+    fetchFieldMetadata: vi.fn().mockResolvedValue(null),
     updateRecord: vi.fn().mockResolvedValue({
       success: true,
       recordId: 'rec123',

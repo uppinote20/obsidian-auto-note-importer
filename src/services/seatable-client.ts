@@ -33,6 +33,7 @@ import type {
   DatabaseProvider,
   FieldTypeMapper,
   ProviderCapabilities,
+  RemoteFieldInfo,
   RemoteNote,
   SeaTableCredential,
   SyncResult,
@@ -233,6 +234,17 @@ export class SeaTableClient implements DatabaseProvider {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Fetches field/column metadata for the active table, cache-first via
+   * `loadColumnTypes()`. Never rejects — see
+   * `DatabaseProvider.fetchFieldMetadata`.
+   */
+  async fetchFieldMetadata(): Promise<RemoteFieldInfo[] | null> {
+    const columnTypes = await this.loadColumnTypes();
+    if (!columnTypes) return null;
+    return Array.from(columnTypes, ([name, type]) => ({ name, type }));
   }
 
   private buildHeaders(token: CachedBaseToken): Record<string, string> {

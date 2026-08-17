@@ -149,8 +149,8 @@ export function hasProvider(type: CredentialType): boolean {
 
 // ─── Built-in provider registrations ─────────────────────────────────
 
-registerProvider('airtable', (credential, config, rateLimiter, debugMode, _shared) => {
-  return new AirtableClient(buildLegacySettings(config, credential, debugMode), rateLimiter);
+registerProvider('airtable', (credential, config, rateLimiter, debugMode, shared) => {
+  return new AirtableClient(buildLegacySettings(config, credential, debugMode), rateLimiter, shared.fieldCache);
 });
 
 registerFieldTypeMapper('airtable', airtableFieldMapper);
