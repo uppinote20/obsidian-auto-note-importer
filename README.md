@@ -4,345 +4,206 @@
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/uppinote20/obsidian-auto-note-importer?sort=semver)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/uppinote20/obsidian-auto-note-importer/total)
 
-Import and sync notes bidirectionally between **Airtable**, **SeaTable**, **Supabase**, and your Obsidian vault with smart field mapping and organization features. Built on a provider-agnostic core; more databases (Notion, Custom API) tracked in [#11](https://github.com/uppinote20/obsidian-auto-note-importer/issues/11).
+**Two-way sync between your databases and your Obsidian vault.** Point it at Airtable, SeaTable, Supabase, or Notion — it pulls rows in as notes, pushes your edits back, and keeps computed fields fresh.
 
-## ✨ Key Features
+| Provider | Pull → notes | Push edits back | Computed fields | Page body |
+|:---|:---:|:---:|:---:|:---:|
+| **Airtable** | ✅ | ✅ | ✅ formula / rollup / lookup | — |
+| **SeaTable** | ✅ | ✅ | ✅ formula / link-formula | — |
+| **Supabase** | ✅ | ✅ | ✅ generated columns | — |
+| **Notion** | ✅ | ✅ page properties | ✅ formula / rollup | ✅ blocks → Markdown (pull) |
 
-- **Multiple Databases**: Airtable, SeaTable, and Supabase supported today; pluggable provider architecture for more
-- **Bidirectional Sync**: Sync notes from your remote database to Obsidian and back
-- **Multi-Config**: Run several sync configurations (different bases / tables / folders) side-by-side
-- **Computed-Field Support**: Auto-fetch formula / rollup / lookup / link-formula values after pushing
-- **Conflict Resolution**: `Manual`, `Obsidian wins`, `Remote wins` modes
-- **Smart Field Selection**: Type-aware dropdowns; provider-specific safe-for-filename whitelist
-- **Subfolder Organization**: Auto-organize notes into subfolders based on a field value
-- **Safe File Naming**: Per-provider validation (text / select / number / formula / auto-number)
-- **Template Support**: `{{fieldName}}` placeholders with nested-property access
-- **Obsidian Bases Compatible**: YAML output tuned for table/card views
-- **Automated Syncing**: Manual sync, scheduled intervals, or auto on file change
-- **Zero Coding Required**: Point-and-click setup with intuitive UI
+Built on a provider-agnostic core — every provider gets the same multi-config, conflict-resolution, and safety machinery.
+
+![Settings screenshot](assets/settings.png)
+
+## ✨ Highlights
+
+- **Sync your way** — manual commands, scheduled intervals, or auto-sync on file change; several configurations (different bases / tables / folders) run side-by-side
+- **Bidirectional & conflict-aware** — push frontmatter edits back, resolve collisions with `Manual` / `Obsidian wins` / `Remote wins`, and auto-refetch server-computed values after a push
+- **Safe by default** — read-only and object-shaped fields never get clobbered; filename/subfolder pickers only offer types that make valid names; unknown types fail closed
+- **Notes that feel native** — `{{field}}` templates (incl. `{{body}}` for Notion page content), subfolder organization by field value, Bases-friendly YAML frontmatter
 
 ## 📦 Installation
 
-1. Open Obsidian
-2. Go to **Settings → Community plugins → Browse**
-3. Search for "**Auto Note Importer**" and install it
-4. Enable the plugin
-5. Add a credential for your provider (Airtable PAT, SeaTable API Token, or Supabase API key), then configure a sync configuration
+1. **Settings → Community plugins → Browse** → search "**Auto Note Importer**" → Install & Enable
+2. Add a **credential** for your provider (below), then create a **sync configuration**
 
 ## 🚀 Quick Start
 
-### 1. Get Your Provider Credentials
+**The 3-step shape is the same for every provider:** get a token → add a credential → pick table & folder. Expand yours:
 
-#### Airtable
+<details>
+<summary><strong>Airtable</strong> — Personal Access Token</summary>
 
-1. Visit the [Airtable Tokens page](https://airtable.com/create/tokens)
-2. Click **Create new token**
-3. Select scopes:
-   - `data.records:read` — required for importing
-   - `data.records:write` — required for bidirectional sync
-   - `schema.bases:read` — required for field selection
-4. Choose your bases and click **Create token**
-5. Copy the Personal Access Token
+1. Visit the [Airtable Tokens page](https://airtable.com/create/tokens) → **Create new token**
+2. Scopes: `data.records:read` (import) · `data.records:write` (bidirectional) · `schema.bases:read` (field pickers)
+3. Choose your bases → **Create token** → copy the PAT
+4. In the plugin: **Add credential → Airtable** → paste → then pick **Base → Table → View (optional) → Filename / Subfolder fields**
+</details>
 
-#### SeaTable
+<details>
+<summary><strong>SeaTable</strong> — base API token</summary>
 
-1. Open your SeaTable Base → **More options (⋯) → Advanced settings → API Tokens → Add API Token**
-2. Pick **Read and write** permission
-3. Copy the API Token (it is base-specific)
-4. Note your server URL (default: `https://cloud.seatable.io`; self-hosted users use their own host)
+1. Open your SeaTable base → **⋯ → Advanced settings → API Tokens → Add API Token** with **Read and write**
+2. Copy the token (it is base-specific — one token per base) and note your server URL (`https://cloud.seatable.io` unless self-hosted)
+3. In the plugin: **Add credential → SeaTable** → paste token + server URL → pick **Table → View (optional) → Filename / Subfolder columns**
+</details>
 
-#### Supabase
+<details>
+<summary><strong>Supabase</strong> — project URL + API key</summary>
 
-1. In your Supabase project, open **Project Settings → API**
-2. Copy the **Project URL** (e.g. `https://abc.supabase.co`)
-3. Copy an **API Key**:
-   - **Publishable** (`sb_publishable_…`) — RLS-protected, safe for client-side use. Recommended.
-   - **Legacy `anon`** (JWT) — RLS-protected, also fine but deprecated by Supabase
-   - **Secret** (`sb_secret_…`) or **service_role** (JWT) — bypasses RLS; only use if you understand the implications. The plugin auto-detects key type and warns when a secret key is entered.
-4. Ensure the schema you want to sync is in **Settings → API → Exposed schemas** (default `public` is already exposed)
-5. **Publishable key users**: Supabase's new key system blocks schema introspection (OpenAPI) for publishable keys. The plugin shows a one-time setup banner — either inline inside the **Add credential** form (when you click **Test** or **Save**) or in the Supabase **Connection card** afterwards — with a SECURITY DEFINER SQL function. Click **Copy SQL**, paste it into your Supabase SQL Editor, Run once, then click **I've run it — Verify**. Re-running is safe. Credential **save is blocked** until the RPC is verified (fail-closed). Legacy `anon` JWT and secret keys don't need this step — the plugin auto-detects and skips the gate.
+1. **Project Settings → API**: copy the **Project URL** and an **API key** — **Publishable** (`sb_publishable_…`) recommended; legacy `anon` JWT also works; secret/service_role bypasses RLS (the plugin auto-detects and warns)
+2. Make sure your schema is listed under **Settings → API → Exposed schemas** (`public` already is)
+3. In the plugin: **Add credential → Supabase** → paste → pick **Schema → Table → View (optional) → Primary key column → Filename / Subfolder columns** (dropdowns auto-populate from your project's OpenAPI spec)
+4. **Publishable-key users**: Supabase blocks schema introspection for publishable keys, so a one-time setup banner appears with a `SECURITY DEFINER` SQL function — **Copy SQL** → run it in the Supabase SQL Editor → **Verify**. Saving is blocked until verified (fail-closed); `anon`/secret keys skip this entirely.
+</details>
 
-### 2. Configure the Plugin
+<details>
+<summary><strong>Notion</strong> — internal integration token</summary>
 
-1. Open **Settings → Auto Note Importer**
-2. **Add credential** — pick the provider type (Airtable / SeaTable / Supabase) and paste your token
-3. The connection card adapts to your selected credential. Fill in:
-   - **Airtable**: Base → Table → View (optional) → Filename / Subfolder fields
-   - **SeaTable**: Table ID → View ID (optional) → Filename / Subfolder column names
-   - **Supabase**: Schema (default `public`) → Table → View (optional) → Primary key column → Filename / Subfolder columns. Tables/columns are auto-populated from your project's OpenAPI spec; a text-input fallback appears when the schema cannot be reached.
-4. **Destination folder** in your vault
-5. **Template** — optional `{{fieldName}}` template
-6. **Bidirectional sync** — toggle if you want changes flowing both ways
+1. Create an internal integration at [notion.so/profile/integrations](https://www.notion.so/profile/integrations) and copy the token (`ntn_…`)
+2. **Share your database with the integration**: open the database in Notion → **⋯ → Connections →** add your integration (without this, the plugin sees zero data sources)
+3. In the plugin: **Add credential → Notion** → paste the token (**Test connection** reports how many data sources are shared) → pick a **data source** — the filename field auto-fills from the title property
+4. Optional: enable **Sync page body (pull-only)** to bring the page content below the properties into the note body as Markdown. ⚠️ The body is pull-only — Notion is the source of truth, and local body edits are overwritten on the next pull (follows *Allow overwrite*).
+</details>
 
-You can have multiple configurations (e.g. one Airtable + one SeaTable + one Supabase, or two SeaTable bases) — switch between them with the tab bar at the top of the settings panel.
+Then set the **destination folder**, an optional **template**, and toggle **bidirectional sync** if you want edits flowing back. Multiple configurations switch via the tab bar at the top of the settings panel.
 
-### 3. Sync Notes
+## 🕹 Commands
 
-Use Command Palette (Ctrl/Cmd + P). Each command is labeled with the active config's provider:
+Every command is labeled with the active config's provider (Ctrl/Cmd + P):
 
 | Command | Description |
 |:---|:---|
-| **Sync current note from {provider}** | Refresh current note from the remote database |
-| **Sync all notes from {provider}** | Import / update all notes |
-| **Sync current note to {provider}** \* | Push current note changes |
-| **Sync modified notes to {provider}** \* | Push pending changes |
-| **Sync all notes to {provider}** \* | Push every note |
-| **Bidirectional sync current note** \* | Push, wait for formulas, then pull |
-| **Bidirectional sync modified notes** \* | Same for modified notes |
-| **Bidirectional sync all notes** \* | Same for all notes |
+| **Sync current note from {provider}** | Refresh the active note from the remote |
+| **Sync all notes from {provider}** | Import / update everything |
+| **Sync current / modified / all to {provider}** \* | Push local frontmatter edits |
+| **Bidirectional sync current / modified / all** \* | Push → wait for formulas → pull computed values |
 
-\* Commands marked with \* require **Enable bidirectional sync** to be turned on. They are hidden from Command Palette when disabled.
-
-You can also schedule syncs:
-
-- **Sync interval**: minutes (0 = manual only)
-- **Watch for changes**: detect file edits and queue automatic sync
+\* Hidden unless **Enable bidirectional sync** is on. Scheduling: **Sync interval** (minutes, 0 = manual) and **Watch for changes** (queue a sync when a note is edited).
 
 ## ⚙️ Settings Guide
 
-### Per-Configuration Basics
+<details>
+<summary><strong>Per-configuration basics</strong></summary>
 
 | Setting | Description |
 |:---|:---|
-| **Credential** | Pick a registered credential (Airtable / SeaTable) |
-| **Base / Table / View** (Airtable) | Selectable from your base via the Meta API |
-| **Table / View ID** (SeaTable) | Identifiers from your SeaTable base — auto-derived dropdowns are tracked in [#73](https://github.com/uppinote20/obsidian-auto-note-importer/issues/73) |
-| **Filename Field** | Field used for note filenames (safe types only) |
-| **Subfolder Field** | Optional — organize notes into subfolders |
-| **New File Location** | Destination folder in your vault |
-| **Template File** | Custom template (optional) |
-| **Sync Interval** | Auto-sync frequency in minutes (0 = disabled) |
-| **Allow Overwrite** | Update existing notes vs skip duplicates |
+| **Credential** | Pick a registered credential (any provider) |
+| **Base / Table / View** | Provider-aware pickers (Airtable Meta API · SeaTable metadata · Supabase OpenAPI · Notion data sources) |
+| **Filename field** | Field used for note filenames — only name-safe types are offered |
+| **Subfolder field** | Optional — organize notes into `destination/value/` subfolders |
+| **New file location** | Destination folder in your vault |
+| **Template file** | Optional `{{field}}` template |
+| **Sync interval** | Auto-sync frequency in minutes (0 = disabled) |
+| **Allow overwrite** | Update existing notes vs skip duplicates |
+| **Sync page body** (Notion) | Pull the page's block content into the note body — pull-only, overwrites local body edits |
+</details>
 
-### Bidirectional Sync
+<details>
+<summary><strong>Bidirectional sync</strong></summary>
 
 | Setting | Description |
 |:---|:---|
 | **Enable bidirectional sync** | Allow Obsidian → remote pushes |
-| **Conflict resolution** | `Manual`, `Obsidian wins`, `Remote wins` |
-| **Watch for file changes** | Auto-detect Obsidian edits and queue sync |
-| **Auto-sync computed fields** | After push, fetch formulas / rollups / lookups |
-| **Computed-field sync delay** | ms to wait for the remote to recompute (default: 1500) |
+| **Conflict resolution** | `Manual` (notify & skip) · `Obsidian wins` · `Remote wins` |
+| **Watch for file changes** | Auto-queue a push when a synced note is edited |
+| **Auto-sync computed fields** | After pushing, pull back formulas / rollups / generated columns |
+| **Computed-field sync delay** | ms to wait for the remote to recompute (default 1500) |
+</details>
 
-### Supported Field Types
+<details>
+<summary><strong>Supported field types per provider</strong></summary>
 
-The plugin maps each provider's native types to a normalized taxonomy (`text` / `number` / `date` / `boolean` / `single-select` / `multi-select` / `attachment` / `link` / `computed` / `system`). Each provider's `FieldTypeMapper` decides which types are filename-safe and which are read-only (excluded from push) — fail-closed for unknown types.
+Each provider's native types map to a normalized taxonomy (`text` / `number` / `date` / `boolean` / `single-select` / `multi-select` / `attachment` / `link` / `computed` / `system`). Read-only and object-shaped types are excluded from pushes automatically — fail-closed for anything unknown.
 
-#### Airtable
+**Airtable** — filename-safe: `singleLineText`, `singleSelect`, `number`, `formula` · read-only: `formula`, `rollup`, `count`, `lookup`, `externalSyncSource`, `aiText`, `button`, `createdTime`, `lastModifiedTime`, `createdBy`, `lastModifiedBy`, `autoNumber` · [full reference →](examples/airtable-field-types.md)
 
-**✅ Safe for Filenames & Subfolders:** `singleLineText`, `singleSelect`, `number`, `formula`
+**SeaTable** — filename-safe: `text`, `single-select`, `number`, `auto-number`, `formula` · read-only: `formula`, `link-formula`, `button`, `ctime`, `mtime`, `creator`, `last-modifier`, `auto-number` · never pushed (object-shaped): `collaborator`, `geolocation`, `file`, `digital-sign`, `link`
 
-**🔒 Read-only (synced from Airtable only):** `formula`, `rollup`, `count`, `lookup`, `externalSyncSource`, `aiText`, `button`, `createdTime`, `lastModifiedTime`, `createdBy`, `lastModifiedBy`, `autoNumber`
+**Supabase** — filename-safe: `string`, `string:uuid`, `integer` (+ `:readonly` variants) · read-only: anything the PostgREST spec flags `readOnly` (generated columns, view columns) · mapping: `text`/`uuid` → text, `integer`/`numeric` → number, `boolean` → boolean, `date`/`timestamptz` → date, `json(b)` → text, arrays → multi-select
 
-**📋 [Complete Airtable Field Type Reference →](examples/airtable-field-types.md)**
-
-#### SeaTable
-
-**✅ Safe for Filenames & Subfolders:** `text`, `single-select`, `number`, `auto-number`, `formula`
-
-**🔒 Read-only (synced from SeaTable only):** `formula`, `link-formula`, `button`, `ctime`, `mtime`, `creator`, `last-modifier`, `auto-number`
-
-#### Supabase
-
-**✅ Safe for Filenames & Subfolders:** `string`, `string:uuid`, `integer`, `integer:int64` (and their `:readonly` variants — typical for PostgreSQL primary keys)
-
-**🔒 Read-only (synced from Supabase only):** any column flagged `readOnly: true` in the PostgREST OpenAPI spec — typically `GENERATED ALWAYS AS ...` columns and view-derived columns
-
-PostgreSQL type → standard mapping summary: `text`/`varchar`/`uuid` → text · `integer`/`numeric`/`real` → number · `boolean` → boolean · `date`/`timestamp`/`timestamptz` → date · `json`/`jsonb` → text (raw JSON string) · `text[]`/`int[]` → multi-select · `bytea` → unknown (skipped)
-
-Unsupported / read-only fields are automatically hidden in dropdowns to prevent push errors.
+**Notion** — filename-safe: `title`, `select`, `status`, `number`, `email`, `phone_number`, `unique_id` · read-only: `formula`, `rollup`, `created_time/by`, `last_edited_time/by`, `unique_id`, `button` · pushable even though object-valued (the plugin rebuilds the API shape): `title`, `rich_text`, `select`, `status`, `multi_select`, `date` · never pushed: `people`, `files`, `relation`
+</details>
 
 ## 🔄 How It Works
 
-### Unique Identification
-Each note carries the remote record id in the `primaryField` frontmatter key — the immutable handle the sync pipeline uses to match notes back to their remote row.
-
-### File Naming Logic
-1. Use the selected **Filename Field** if present and non-empty
-2. Fallback to the **remote record id**
-3. All filenames are sanitized for cross-platform compatibility
-
-### Subfolder Organization
-- **With Subfolder Field**: `destination/field-value/note.md`
-- **Without Subfolder Field**: `destination/note.md`
-- Supports nested folders (e.g. "Category/Subcategory")
-- Recursive duplicate detection across all subfolders
-
-### Bidirectional Sync Flow
-
-```
-┌─────────────┐     Push      ┌──────────────┐
-│   Obsidian  │ ───────────▶  │   Remote DB  │
-│   (Notes)   │               │  (Airtable / │
-│             │  ◀───────────  │   SeaTable)  │
-└─────────────┘     Pull      └──────────────┘
+```mermaid
+flowchart LR
+    O[Obsidian notes] -- "push writable fields" --> R[(Remote DB)]
+    R -- "computes formulas / rollups" --> R
+    R -- "pull rows + computed values" --> O
+    R -- "Notion blocks → Markdown body (pull-only)" --> O
 ```
 
-1. **Obsidian → Remote**: edit frontmatter, sync pushes writable fields
-2. **Server-side computation**: the remote computes formulas / rollups / link-formulas
-3. **Remote → Obsidian**: pull back computed values to update notes
+- **Identity**: every note carries the remote record id in `primaryField` frontmatter — the immutable handle for matching
+- **Filenames**: your chosen field → fallback to record id → sanitized for every OS
+- **Subfolders**: `destination/field-value/note.md`, nested paths supported, duplicates detected recursively
+- **Conflicts**: when the same field changed on both sides, your chosen mode decides (`Manual` notifies and skips the field)
+- **Notion body**: fetched per page through a rate-limit budget, converted block-by-block (headings, lists, toggles → callouts, tables, code, equations…) — attachments and media arrive as links
 
-### Conflict Resolution
-
-When the same field is modified in both Obsidian and the remote:
-
-| Mode | Behavior |
-|:---|:---|
-| **Manual** | Show notification, skip conflicting fields |
-| **Obsidian wins** | Overwrite the remote with Obsidian values |
-| **Remote wins** | Keep remote values, ignore Obsidian changes |
-
-## 📝 Template Usage
-
-Create custom note templates using `{{fieldName}}` placeholders:
+## 📝 Templates
 
 ```markdown
 ---
 title: "{{Title}}"
 status: "{{Status}}"
-author: "{{Author.name}}"
 created: "{{Created time}}"
 ---
 
 # {{Title}}
 
-## Summary
-{{Summary}}
-
-## Content
-{{Description}}
+{{body}}          <!-- Notion page content (when Sync page body is on) -->
 
 ## Attachments
 {{Attachment.0.url}}
 ```
 
-**Advanced Features:**
-- **Nested Access**: `{{Attachment.0.url}}`, `{{User.name}}`
-- **Multi-line Support**: Automatic YAML block-scalar formatting
-- **Bases Optimization**: Proper YAML types for table/card views
+- **Nested access**: `{{Attachment.0.url}}`, `{{User.name}}` · **`{{body}}`**: the fetched Notion page body (a real field named `body` wins, for backward compatibility)
+- Multi-line values become YAML block scalars automatically; without a template, the plugin builds a sensible default note
+- **[Template examples & best practices →](examples/template-examples.md)**
 
-**📝 [Template Examples & Best Practices →](examples/template-examples.md)**
+## 🔗 Obsidian Bases
 
-## 🔗 Obsidian Bases Integration
-
-This plugin emits Bases-compatible YAML frontmatter with proper data types for seamless table/card view editing. Import your notes, enable the Bases plugin, and create a database from the imported folder for powerful data management workflows.
-
-## 📊 Example Workflows
-
-### One-way Import
-1. **Collect data** with automation tools (n8n, Zapier, Apps Script)
-2. **Store** in Airtable or SeaTable
-3. **Import** to Obsidian via this plugin
-4. **Organize** automatically using Subfolder Field
-5. **Manage** in Obsidian Bases (table/card view)
-
-### Bidirectional Workflow
-1. **Import** records as Obsidian notes
-2. **Edit** frontmatter fields in Obsidian (status, tags, notes)
-3. **Push** changes back to the remote
-4. **Compute** formulas / rollups / link-formulas server-side
-5. **Pull** computed values back into Obsidian
+Frontmatter is emitted with Bases-friendly YAML types — import a folder, point the Bases plugin at it, and edit your database in table/card views.
 
 ## 🔐 Permissions & Disclosures
 
-What the plugin accesses and why — full transparency. Nothing is sent anywhere except the database APIs you configure; there is no telemetry.
+Nothing is sent anywhere except the database APIs you configure; there is no telemetry.
 
-- **Vault file enumeration** (`vault.getAllLoadedFiles`, `vault.getAbstractFileByPath`)
-  - **Why**: find notes to sync, scope sync to your destination folder, and power folder / file autocomplete in settings.
-  - **Scope**: file *paths* only. Contents are read on demand by the sync flow (see below), not during enumeration.
-- **Vault read & write** (`vault.read`, `vault.create`, `vault.modify`, `vault.createFolder`, `vault.adapter.exists`)
-  - **Why**: import remote records into `.md` files, parse frontmatter to push edits back, create destination subfolders, and write computed values returned by formulas / rollups.
-  - **Scope**: only files inside the destination folder you configure per sync config.
-- **Vault change events** (`vault.on`, `vault.offref`)
-  - **Why**: detect file edits when "Watch for file changes" is enabled, so edits can be queued for push.
-  - **Scope**: events on all files; the handler filters to your configured destination folder before queuing.
-- **Clipboard write** (`navigator.clipboard.writeText`)
-  - **Why**: the Supabase credential form's "Copy SQL" button copies a one-time `SECURITY DEFINER` setup function for you to paste into the Supabase SQL Editor. A `Notice` fallback is shown when clipboard access is denied.
-  - **Scope**: clipboard is only ever *written* (never read), and only when you click that specific button.
-- **Base64 decode** (`atob`)
-  - **Why**: the Supabase credential form decodes the JWT payload of the API key you paste to auto-detect its kind (anon / service_role / publishable) and show the right RLS warning.
-  - **Scope**: runs entirely locally on the pasted key; the decoded payload is never stored or transmitted.
-- **Network requests** (Obsidian `requestUrl`)
-  - **Why**: REST calls to Airtable / SeaTable / Supabase only, scoped to credentials you register.
-  - **Scope**: no third-party services, no analytics endpoints, no auto-update checks.
+<details>
+<summary>Full list of API usage and why</summary>
+
+- **Vault file enumeration** (`vault.getAllLoadedFiles`, `getAbstractFileByPath`) — find notes to sync and power folder/file autocomplete. Paths only; contents are read on demand by the sync flow.
+- **Vault read & write** (`read`, `create`, `modify`, `createFolder`, `adapter.exists`) — import records to `.md`, parse frontmatter for pushes, write computed values. Scoped to your configured destination folders.
+- **Vault change events** (`vault.on`) — detect edits for *Watch for changes*; the handler filters to your destination folder before queuing.
+- **Clipboard write** (`navigator.clipboard.writeText`) — only the Supabase "Copy SQL" button; clipboard is never read.
+- **Base64 decode** (`atob`) — locally decodes the pasted Supabase key's JWT payload to auto-detect its kind and show the right RLS warning; never stored or transmitted.
+- **Network requests** (Obsidian `requestUrl`) — REST calls to Airtable / SeaTable / Supabase / Notion only, using credentials you registered. No third-party services, no analytics, no update checks.
+</details>
 
 ## 🛠️ Troubleshooting
 
-**Common Issues:**
-- **No fields showing**: re-check token permissions and base/table selection
-- **Sync fails**: verify network connection and credentials
-- **File naming errors**: confirm the selected field type is supported (per-provider whitelist)
-- **Missing subfolders**: check the subfolder field value isn't empty
-- **Bidirectional sync not working**: ensure write permissions (Airtable PAT `data.records:write`; SeaTable token "Read and write")
-- **Formulas not updating**: increase the computed-field sync delay
-- **Conflicts detected**: check conflict resolution mode
-- **Supabase: RLS denial / empty result**: anon/publishable key respects RLS policies. Ensure your table has the right SELECT/INSERT/UPDATE policies, or temporarily test with a secret key to confirm permissions are the issue.
+| Symptom | Check |
+|:---|:---|
+| No fields in dropdowns | Token permissions/scopes; base & table selection |
+| **Notion: "0 data sources shared"** | Share the database with your integration: **⋯ → Connections** in Notion |
+| Bidirectional not working | Write permission (Airtable `data.records:write` · SeaTable "Read and write" token) |
+| Formulas not updating after push | Increase **Computed-field sync delay** |
+| Supabase: empty results / RLS denial | Your key respects RLS — add SELECT/INSERT/UPDATE policies for the table |
+| Notion body slow on big pages | Body fetching is rate-limited (~3 req/s) with a per-note request budget; very deep pages get a truncation marker |
+| Filename errors | The chosen field's type must be in the provider's name-safe list |
+| Local body edits disappear (Notion) | By design in v1 — body is pull-only and Notion wins; keep local prose outside synced folders |
 
-## 🧪 Development — Supabase E2E Setup
-
-Contributors running the Supabase e2e suite (`npm run test:e2e:supabase:full`) need a demo Supabase project. Create a free project at [supabase.com](https://supabase.com), open the SQL Editor, and run:
-
-```sql
-CREATE TYPE note_status AS ENUM ('draft', 'published', 'archived');
-
-CREATE TABLE notes (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  title text NOT NULL,
-  content text,
-  status note_status DEFAULT 'draft',
-  tags text[],
-  meta jsonb,
-  archived boolean DEFAULT false,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now(),
-  full_text text GENERATED ALWAYS AS (title || ' ' || coalesce(content, '')) STORED
-);
-
-CREATE VIEW active_notes AS
-  SELECT * FROM notes WHERE archived = false;
-
-ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "anon_all" ON notes FOR ALL USING (true);
-```
-
-If you'll run e2e (or the plugin itself) with a **publishable key** (`sb_publishable_…`), also install the schema-introspection RPC fallback — Supabase's new key system blocks the OpenAPI endpoint for publishable keys, and the plugin reads schema through this RPC instead.
-
-Easiest path: build + load the plugin once, open Settings → Supabase Connection, and click **Copy SQL** in the "One-time setup required" banner. Paste into Supabase SQL Editor and Run.
-
-For automated environments where you can't open the UI, extract the SQL with `tsx` (Node alone can't `require` a `.ts` file on every release):
-
-```bash
-npx tsx -e "import('./src/constants/supabase-rpc.ts').then(m => console.log(m.SUPABASE_RPC_SCHEMA_SQL))"
-```
-
-Re-running is safe (`CREATE OR REPLACE`). This step is unnecessary for legacy `anon` JWTs — those still receive OpenAPI directly.
-
-Add to `.env` at the project root:
-
-```ini
-SUPABASE_URL=https://<your-ref>.supabase.co
-SUPABASE_KEY=sb_publishable_xxxxxxxxxxxxxxxx
-```
-
-Then `npm run test:e2e:supabase:full` runs the full build + deploy + e2e flow.
-
-**Provider-specific Tips:**
-- **Airtable**: read-only fields (formulas, rollups) are auto-excluded from push. Use **Obsidian wins** for faster sync (skips conflict detection).
-- **SeaTable**: API tokens are base-specific. Each token grants access to exactly one base — get a separate token per base. Self-hosted users override `Server URL` per credential.
+Contributor docs (e2e suites, Supabase demo schema, Notion test setup): **[tests/e2e/README.md](tests/e2e/README.md)**
 
 ## ☕ Support
 
-If you find this plugin useful, support development:
+If this plugin is useful to you:
 
-<div style="display: flex; gap: 20px; align-items: center;">
-  <a href="https://ko-fi.com/uppinote" target="_blank">
-    <img src="https://storage.ko-fi.com/cdn/kofi5.png" alt="Buy Me a Coffee at ko-fi.com" style="height:60px; width:217px;">
-  </a>
-  <a href="https://www.buymeacoffee.com/uppinote" target="_blank">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height:60px; width:217px;">
-  </a>
-</div>
+<a href="https://ko-fi.com/uppinote" target="_blank"><img src="https://storage.ko-fi.com/cdn/kofi5.png" alt="Support on Ko-fi" height="40"></a> <a href="https://www.buymeacoffee.com/uppinote" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40"></a>
 
 ## 📄 License
 
-MIT License
+MIT
