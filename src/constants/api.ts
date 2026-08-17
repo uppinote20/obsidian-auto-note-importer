@@ -160,3 +160,20 @@ export const NOTION_RICH_TEXT_MAX_LEN = 2000;
 export const PROVIDER_RATE_LIMIT_INTERVALS: Partial<Record<CredentialType, number>> = {
   notion: NOTION_RATE_LIMIT_INTERVAL_MS,
 };
+
+/**
+ * Max number of Notion API requests the body-sync pipeline will spend
+ * fetching one note's block tree. The children endpoint returns one level
+ * per request, and each `has_children` parent costs one paced request — this
+ * budget caps pathological pages (deep/huge trees) from stalling a sync. On
+ * exhaustion the converter emits a truncation marker instead of failing the
+ * note.
+ */
+export const NOTION_BODY_MAX_REQUESTS_PER_NOTE = 60;
+
+/**
+ * Max block-tree recursion depth the converter will descend into when
+ * rendering a note body. Beyond this, nested children are skipped and a
+ * truncation marker is emitted instead.
+ */
+export const NOTION_BODY_MAX_DEPTH = 10;

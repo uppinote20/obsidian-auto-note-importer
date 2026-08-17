@@ -20,6 +20,8 @@ export type {
   NotionPropertyValue,
   NotionPage,
   NotionListResponse,
+  NotionBlock,
+  NotionRichTextItem,
 } from './notion.types';
 
 export type {
