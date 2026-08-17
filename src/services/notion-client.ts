@@ -136,6 +136,10 @@ export class NotionClient implements DatabaseProvider {
 
       const json = response.json as { results: NotionPage[]; has_more: boolean; next_cursor: string | null };
       for (const page of json.results) {
+        // The query endpoint normally excludes trashed pages, but the wire
+        // type carries `in_trash` — skip defensively, mirroring the
+        // listDataSources guard in notion-schema-cache.
+        if (page.in_trash) continue;
         allNotes.push({ id: page.id, primaryField: page.id, fields: flattenNotionProperties(page.properties) });
       }
 
@@ -166,6 +170,10 @@ export class NotionClient implements DatabaseProvider {
     }
 
     const json = response.json as NotionPage;
+    // A trashed page still resolves by ID — treat it like 404 so single-note
+    // pulls and conflict lookups never re-hydrate trashed content (mirrors
+    // the fetchNotes guard).
+    if (json.in_trash) return null;
     return { id: json.id, primaryField: json.id, fields: flattenNotionProperties(json.properties) };
   }
 

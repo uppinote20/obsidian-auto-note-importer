@@ -79,6 +79,7 @@ describe('NotionClient.fetchNotes', () => {
         json: {
           results: [
             { id: 'page-2', properties: { Name: { type: 'title', title: [{ plain_text: 'Beta' }] } } },
+            { id: 'page-3', in_trash: true, properties: { Name: { type: 'title', title: [{ plain_text: 'Trashed' }] } } },
           ],
           has_more: false,
           next_cursor: null,
@@ -113,6 +114,15 @@ describe('NotionClient.fetchRecord', () => {
     const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
     const result = await c.fetchRecord('page-1');
     expect(result).toEqual({ id: 'page-1', primaryField: 'page-1', fields: { Name: 'Alpha' } });
+  });
+
+  it('returns null for a trashed page (mirrors the fetchNotes guard)', async () => {
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200,
+      json: { id: 'page-1', in_trash: true, properties: { Name: { type: 'title', title: [{ plain_text: 'Gone' }] } } },
+    });
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, new NotionSchemaCache());
+    expect(await c.fetchRecord('page-1')).toBeNull();
   });
 });
 

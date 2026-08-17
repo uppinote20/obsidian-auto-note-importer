@@ -197,6 +197,12 @@ describe('wrapForNotionPush', () => {
     expect(wrapForNotionPush('checkbox', 'false')).toEqual({ ok: true, payload: { checkbox: false } });
   });
 
+  it('coerces numeric 0/1 checkbox values (YAML round-trip from some editors)', () => {
+    expect(wrapForNotionPush('checkbox', 1)).toEqual({ ok: true, payload: { checkbox: true } });
+    expect(wrapForNotionPush('checkbox', 0)).toEqual({ ok: true, payload: { checkbox: false } });
+    expect(wrapForNotionPush('checkbox', 2).ok).toBe(false);
+  });
+
   it('wraps select/status; empty/null clears', () => {
     expect(wrapForNotionPush('select', 'A')).toEqual({ ok: true, payload: { select: { name: 'A' } } });
     expect(wrapForNotionPush('select', '')).toEqual({ ok: true, payload: { select: null } });
