@@ -216,8 +216,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     return [
       this.defineSection({
         name: 'Credentials',
-        desc: 'API keys and tokens for Airtable, SeaTable, and Supabase.',
-        aliases: ['api key', 'api token', 'airtable', 'seatable', 'supabase', 'credential'],
+        desc: 'API keys and tokens for Airtable, SeaTable, Supabase, and Notion.',
+        aliases: ['api key', 'api token', 'airtable', 'seatable', 'supabase', 'notion', 'credential'],
         render: (host) => {
           this.renderCredentialsSection(host);
           // The credential form registers listeners on the host it just
@@ -2272,6 +2272,10 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
     if (config.filenameFieldName) return;
     try {
       const schema = await this.notionSchemaCache.getSchema(credential, dataSourceId);
+      // A→B fast-switch race (PR #125 Codex P2): if the user already moved
+      // on to a different data source while this fetch was in flight, the
+      // resolved schema belongs to the stale selection — discard it.
+      if (config.tableId !== dataSourceId) return;
       const titleProp = [...schema.entries()].find(([, type]) => type === 'title');
       if (!titleProp || config.filenameFieldName) return;
       config.filenameFieldName = titleProp[0];
