@@ -243,6 +243,133 @@ describe('SyncOrchestrator', () => {
     });
   });
 
+  describe('processSyncRequest — push: field metadata (#124)', () => {
+    function setupSingleFilePush() {
+      const file = createMockTFile('Sync/note.md');
+      const folder = createMockTFolder('Sync', [file]);
+      mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => {
+        if (path === 'Sync') return folder;
+        return file;
+      });
+      mockApp.vault.adapter.exists.mockResolvedValue(true);
+      vi.spyOn(conflictResolver, 'shouldSkipConflictDetection').mockReturnValue(true);
+      mockProvider.batchUpdate.mockResolvedValue([{ success: true, recordId: 'rec1', updatedFields: {} }]);
+      return file;
+    }
+
+    it('calls provider.fetchFieldMetadata and passes it through to extractSyncableFields, excluding non-pushable fields from batchUpdate', async () => {
+      setupSingleFilePush();
+      const metadata = [
+        { name: 'Title', type: 'singleLineText' },
+        { name: 'Formula', type: 'formula' },
+      ];
+      mockProvider.fetchFieldMetadata.mockResolvedValue(metadata);
+
+      vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
+      const extractSpy = vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Title: 'value' });
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.fetchFieldMetadata).toHaveBeenCalled();
+      expect(extractSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), metadata);
+
+      const batchArg = mockProvider.batchUpdate.mock.calls[0][0];
+      expect(batchArg[0].fields).not.toHaveProperty('Formula');
+    });
+
+    it('passes undefined to extractSyncableFields when fetchFieldMetadata resolves null', async () => {
+      setupSingleFilePush();
+      mockProvider.fetchFieldMetadata.mockResolvedValue(null);
+
+      vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
+      const extractSpy = vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Title: 'value' });
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(extractSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined);
+    });
+
+    it('treats a rejecting fetchFieldMetadata (contract violation) as null (defensive catch)', async () => {
+      setupSingleFilePush();
+      mockProvider.fetchFieldMetadata.mockRejectedValue(new Error('should never happen per contract'));
+
+      vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
+      const extractSpy = vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Title: 'value' });
+
+      await expect(orchestrator.processSyncRequest('push', 'all')).resolves.toBeUndefined();
+
+      expect(extractSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined);
+    });
+
+    it('does not raise a conflict for a non-pushable field that differs remotely (conflict-asymmetry regression)', async () => {
+      // Non-airtable provider whose field mapper marks 'formula' as not pushable.
+      const nonPushableMapper = {
+        mapToStandardType: () => 'unknown',
+        isReadOnly: (type: string) => type === 'formula',
+        isPushable: (type: string) => type !== 'formula',
+        isFilenameSafe: () => false,
+        isSubfolderSafe: () => false,
+        getFilenameSafeTypes: () => [],
+        getSubfolderSafeTypes: () => [],
+        getReadOnlyTypes: () => ['formula'],
+      };
+      mockProvider = createMockDatabaseProvider({
+        providerType: 'seatable',
+        fieldTypeMapper: nonPushableMapper,
+      });
+      conflictResolver = new ConflictResolver(settings, mockProvider as never);
+      orchestrator = new SyncOrchestrator(
+        mockApp as unknown as App,
+        settings,
+        mockProvider as never,
+        fieldCache,
+        frontmatterParser,
+        fileWatcher,
+        conflictResolver,
+        statusBar
+      );
+
+      const file = setupSingleFilePush();
+      vi.spyOn(conflictResolver, 'shouldSkipConflictDetection').mockReturnValue(false);
+
+      (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
+        getFileCache: vi.fn().mockReturnValue({
+          frontmatter: {
+            primaryField: 'rec1',
+            Title: 'same',
+            Formula: 'local-computed-value',
+          },
+        }),
+      };
+
+      mockProvider.fetchFieldMetadata.mockResolvedValue([
+        { name: 'Title', type: 'singleLineText' },
+        { name: 'Formula', type: 'formula' },
+      ]);
+      mockProvider.fetchRecord.mockResolvedValue({
+        id: 'rec1',
+        primaryField: 'rec1',
+        fields: { Title: 'same', Formula: 'remote-computed-value' },
+      });
+
+      const detectSpy = vi.spyOn(conflictResolver, 'detectConflicts');
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      // 'Formula' was filtered out by extractSyncableFields (not pushable),
+      // so detectConflicts never sees it and can't flag a conflict for it.
+      const [, fieldsArg] = detectSpy.mock.calls[0];
+      expect(fieldsArg).not.toHaveProperty('Formula');
+      expect(await detectSpy.mock.results[0].value).toEqual([]);
+
+      expect(mockProvider.batchUpdate).toHaveBeenCalled();
+      const batchArg = mockProvider.batchUpdate.mock.calls[0][0];
+      expect(batchArg[0].fields).not.toHaveProperty('Formula');
+
+      void file;
+    });
+  });
+
   describe('processSyncRequest — bidirectional', () => {
     it('should execute two phases when autoSyncComputedFields is true', async () => {
       settings.autoSyncComputedFields = true;

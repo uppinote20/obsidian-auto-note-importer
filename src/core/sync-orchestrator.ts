@@ -17,7 +17,7 @@
  */
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
-import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseProvider } from '../types';
+import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseProvider, RemoteFieldInfo } from '../types';
 import { CREDENTIAL_TYPE_LABELS } from '../types';
 import { DEBUG_DELAY_MULTIPLIER } from '../constants';
 import { FieldCache } from '../services';
@@ -390,21 +390,11 @@ export class SyncOrchestrator {
   }
 
   private async pushFiles(files: TFile[]): Promise<void> {
-    const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
-
-    let cachedFields = this.fieldCache.getFields(cacheKey);
-    if (!cachedFields && this.settings.apiKey && this.settings.baseId && this.settings.tableId) {
-      try {
-        cachedFields = await this.fieldCache.fetchFields(
-          this.settings.apiKey,
-          this.settings.baseId,
-          this.settings.tableId
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        new Notice(`Auto Note Importer: Field metadata unavailable: ${message}`);
-      }
-    }
+    // Provider-agnostic: each provider serves its own cached metadata and
+    // fails open with null (#124). The defensive catch is belt-and-suspenders —
+    // the contract already forbids rejection.
+    let remoteFields: RemoteFieldInfo[] | null = null;
+    try { remoteFields = await this.provider.fetchFieldMetadata(); } catch { remoteFields = null; }
 
     const batchUpdates: BatchUpdate[] = [];
     let errorCount = 0;
@@ -422,7 +412,7 @@ export class SyncOrchestrator {
       const fields = this.frontmatterParser.extractSyncableFields(
         file,
         this.provider.fieldTypeMapper,
-        cachedFields,
+        remoteFields ?? undefined,
       );
       if (!fields) continue;
 
