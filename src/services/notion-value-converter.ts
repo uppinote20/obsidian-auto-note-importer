@@ -6,7 +6,9 @@
  * frontmatter values back into Notion's PATCH-body property shape.
  *
  * @handbook 4.4-provider-abstraction
+ * @handbook 7.3-read-only-field-protection
  * @tested tests/services/notion-value-converter.test.ts
+ * @tested e2e:tests/e2e/run-notion-e2e.mjs
  */
 
 import { NOTION_RICH_TEXT_MAX_LEN } from '../constants';

@@ -8,6 +8,8 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 7.3-read-only-field-protection
  * @tested tests/services/notion-field-mapper.test.ts
+ * @tested e2e:tests/e2e/run-notion-e2e.mjs
+ * @tested e2e:tests/e2e/run-notion-settings-e2e.mjs
  */
 
 import type { FieldTypeMapper, StandardFieldType } from '../types';

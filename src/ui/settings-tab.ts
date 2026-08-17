@@ -13,6 +13,8 @@
  * @tested e2e:tests/e2e/run-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
+ * @tested tests/ui/settings-tab-notion-autofill.test.ts
+ * @tested e2e:tests/e2e/run-notion-settings-e2e.mjs
  */
 
 import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
