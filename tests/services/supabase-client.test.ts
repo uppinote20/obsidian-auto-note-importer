@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SupabaseClient } from '../../src/services/supabase-client';
-import { SupabaseMetadataCache } from '../../src/services/supabase-metadata-cache';
+import { SupabaseMetadataCache, SupabaseSchemaRpcMissingError } from '../../src/services/supabase-metadata-cache';
 import { RateLimiter } from '../../src/services/rate-limiter';
 import type { ConfigEntry, SupabaseCredential } from '../../src/types';
 import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
@@ -715,5 +715,123 @@ describe('SupabaseClient.batchUpdate composite PK + view-as-tableId guards (revi
     const body = JSON.parse(mockRequestUrl.mock.calls[0][0].body);
     expect(body[0]).not.toHaveProperty('data');
     expect(body[0]).toEqual({ id: 'r1' });
+  });
+});
+
+describe('SupabaseClient.fetchFieldMetadata', () => {
+  it('returns all columns (read-only + writable) when at least one column is writable', async () => {
+    const cache = defaultSpecCache();
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+
+    const metadata = await c.fetchFieldMetadata();
+
+    expect(metadata).toEqual([
+      { name: 'id', type: 'string' },
+      { name: 'title', type: 'string' },
+      { name: 'status', type: 'string' },
+      { name: 'x', type: 'integer' },
+      { name: 'full_text', type: 'string:readonly' },
+    ]);
+    expect(mockRequestUrl).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the writable column count is zero (#108 non-updatable-view interplay)', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:    { type: 'string', description: '<pk/>', readOnly: true },
+            total: { type: 'integer', readOnly: true },
+          },
+          required: ['id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+
+    const metadata = await c.fetchFieldMetadata();
+
+    expect(metadata).toBeNull();
+  });
+
+  it('never rejects and returns null when SupabaseSchemaRpcMissingError is thrown', async () => {
+    const cache = new SupabaseMetadataCache();
+    vi.spyOn(cache, 'getSpec').mockRejectedValueOnce(new SupabaseSchemaRpcMissingError('setup required'));
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+
+    const metadata = await c.fetchFieldMetadata();
+
+    expect(metadata).toBeNull();
+  });
+
+  it('never rejects and returns null on any other metadata fetch error', async () => {
+    const cache = new SupabaseMetadataCache();
+    vi.spyOn(cache, 'getSpec').mockRejectedValueOnce(new Error('network error'));
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+
+    const metadata = await c.fetchFieldMetadata();
+
+    expect(metadata).toBeNull();
+  });
+
+  it('reads columns from the base table, not the view, even when viewId is set (#127 P1)', async () => {
+    const cache = new SupabaseMetadataCache();
+    const spec = {
+      definitions: {
+        notes: {
+          properties: {
+            id:     { type: 'string', description: '<pk/>' },
+            title:  { type: 'string' },
+            status: { type: 'string' },
+          },
+          required: ['id'],
+        },
+        // Projection view exposes fewer columns than the base table.
+        active_notes: {
+          properties: {
+            id:    { type: 'string', description: '<pk/>' },
+            title: { type: 'string' },
+          },
+          required: ['id'],
+        },
+      },
+    };
+    (cache as unknown as { entries: Map<string, { spec: unknown; fetchedAt: number }> })
+      .entries.set('c1:public', { spec, fetchedAt: Date.now() });
+    const c = new SupabaseClient(cred, makeConfig({ viewId: 'active_notes' }), new RateLimiter(), cache);
+
+    const metadata = await c.fetchFieldMetadata();
+
+    // Must reflect the base table's `status` column, not just the view's columns.
+    expect(metadata).toEqual([
+      { name: 'id', type: 'string' },
+      { name: 'title', type: 'string' },
+      { name: 'status', type: 'string' },
+    ]);
+  });
+
+  it('serves from the metadata cache so two calls make one underlying request', async () => {
+    const cache = new SupabaseMetadataCache();
+    mockRequestUrl.mockResolvedValueOnce({
+      status: 200,
+      json: {
+        definitions: {
+          notes: {
+            properties: { id: { type: 'string', description: '<pk/>' }, title: { type: 'string' } },
+            required: ['id'],
+          },
+        },
+      },
+      headers: {},
+    });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), cache);
+
+    await c.fetchFieldMetadata();
+    await c.fetchFieldMetadata();
+
+    expect(mockRequestUrl).toHaveBeenCalledTimes(1);
   });
 });

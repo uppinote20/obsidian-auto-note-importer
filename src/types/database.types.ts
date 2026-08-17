@@ -13,6 +13,18 @@ import type { FieldTypeMapper } from './field-types.types';
 import type { RateLimiter } from '../services/rate-limiter';
 
 /**
+ * Metadata for a single remote field/column, as reported by a provider's
+ * own schema/metadata API. `type` is a provider-native type string
+ * (e.g. Airtable's `"multipleAttachments"`, PostgREST's `"integer"`) —
+ * it is meaningful only when interpreted by that same provider's
+ * `fieldTypeMapper`.
+ */
+export interface RemoteFieldInfo {
+  name: string;
+  type: string;
+}
+
+/**
  * A record fetched from a remote database, normalized across providers.
  */
 export interface RemoteNote {
@@ -83,6 +95,18 @@ export interface DatabaseProvider {
   readonly providerType: CredentialType;
   readonly capabilities: ProviderCapabilities;
   readonly fieldTypeMapper: FieldTypeMapper;
+
+  /**
+   * Fetches field/column metadata from the provider's schema API.
+   *
+   * Contract: `null` means metadata is unavailable or unsupported —
+   * callers MUST fail open (treat as "no metadata, send everything") in
+   * that case. This method MUST NEVER reject; all errors are caught and
+   * mapped to `null`. Implementations MUST serve from the provider's own
+   * cache so repeated calls within a single sync don't multiply API
+   * requests.
+   */
+  fetchFieldMetadata(): Promise<RemoteFieldInfo[] | null>;
 
   fetchNotes(): Promise<RemoteNote[]>;
   fetchRecord(recordId: string): Promise<RemoteNote | null>;

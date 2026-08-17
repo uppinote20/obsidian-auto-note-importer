@@ -274,3 +274,41 @@ describe('NotionClient.reconfigure', () => {
     expect(clearSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('NotionClient.fetchFieldMetadata', () => {
+  it('returns field metadata from the schema cache', async () => {
+    const cache = defaultSchemaCache();
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, cache);
+
+    const metadata = await c.fetchFieldMetadata();
+
+    expect(metadata).toEqual([
+      { name: 'Name', type: 'title' },
+      { name: 'Notes', type: 'rich_text' },
+      { name: 'Assignees', type: 'people' },
+      { name: 'Attachments', type: 'files' },
+      { name: 'Status', type: 'status' },
+    ]);
+    expect(mockRequestUrl).not.toHaveBeenCalled();
+  });
+
+  it('never rejects and returns null when schema loading fails', async () => {
+    const cache = new NotionSchemaCache();
+    vi.spyOn(cache, 'getSchema').mockRejectedValueOnce(new Error('HTTP 500: boom'));
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, cache);
+
+    const metadata = await c.fetchFieldMetadata();
+
+    expect(metadata).toBeNull();
+  });
+
+  it('serves from the schema cache so two calls make zero underlying network requests', async () => {
+    const cache = defaultSchemaCache();
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, cache);
+
+    await c.fetchFieldMetadata();
+    await c.fetchFieldMetadata();
+
+    expect(mockRequestUrl).not.toHaveBeenCalled();
+  });
+});

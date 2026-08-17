@@ -13,7 +13,7 @@
  * @tested e2e:tests/e2e/run-supabase-e2e.mjs
  */
 
-import { requestUrl, type RequestUrlParam } from 'obsidian';
+import { Notice, requestUrl, type RequestUrlParam } from 'obsidian';
 import {
   SUPABASE_DEFAULT_BATCH_SIZE,
   SUPABASE_DEFAULT_SCHEMA,
@@ -27,6 +27,7 @@ import type {
   DatabaseProvider,
   FieldTypeMapper,
   ProviderCapabilities,
+  RemoteFieldInfo,
   RemoteNote,
   SupabaseCredential,
   SyncResult,
@@ -62,24 +63,27 @@ export class SupabaseClient implements DatabaseProvider {
   private config: ConfigEntry;
   private rateLimiter: RateLimiter;
   private metadataCache: SupabaseMetadataCache;
+  private debugMode: boolean;
 
   constructor(
     credential: SupabaseCredential,
     config: ConfigEntry,
     rateLimiter: RateLimiter,
     metadataCache: SupabaseMetadataCache,
+    debugMode = false,
   ) {
     this.credential = credential;
     this.config = config;
     this.rateLimiter = rateLimiter;
     this.metadataCache = metadataCache;
+    this.debugMode = debugMode;
   }
 
   reconfigure(
     credential: Credential,
     config: ConfigEntry,
     rateLimiter: RateLimiter,
-    _debugMode: boolean,
+    debugMode: boolean,
   ): void {
     if (credential.type !== 'supabase') {
       throw new Error(`SupabaseClient cannot be reconfigured with a ${credential.type} credential`);
@@ -93,6 +97,7 @@ export class SupabaseClient implements DatabaseProvider {
     this.credential = credential;
     this.config = config;
     this.rateLimiter = rateLimiter;
+    this.debugMode = debugMode;
   }
 
   private validateConfig(): void {
@@ -153,6 +158,34 @@ export class SupabaseClient implements DatabaseProvider {
         text: err.text ?? '',
         arrayBuffer: new ArrayBuffer(0),
       };
+    }
+  }
+
+  /**
+   * Fetches all column metadata for the active table/view, cache-first via
+   * `SupabaseMetadataCache`. Returns `null` when the writable column count
+   * is zero — otherwise (once the commit ② parser strips non-pushable
+   * fields) every field would be filtered out and files would be silently
+   * skipped instead of reaching batchUpdate's non-updatable-view failure
+   * (see `loadWritableColumns` above). Any error, including
+   * `SupabaseSchemaRpcMissingError`, resolves to `null` — never rejects,
+   * see `DatabaseProvider.fetchFieldMetadata`.
+   */
+  async fetchFieldMetadata(): Promise<RemoteFieldInfo[] | null> {
+    try {
+      const schema = this.getSchema();
+      const tableName = this.config.tableId;  // upsert always targets base table, not view
+      const spec = await this.metadataCache.getSpec(this.credential, schema);
+      const columns = this.metadataCache.getColumns(spec, tableName);
+      const hasWritableColumn = columns.some(c => !supabaseFieldMapper.isReadOnly(c.providerType));
+      if (!hasWritableColumn) return null;
+      return columns.map(c => ({ name: c.name, type: c.providerType }));
+    } catch (error) {
+      if (this.debugMode) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Field metadata unavailable: ${message}`);
+      }
+      return null;
     }
   }
 

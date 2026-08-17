@@ -17,12 +17,13 @@
  * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
-import { requestUrl } from "obsidian";
+import { Notice, requestUrl } from "obsidian";
 import {
   SEATABLE_BATCH_SIZE,
   SEATABLE_BASE_TOKEN_REFRESH_MARGIN_MS,
   SEATABLE_BASE_TOKEN_TTL_MS,
   SEATABLE_DEFAULT_SERVER_URL,
+  SEATABLE_METADATA_TTL_MS,
   SEATABLE_PAGE_SIZE,
 } from '../constants';
 import type {
@@ -33,6 +34,7 @@ import type {
   DatabaseProvider,
   FieldTypeMapper,
   ProviderCapabilities,
+  RemoteFieldInfo,
   RemoteNote,
   SeaTableCredential,
   SyncResult,
@@ -86,27 +88,32 @@ export class SeaTableClient implements DatabaseProvider {
   private credential: SeaTableCredential;
   private config: ConfigEntry;
   private rateLimiter: RateLimiter;
+  private debugMode: boolean;
   private cachedToken: CachedBaseToken | null = null;
   // Best-effort column-name → column-type map for the active tableId.
   // Populated lazily by loadColumnTypes() and only cached on success — a
   // fetch failure isn't remembered so the next batchUpdate can retry.
-  private columnTypesCache: Map<string, string> | null = null;
+  // `fetchedAt` backs a TTL (SEATABLE_METADATA_TTL_MS) so a renamed/added
+  // remote column isn't dropped forever between credential/tableId changes.
+  private columnTypesCache: { types: Map<string, string>; fetchedAt: number } | null = null;
 
   constructor(
     credential: SeaTableCredential,
     config: ConfigEntry,
     rateLimiter: RateLimiter,
+    debugMode = false,
   ) {
     this.credential = credential;
     this.config = config;
     this.rateLimiter = rateLimiter;
+    this.debugMode = debugMode;
   }
 
   reconfigure(
     credential: Credential,
     config: ConfigEntry,
     rateLimiter: RateLimiter,
-    _debugMode: boolean,
+    debugMode: boolean,
   ): void {
     if (credential.type !== 'seatable') {
       throw new Error(`SeaTableClient cannot be reconfigured with a ${credential.type} credential`);
@@ -129,6 +136,7 @@ export class SeaTableClient implements DatabaseProvider {
     this.credential = credential;
     this.config = config;
     this.rateLimiter = rateLimiter;
+    this.debugMode = debugMode;
   }
 
   // ─── Token management ───────────────────────────────────────────────
@@ -193,9 +201,10 @@ export class SeaTableClient implements DatabaseProvider {
    * Best-effort GET of the base's `/metadata/` endpoint to resolve the
    * active tableId's column-name → column-type map, so batchUpdate can
    * filter out read-only / object-shaped columns via
-   * `seatableFieldMapper.isPushable` before writing (#121 — orchestrator's
-   * FieldCache is Airtable-only and gates on `settings.apiKey`, which is
-   * always `''` for SeaTable, so the guard has to live here).
+   * `seatableFieldMapper.isPushable` before writing (#121). This backs
+   * `fetchFieldMetadata()` (#124), which the orchestrator/parser use to
+   * gate `extractSyncableFields`; this client-side filter is defense-in-depth
+   * on top of that parser-level gate.
    *
    * Tables are matched by `_id` — `config.tableId` always stores the
    * table's `_id`, never its display name (see settings-tab.ts table
@@ -205,7 +214,12 @@ export class SeaTableClient implements DatabaseProvider {
    * batchUpdate call gets another chance.
    */
   private async loadColumnTypes(): Promise<Map<string, string> | null> {
-    if (this.columnTypesCache) return this.columnTypesCache;
+    if (
+      this.columnTypesCache &&
+      Date.now() - this.columnTypesCache.fetchedAt < SEATABLE_METADATA_TTL_MS
+    ) {
+      return this.columnTypesCache.types;
+    }
 
     try {
       const token = await this.getBaseToken();
@@ -228,8 +242,29 @@ export class SeaTableClient implements DatabaseProvider {
           columnTypes.set(c.name, c.type);
         }
       }
-      this.columnTypesCache = columnTypes;
+      this.columnTypesCache = { types: columnTypes, fetchedAt: Date.now() };
       return columnTypes;
+    } catch (error) {
+      if (this.debugMode) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Field metadata unavailable: ${message}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Fetches field/column metadata for the active table, cache-first via
+   * `loadColumnTypes()`. Never rejects — see `DatabaseProvider.fetchFieldMetadata`.
+   * Wrapped in its own try/catch as defense-in-depth: `loadColumnTypes()`
+   * already fails open, but this guards against a future regression there
+   * turning into an unhandled rejection.
+   */
+  async fetchFieldMetadata(): Promise<RemoteFieldInfo[] | null> {
+    try {
+      const columnTypes = await this.loadColumnTypes();
+      if (!columnTypes) return null;
+      return Array.from(columnTypes, ([name, type]) => ({ name, type }));
     } catch {
       return null;
     }

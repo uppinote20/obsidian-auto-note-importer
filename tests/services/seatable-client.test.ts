@@ -651,4 +651,76 @@ describe('SeaTableClient', () => {
       );
     });
   });
+
+  describe('fetchFieldMetadata', () => {
+    it('returns field metadata on success', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          metadata: {
+            tables: [{ _id: '0000', name: 'Table1', columns: [
+              { key: '0k', name: 'Notes', type: 'text' },
+              { key: '1k', name: 'Attachment', type: 'file' },
+            ] },
+          ] },
+        }));
+
+      const metadata = await client.fetchFieldMetadata();
+      expect(metadata).toEqual([
+        { name: 'Notes', type: 'text' },
+        { name: 'Attachment', type: 'file' },
+      ]);
+    });
+
+    it('never rejects and returns null on fetch failure', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({ error_msg: 'Forbidden' }, 403));
+
+      const metadata = await client.fetchFieldMetadata();
+      expect(metadata).toBeNull();
+    });
+
+    it('returns null when the table is missing from the token exchange rejection', async () => {
+      mockRequestUrl.mockRejectedValueOnce(new Error('Network error'));
+
+      const metadata = await client.fetchFieldMetadata();
+      expect(metadata).toBeNull();
+    });
+
+    it('serves from the column-types cache so two calls make one metadata request', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE))
+        .mockResolvedValueOnce(mockResponse({
+          metadata: { tables: [{ _id: '0000', name: 'Table1', columns: [{ name: 'Notes', type: 'text' }] }] },
+        }));
+
+      await client.fetchFieldMetadata();
+      await client.fetchFieldMetadata();
+
+      // token (1) + metadata (1) = 2 total, not 4.
+      expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-fetches column types after TTL expiry (#127 P2)', async () => {
+      vi.useFakeTimers();
+      try {
+        mockRequestUrl.mockResolvedValue(mockResponse({
+          metadata: { tables: [{ _id: '0000', name: 'Table1', columns: [{ name: 'Notes', type: 'text' }] }] },
+        }));
+        // Base-Token exchange is only needed once — mock it separately so
+        // the metadata endpoint mock above isn't consumed by it.
+        mockRequestUrl.mockResolvedValueOnce(mockResponse(BASE_TOKEN_RESPONSE));
+
+        await client.fetchFieldMetadata();
+        vi.advanceTimersByTime(11 * 60 * 1000);
+        await client.fetchFieldMetadata();
+
+        // token (1) + metadata (1) + metadata refetch after TTL (1) = 3.
+        expect(mockRequestUrl).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

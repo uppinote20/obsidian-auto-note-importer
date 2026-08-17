@@ -9,11 +9,12 @@
  * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
-import { requestUrl } from "obsidian";
+import { Notice, requestUrl } from "obsidian";
 import { AIRTABLE_API_BASE_URL, AIRTABLE_BATCH_SIZE } from '../constants';
 import type {
   LegacySettings,
   RemoteNote,
+  RemoteFieldInfo,
   SyncResult,
   BatchUpdate,
   DatabaseProvider,
@@ -25,6 +26,7 @@ import type {
 } from '../types';
 import { formatBatchLimitError, buildBatchFailures, buildLegacySettings, extractApiErrorDetails } from '../utils';
 import { airtableFieldMapper } from './airtable-field-mapper';
+import { FieldCache } from './field-cache';
 import { RateLimiter } from './rate-limiter';
 
 const AIRTABLE_CAPABILITIES: ProviderCapabilities = {
@@ -43,10 +45,34 @@ export class AirtableClient implements DatabaseProvider {
 
   private settings: LegacySettings;
   private rateLimiter: RateLimiter;
+  private fieldCache: FieldCache;
 
-  constructor(settings: LegacySettings, rateLimiter?: RateLimiter) {
+  constructor(settings: LegacySettings, rateLimiter?: RateLimiter, fieldCache: FieldCache = new FieldCache()) {
     this.settings = settings;
     this.rateLimiter = rateLimiter || new RateLimiter();
+    this.fieldCache = fieldCache;
+  }
+
+  /**
+   * Fetches field metadata for the active table from the Meta API,
+   * cache-first via `FieldCache`. Mirrors the missing-settings gate and
+   * error-Notice text of the (pre-#124) sync-orchestrator field-metadata
+   * fetch it replaces. Never rejects — see `DatabaseProvider.fetchFieldMetadata`.
+   */
+  async fetchFieldMetadata(): Promise<RemoteFieldInfo[] | null> {
+    const { apiKey, baseId, tableId } = this.settings;
+    if (!apiKey || !baseId || !tableId) return null;
+
+    try {
+      const fields = await this.fieldCache.fetchFields(apiKey, baseId, tableId);
+      // Map to the exact RemoteFieldInfo shape — returning AirtableField[]
+      // directly would leak `id`/`description` through structural typing.
+      return fields.map(f => ({ name: f.name, type: f.type }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      new Notice(`Auto Note Importer: Field metadata unavailable: ${message}`);
+      return null;
+    }
   }
 
   /**

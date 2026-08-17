@@ -321,4 +321,54 @@ describe('AirtableClient', () => {
       );
     });
   });
+
+  describe('fetchFieldMetadata', () => {
+    it('returns field metadata on success', async () => {
+      mockRequestUrl.mockResolvedValueOnce(mockResponse({
+        tables: [{
+          id: 'tblTest',
+          name: 'Table',
+          fields: [
+            { id: 'fld1', name: 'Name', type: 'singleLineText' },
+            { id: 'fld2', name: 'Attachment', type: 'multipleAttachments' },
+          ],
+        }],
+      }));
+
+      const metadata = await client.fetchFieldMetadata();
+      // RemoteFieldInfo only contracts name/type — `id` is an
+      // AirtableField-internal detail that callers must not rely on.
+      expect(metadata).toEqual([
+        expect.objectContaining({ name: 'Name', type: 'singleLineText' }),
+        expect.objectContaining({ name: 'Attachment', type: 'multipleAttachments' }),
+      ]);
+    });
+
+    it('returns null without a request when apiKey/baseId/tableId are missing', async () => {
+      client = new AirtableClient(createSettings({ apiKey: '' }), rateLimiter);
+      const metadata = await client.fetchFieldMetadata();
+      expect(metadata).toBeNull();
+      expect(mockRequestUrl).not.toHaveBeenCalled();
+    });
+
+    it('never rejects and returns null + fires a Notice on fetch failure', async () => {
+      const { Notice } = await import('obsidian');
+      mockRequestUrl.mockResolvedValueOnce(mockResponse({ error: { message: 'Server error' } }, 500));
+
+      const metadata = await client.fetchFieldMetadata();
+      expect(metadata).toBeNull();
+      expect(Notice).toHaveBeenCalledWith(expect.stringContaining('Auto Note Importer: Field metadata unavailable:'));
+    });
+
+    it('serves from the FieldCache so two calls make one underlying request', async () => {
+      mockRequestUrl.mockResolvedValueOnce(mockResponse({
+        tables: [{ id: 'tblTest', name: 'Table', fields: [{ id: 'fld1', name: 'Name', type: 'singleLineText' }] }],
+      }));
+
+      await client.fetchFieldMetadata();
+      await client.fetchFieldMetadata();
+
+      expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+    });
+  });
 });
