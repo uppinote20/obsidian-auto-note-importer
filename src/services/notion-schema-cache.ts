@@ -15,6 +15,12 @@ import { requestUrl } from 'obsidian';
 import { NOTION_API_BASE_URL, NOTION_SCHEMA_TTL_MS, NOTION_VERSION } from '../constants';
 import type { NotionCredential, NotionDataSourceSummary, NotionPropertySchemaMap } from '../types';
 import { extractApiErrorDetails } from '../utils';
+import { defaultRateLimiters, getOrCreateRateLimiter } from './rate-limiter';
+
+/** Minimal shape NotionSchemaCache needs from a RateLimiter — lets tests inject a stub. */
+export interface RequestPacer {
+  execute<T>(fn: () => Promise<T>): Promise<T>;
+}
 
 interface SchemaCacheEntry {
   schema: NotionPropertySchemaMap;
@@ -40,8 +46,23 @@ interface NotionSearchResultItem {
   in_trash?: boolean;
 }
 
+/**
+ * Resolves the RateLimiter to pace a request for the given credential.
+ * Defaults to `defaultRateLimiters` — the same module-level map used by
+ * notion-credential-form.ts's module-singleton cache — so settings-tab /
+ * credential-form traffic and sync traffic share pacing per credential
+ * even when they're different NotionSchemaCache instances (PR #125
+ * Codex P2 / Claude Medium).
+ */
+type GetLimiter = (credential: NotionCredential) => RequestPacer;
+
+const defaultGetLimiter: GetLimiter = credential =>
+  getOrCreateRateLimiter(defaultRateLimiters, credential, false);
+
 export class NotionSchemaCache {
   private schemas = new Map<string, SchemaCacheEntry>();
+
+  constructor(private getLimiter: GetLimiter = defaultGetLimiter) {}
 
   /**
    * Lists every data source visible to the integration, paginating via
@@ -58,13 +79,15 @@ export class NotionSchemaCache {
       };
       if (cursor) body.start_cursor = cursor;
 
-      const response = await requestUrl({
-        url: `${NOTION_API_BASE_URL}/search`,
-        method: 'POST',
-        headers: buildHeaders(credential),
-        body: JSON.stringify(body),
-        throw: false,
-      });
+      const response = await this.getLimiter(credential).execute(() =>
+        requestUrl({
+          url: `${NOTION_API_BASE_URL}/search`,
+          method: 'POST',
+          headers: buildHeaders(credential),
+          body: JSON.stringify(body),
+          throw: false,
+        }),
+      );
 
       if (response.status < 200 || response.status >= 300) {
         throw new Error(`Failed to list Notion data sources: ${extractApiErrorDetails(response)}`);
@@ -100,12 +123,14 @@ export class NotionSchemaCache {
       return cached.schema;
     }
 
-    const response = await requestUrl({
-      url: `${NOTION_API_BASE_URL}/data_sources/${dataSourceId}`,
-      method: 'GET',
-      headers: buildHeaders(credential),
-      throw: false,
-    });
+    const response = await this.getLimiter(credential).execute(() =>
+      requestUrl({
+        url: `${NOTION_API_BASE_URL}/data_sources/${dataSourceId}`,
+        method: 'GET',
+        headers: buildHeaders(credential),
+        throw: false,
+      }),
+    );
 
     if (response.status < 200 || response.status >= 300) {
       throw new Error(`Failed to fetch Notion data source schema: ${extractApiErrorDetails(response)}`);

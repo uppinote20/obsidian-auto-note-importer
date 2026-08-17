@@ -22,8 +22,7 @@ import type {
   SharedServices,
   DatabaseProvider,
 } from '../types';
-import { RateLimiter, createProvider } from '../services';
-import { PROVIDER_RATE_LIMIT_INTERVALS, RATE_LIMIT_INTERVAL_MS } from '../constants';
+import { RateLimiter, createProvider, getOrCreateRateLimiter as getOrCreateSharedRateLimiter } from '../services';
 import { SyncQueue, ConflictResolver, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
 import { FileWatcher } from '../file-operations';
@@ -195,13 +194,7 @@ export class ConfigInstance {
    * tighter 334ms) when one exists, falling back to the shared default.
    */
   private getOrCreateRateLimiter(credential: Credential): RateLimiter {
-    let limiter = this.shared.rateLimiters.get(credential.id);
-    if (!limiter) {
-      limiter = new RateLimiter(PROVIDER_RATE_LIMIT_INTERVALS[credential.type] ?? RATE_LIMIT_INTERVAL_MS);
-      limiter.setDebugMode(this.shared.getDebugMode());
-      this.shared.rateLimiters.set(credential.id, limiter);
-    }
-    return limiter;
+    return getOrCreateSharedRateLimiter(this.shared.rateLimiters, credential, this.shared.getDebugMode());
   }
 
   /**

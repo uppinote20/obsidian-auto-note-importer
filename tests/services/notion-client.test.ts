@@ -203,6 +203,38 @@ describe('NotionClient.batchUpdate', () => {
     if (!results[1].success) expect(results[1].error).toMatch(/aborted/i);
     if (!results[2].success) expect(results[2].error).toMatch(/aborted/i);
   });
+
+  it('preserves already-accumulated successes when a later record throws mid-batch', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 200, json: { id: 'p1', properties: {} } })
+      .mockResolvedValueOnce({ status: 200, json: { id: 'p2', properties: {} } })
+      .mockRejectedValueOnce(new Error('network error'));
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, defaultSchemaCache());
+    const results = await c.batchUpdate([
+      { recordId: 'p1', fields: { Notes: 'a' } },
+      { recordId: 'p2', fields: { Notes: 'b' } },
+      { recordId: 'p3', fields: { Notes: 'c' } },
+      { recordId: 'p4', fields: { Notes: 'd' } },
+    ]);
+    expect(results).toHaveLength(4);
+    expect(results[0].success).toBe(true);
+    expect(results[1].success).toBe(true);
+    expect(results[2].success).toBe(false);
+    expect(results[3].success).toBe(false);
+    if (!results[3].success) expect(results[3].error).toMatch(/aborted/i);
+    expect(mockRequestUrl).toHaveBeenCalledTimes(3);
+  });
+
+  it('skips the PATCH request and reports success for updates with no pushable fields', async () => {
+    const c = new NotionClient(cred, makeConfig(), new RateLimiter(0), false, defaultSchemaCache());
+    const results = await c.batchUpdate([{
+      recordId: 'p1',
+      fields: { Assignees: ['a'], Unknown: 'x' }, // people (read-only-ish/object) + unknown name
+    }]);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toEqual({ success: true, recordId: 'p1', updatedFields: {} });
+    expect(mockRequestUrl).not.toHaveBeenCalled();
+  });
 });
 
 describe('NotionClient.reconfigure', () => {

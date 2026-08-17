@@ -11,7 +11,9 @@ import {
   MAX_RETRY_ATTEMPTS,
   DEFAULT_RETRY_DELAY_MS,
   NETWORK_RETRY_BASE_DELAY_MS,
+  PROVIDER_RATE_LIMIT_INTERVALS,
 } from '../constants';
+import type { Credential } from '../types';
 
 /** Shape of a response that can be checked for 429 status. */
 interface RetryableResponse {
@@ -161,4 +163,38 @@ export class RateLimiter {
     return new Promise(resolve => window.setTimeout(resolve, ms));
   }
 
+}
+
+/**
+ * Module-level default map of per-credential RateLimiters. This is the
+ * SHARED RESOURCE that lets independently-constructed services (e.g. a
+ * ConfigInstance's SharedServices.rateLimiters vs. a module-singleton like
+ * notion-credential-form.ts's NotionSchemaCache, which has no access to
+ * SharedServices at construction time) still pace requests for the SAME
+ * credential together. Different service instances may hold different
+ * caches/state, but as long as they resolve limiters through this map
+ * (keyed by credential.id), combined traffic still respects the
+ * per-credential budget (PR #125 Codex P2 / Claude Medium).
+ */
+export const defaultRateLimiters = new Map<string, RateLimiter>();
+
+/**
+ * Gets or creates a RateLimiter for the given credential, keyed by
+ * credential.id, applying the credential-type interval override
+ * (`PROVIDER_RATE_LIMIT_INTERVALS`) when one exists. Shared by
+ * `ConfigInstance.getOrCreateRateLimiter` and any module-singleton service
+ * that needs the same per-credential pacing without its own SharedServices.
+ */
+export function getOrCreateRateLimiter(
+  limiters: Map<string, RateLimiter>,
+  credential: Credential,
+  debugMode: boolean,
+): RateLimiter {
+  let limiter = limiters.get(credential.id);
+  if (!limiter) {
+    limiter = new RateLimiter(PROVIDER_RATE_LIMIT_INTERVALS[credential.type] ?? RATE_LIMIT_INTERVAL_MS);
+    limiter.setDebugMode(debugMode);
+    limiters.set(credential.id, limiter);
+  }
+  return limiter;
 }

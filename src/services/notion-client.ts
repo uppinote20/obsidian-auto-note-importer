@@ -257,15 +257,42 @@ export class NotionClient implements DatabaseProvider {
         const u = updates[i];
         const { payload, sent } = this.composeProperties(u.fields, schema, noticeUnknownField);
 
-        const response = await this.rateLimiter.execute(() =>
-          requestUrl({
-            url: `${NOTION_API_BASE_URL}/pages/${u.recordId}`,
-            method: 'PATCH',
-            headers: this.buildHeaders(),
-            body: JSON.stringify({ properties: payload }),
-            throw: false,
-          }),
-        );
+        // Read-only/unknown-only frontmatter composes to an empty payload —
+        // firing a no-op PATCH would just burn a 334ms limiter slot.
+        if (Object.keys(payload).length === 0) {
+          results.push({ success: true, recordId: u.recordId, updatedFields: {} });
+          continue;
+        }
+
+        let response;
+        try {
+          response = await this.rateLimiter.execute(() =>
+            requestUrl({
+              url: `${NOTION_API_BASE_URL}/pages/${u.recordId}`,
+              method: 'PATCH',
+              headers: this.buildHeaders(),
+              body: JSON.stringify({ properties: payload }),
+              throw: false,
+            }),
+          );
+        } catch (error) {
+          // A thrown error (post-retry network failure) mid-batch must not
+          // discard the successes already accumulated in `results` — keep
+          // them, fail this record and the rest, and stop (PR #125 Codex P2).
+          results.push({
+            success: false,
+            recordId: u.recordId,
+            error: `Failed to update Notion page ${u.recordId}: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+          });
+          for (let j = i + 1; j < updates.length; j++) {
+            results.push({
+              success: false,
+              recordId: updates[j].recordId,
+              error: 'aborted: batch aborted mid-flight after a network error',
+            });
+          }
+          return results;
+        }
 
         if (response.status === 401 || response.status === 403) {
           results.push({

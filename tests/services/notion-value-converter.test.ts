@@ -155,6 +155,21 @@ describe('wrapForNotionPush', () => {
     });
   });
 
+  it('refuses empty/null title (would clear the Notion page name) but still clears rich_text', () => {
+    expect(wrapForNotionPush('title', '')).toEqual({
+      ok: false,
+      reason: expect.any(String),
+    });
+    expect(wrapForNotionPush('title', null)).toEqual({
+      ok: false,
+      reason: expect.any(String),
+    });
+    expect(wrapForNotionPush('rich_text', null)).toEqual({
+      ok: true,
+      payload: { rich_text: [] },
+    });
+  });
+
   it('chunks long text at the 2000-char boundary', () => {
     const long = 'a'.repeat(4500);
     const result = wrapForNotionPush('rich_text', long);

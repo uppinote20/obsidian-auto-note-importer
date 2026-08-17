@@ -171,9 +171,15 @@ function chunkRichText(text: string): { text: { content: string } }[] {
  */
 export function wrapForNotionPush(notionType: string, value: unknown): WrapResult {
   switch (notionType) {
-    case 'title':
+    case 'title': {
+      const s = String(value ?? '');
+      if (s === '') {
+        return { ok: false, reason: 'empty title would clear the Notion page name' };
+      }
+      return { ok: true, payload: { title: chunkRichText(s) } };
+    }
     case 'rich_text':
-      return { ok: true, payload: { [notionType]: chunkRichText(String(value ?? '')) } };
+      return { ok: true, payload: { rich_text: chunkRichText(String(value ?? '')) } };
     case 'number': {
       if (value === null || value === undefined || value === '') {
         return { ok: true, payload: { number: null } };

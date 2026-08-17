@@ -10,6 +10,12 @@
  * identically to one pulled from SharedServices without adding a
  * construction-order dependency on ConfigManager.
  *
+ * This form-local instance is a DIFFERENT NotionSchemaCache object than
+ * main.ts's SharedServices one, but both default-construct their pacing
+ * through `defaultRateLimiters` (services/rate-limiter.ts), a module-level
+ * Map keyed by credential.id — so requests fired from here and from sync
+ * still share one RateLimiter per credential (PR #125 Codex P2).
+ *
  * @handbook 4.4-provider-abstraction
  * @handbook 5.1-ui-components
  * @tested tests/services/notion-credential-form.test.ts
