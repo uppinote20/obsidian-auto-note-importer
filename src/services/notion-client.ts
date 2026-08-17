@@ -19,6 +19,7 @@
  * @handbook 6.1-error-handling
  * @handbook 9.6-api-patterns
  * @tested tests/services/notion-client.test.ts
+ * @tested e2e:tests/e2e/run-notion-e2e.mjs
  */
 
 import { Notice, requestUrl } from 'obsidian';
@@ -208,6 +209,26 @@ export class NotionClient implements DatabaseProvider {
     return { payload, sent };
   }
 
+  /**
+   * Fails the record at `i` with `currentError`, then fails every remaining
+   * record (`i+1..`) with `abortReason` without issuing further paced API
+   * calls — used when a mid-batch failure means the rest of the batch can't
+   * possibly succeed either (network failure, dead/revoked token).
+   */
+  private abortRemaining(
+    results: SyncResult[],
+    updates: BatchUpdate[],
+    i: number,
+    currentError: string,
+    abortReason: string,
+  ): SyncResult[] {
+    results.push({ success: false, recordId: updates[i].recordId, error: currentError });
+    for (let j = i + 1; j < updates.length; j++) {
+      results.push({ success: false, recordId: updates[j].recordId, error: abortReason });
+    }
+    return results;
+  }
+
   async batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]> {
     if (updates.length === 0) return [];
 
@@ -279,37 +300,25 @@ export class NotionClient implements DatabaseProvider {
           // A thrown error (post-retry network failure) mid-batch must not
           // discard the successes already accumulated in `results` — keep
           // them, fail this record and the rest, and stop (PR #125 Codex P2).
-          results.push({
-            success: false,
-            recordId: u.recordId,
-            error: `Failed to update Notion page ${u.recordId}: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
-          });
-          for (let j = i + 1; j < updates.length; j++) {
-            results.push({
-              success: false,
-              recordId: updates[j].recordId,
-              error: 'aborted: batch aborted mid-flight after a network error',
-            });
-          }
-          return results;
+          return this.abortRemaining(
+            results,
+            updates,
+            i,
+            `Failed to update Notion page ${u.recordId}: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+            'aborted: batch aborted mid-flight after a network error',
+          );
         }
 
         if (response.status === 401 || response.status === 403) {
-          results.push({
-            success: false,
-            recordId: u.recordId,
-            error: `Failed to update Notion page ${u.recordId}: ${extractApiErrorDetails(response)}`,
-          });
           // A dead/revoked token won't succeed on the remaining records
           // either — fail them without burning more paced API calls.
-          for (let j = i + 1; j < updates.length; j++) {
-            results.push({
-              success: false,
-              recordId: updates[j].recordId,
-              error: 'aborted: authentication failed',
-            });
-          }
-          return results;
+          return this.abortRemaining(
+            results,
+            updates,
+            i,
+            `Failed to update Notion page ${u.recordId}: ${extractApiErrorDetails(response)}`,
+            'aborted: authentication failed',
+          );
         }
 
         if (response.status < 200 || response.status >= 300) {

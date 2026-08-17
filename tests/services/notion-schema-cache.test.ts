@@ -145,6 +145,57 @@ describe('NotionSchemaCache.listDataSources', () => {
     const cache = makeCache();
     await expect(cache.listDataSources(cred)).rejects.toThrow(/401|Unauthorized/i);
   });
+
+  it('caches the list per credential within TTL — second call makes no additional requests', async () => {
+    mockRequestUrl.mockResolvedValue({
+      status: 200,
+      json: { results: [{ id: 'ds1', parent: { database_id: 'db1' }, title: [{ plain_text: 'A' }] }], has_more: false, next_cursor: null },
+      text: '',
+    });
+    const cache = makeCache();
+    await cache.listDataSources(cred);
+    executeCallCount = 0;
+    const sources = await cache.listDataSources(cred);
+    expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+    expect(executeCallCount).toBe(0);
+    expect(sources.map(s => s.id)).toEqual(['ds1']);
+  });
+
+  it('re-fetches the list after TTL expiry', async () => {
+    vi.useFakeTimers();
+    mockRequestUrl.mockResolvedValue({
+      status: 200,
+      json: { results: [], has_more: false, next_cursor: null },
+      text: '',
+    });
+    const cache = makeCache();
+    await cache.listDataSources(cred);
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    await cache.listDataSources(cred);
+    expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache the list on failure', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 500, json: { message: 'boom' }, text: '' })
+      .mockResolvedValueOnce({ status: 200, json: { results: [], has_more: false, next_cursor: null }, text: '' });
+    const cache = makeCache();
+    await expect(cache.listDataSources(cred)).rejects.toThrow();
+    await cache.listDataSources(cred);
+    expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it('clearForCred forces the list to refetch for that credential only', async () => {
+    mockRequestUrl.mockResolvedValue({ status: 200, json: { results: [], has_more: false, next_cursor: null }, text: '' });
+    const other: NotionCredential = { ...cred, id: 'c2' };
+    const cache = makeCache();
+    await cache.listDataSources(cred);
+    await cache.listDataSources(other);
+    cache.clearForCred(cred.id);
+    await cache.listDataSources(cred);
+    await cache.listDataSources(other);
+    expect(mockRequestUrl).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('NotionSchemaCache.getSchema', () => {

@@ -9,6 +9,8 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 9.6-api-patterns
  * @tested tests/services/notion-schema-cache.test.ts
+ * @tested e2e:tests/e2e/run-notion-e2e.mjs
+ * @tested e2e:tests/e2e/run-notion-settings-e2e.mjs
  */
 
 import { requestUrl } from 'obsidian';
@@ -24,6 +26,11 @@ export interface RequestPacer {
 
 interface SchemaCacheEntry {
   schema: NotionPropertySchemaMap;
+  fetchedAt: number;
+}
+
+interface DataSourceListCacheEntry {
+  dataSources: NotionDataSourceSummary[];
   fetchedAt: number;
 }
 
@@ -61,14 +68,24 @@ const defaultGetLimiter: GetLimiter = credential =>
 
 export class NotionSchemaCache {
   private schemas = new Map<string, SchemaCacheEntry>();
+  private dataSourceLists = new Map<string, DataSourceListCacheEntry>();
 
   constructor(private getLimiter: GetLimiter = defaultGetLimiter) {}
 
   /**
    * Lists every data source visible to the integration, paginating via
-   * has_more/next_cursor. Trashed entries are skipped.
+   * has_more/next_cursor. Trashed entries are skipped. Cached per
+   * credential for NOTION_SCHEMA_TTL_MS — settings-tab re-renders would
+   * otherwise re-run the full paginated /search sweep on every render.
+   * Only successful fetches are cached.
    */
   async listDataSources(credential: NotionCredential): Promise<NotionDataSourceSummary[]> {
+    const now = Date.now();
+    const cached = this.dataSourceLists.get(credential.id);
+    if (cached && now - cached.fetchedAt < NOTION_SCHEMA_TTL_MS) {
+      return cached.dataSources;
+    }
+
     const out: NotionDataSourceSummary[] = [];
     let cursor: string | undefined;
 
@@ -107,6 +124,7 @@ export class NotionSchemaCache {
       cursor = json.has_more && json.next_cursor ? json.next_cursor : undefined;
     } while (cursor);
 
+    this.dataSourceLists.set(credential.id, { dataSources: out, fetchedAt: now });
     return out;
   }
 
@@ -152,9 +170,11 @@ export class NotionSchemaCache {
         this.schemas.delete(key);
       }
     }
+    this.dataSourceLists.delete(credentialId);
   }
 
   clear(): void {
     this.schemas.clear();
+    this.dataSourceLists.clear();
   }
 }

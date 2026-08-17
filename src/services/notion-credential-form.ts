@@ -5,10 +5,11 @@
  * already-tested listDataSources pagination instead of duplicating raw
  * requestUrl calls — unlike the Supabase/SeaTable forms (which have no
  * shared cache to call into and so probe the API directly), a
- * NotionSchemaCache instance is cheap to construct here: listDataSources()
- * doesn't cache anything itself, so a form-local instance behaves
- * identically to one pulled from SharedServices without adding a
- * construction-order dependency on ConfigManager.
+ * NotionSchemaCache instance is cheap to construct here without adding a
+ * construction-order dependency on ConfigManager. listDataSources() now
+ * caches per credential.id, so testConnection clears that entry first —
+ * a "Test connection" click means "probe right now", not "read a
+ * potentially-stale cached list".
  *
  * This form-local instance is a DIFFERENT NotionSchemaCache object than
  * main.ts's SharedServices one, but both default-construct their pacing
@@ -19,6 +20,7 @@
  * @handbook 4.4-provider-abstraction
  * @handbook 5.1-ui-components
  * @tested tests/services/notion-credential-form.test.ts
+ * @tested e2e:tests/e2e/run-notion-settings-e2e.mjs
  */
 
 import { Setting } from 'obsidian';
@@ -103,6 +105,7 @@ class NotionCredentialFormRendererImpl implements CredentialFormRenderer {
       return { success: false, error: `Expected notion credential, got ${credential.type}` };
     }
     try {
+      schemaCache.clearForCred(credential.id);
       const dataSources = await schemaCache.listDataSources(credential);
       if (dataSources.length === 0) {
         return {
