@@ -302,6 +302,20 @@ describe('hydrateConfigDefaults', () => {
     expect(hydrated.configs[0].subfolderTreatSlashAsLiteral).toBe(true);
   });
 
+  it('fills missing syncPageBody with default false', () => {
+    const settings = makeSettings([{ id: 'c1', name: 'D', credentialId: 'cred' }]);
+    const hydrated = hydrateConfigDefaults(settings);
+    expect(hydrated.configs[0].syncPageBody).toBe(false);
+  });
+
+  it('preserves explicit syncPageBody=true', () => {
+    const settings = makeSettings([
+      { id: 'c1', name: 'D', credentialId: 'cred', syncPageBody: true },
+    ]);
+    const hydrated = hydrateConfigDefaults(settings);
+    expect(hydrated.configs[0].syncPageBody).toBe(true);
+  });
+
   it('fills missing primaryKeyColumn with default empty string', () => {
     const settings = makeSettings([{ id: 'c1', name: 'D', credentialId: 'cred' }]);
     const hydrated = hydrateConfigDefaults(settings);
@@ -369,5 +383,36 @@ describe('migration: subfolderTreatSlashAsLiteral default', () => {
       activeConfigId: 'cfg1',
     });
     expect(result?.configs[0].subfolderTreatSlashAsLiteral).toBe(true);
+  });
+});
+
+describe('migration: syncPageBody default', () => {
+  it('legacy v1 to v3 defaults syncPageBody to false', () => {
+    const result = migrateSettings({ apiKey: 'k' });
+    expect(result?.configs[0].syncPageBody).toBe(false);
+  });
+
+  it('v2 to v3 defaults syncPageBody to false when absent', () => {
+    const result = migrateSettings({
+      version: 2,
+      credentials: [{ id: 'c1', name: 'A', type: 'airtable', apiKey: 'k' }],
+      configs: [{ id: 'cfg1', name: 'D', credentialId: 'c1', baseId: 'app', tableId: 'tbl', viewId: '' }],
+      activeConfigId: 'cfg1',
+    });
+    expect(result?.configs[0].syncPageBody).toBe(false);
+  });
+
+  it('v2 to v3 preserves explicit syncPageBody=true when present', () => {
+    const result = migrateSettings({
+      version: 2,
+      credentials: [{ id: 'c1', name: 'A', type: 'airtable', apiKey: 'k' }],
+      configs: [{
+        id: 'cfg1', name: 'D', credentialId: 'c1',
+        baseId: 'app', tableId: 'tbl', viewId: '',
+        syncPageBody: true,
+      }],
+      activeConfigId: 'cfg1',
+    });
+    expect(result?.configs[0].syncPageBody).toBe(true);
   });
 });

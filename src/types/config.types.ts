@@ -54,6 +54,16 @@ export interface ConfigEntry {
    */
   subfolderTreatSlashAsLiteral: boolean;
 
+  /**
+   * Pull-only body sync: when `true` and the active provider advertises
+   * `capabilities.bodySync`, `DatabaseProvider.fetchBody()` is called for
+   * each pulled note and the result is inserted into the note body.
+   * Follows `allowOverwrite` semantics — local body edits are overwritten
+   * on the next pull, since the remote page is the source of truth.
+   * Default `false`. See issue #122.
+   */
+  syncPageBody: boolean;
+
   syncInterval: number;
   allowOverwrite: boolean;
   bidirectionalSync: boolean;
@@ -80,6 +90,7 @@ export const DEFAULT_CONFIG_ENTRY: Omit<ConfigEntry, 'id' | 'name' | 'credential
   filenameFieldName: '',
   subfolderFieldName: '',
   subfolderTreatSlashAsLiteral: false,
+  syncPageBody: false,
   syncInterval: 0,
   allowOverwrite: true,
   bidirectionalSync: false,

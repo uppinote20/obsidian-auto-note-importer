@@ -286,6 +286,18 @@ export class SyncOrchestrator {
       return "skipped";
     }
 
+    if (this.settings.syncPageBody && this.provider.capabilities.bodySync && this.provider.fetchBody) {
+      try {
+        const body = await this.provider.fetchBody(note.id);
+        if (body !== null) note.body = body;
+      } catch (error) {
+        if (this.settings.debugMode) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: Body fetch failed for ${safeTitle}: ${message}`);
+        }
+      }
+    }
+
     let content = await this.buildNoteContent(note);
     content = this.frontmatterParser.ensurePrimaryField(content, note.primaryField);
 

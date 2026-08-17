@@ -232,6 +232,112 @@ describe('SyncOrchestrator', () => {
     });
   });
 
+  describe('processSyncRequest — pull: syncPageBody (#122)', () => {
+    beforeEach(() => {
+      mockApp.vault.adapter.exists.mockResolvedValue(true);
+      mockApp.vault.getAbstractFileByPath.mockReturnValue(null);
+    });
+
+    function withBodyCapableProvider() {
+      mockProvider.capabilities = {
+        bidirectional: true,
+        hasComputedFields: true,
+        batchUpdateMaxSize: 10,
+        bodySync: 'pull',
+      };
+      mockProvider.fetchBody = vi.fn().mockResolvedValue('Fetched body');
+    }
+
+    it('never calls fetchBody when syncPageBody is off', async () => {
+      withBodyCapableProvider();
+      settings = createSettings({ syncPageBody: false });
+      orchestrator.updateSettings(settings);
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note' } },
+      ]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockProvider.fetchBody).not.toHaveBeenCalled();
+    });
+
+    it('calls fetchBody per processed note and lands body on the note content when on + capable', async () => {
+      withBodyCapableProvider();
+      settings = createSettings({ syncPageBody: true });
+      orchestrator.updateSettings(settings);
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note' } },
+      ]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockProvider.fetchBody).toHaveBeenCalledWith('rec1');
+      expect(mockApp.vault.create).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('Fetched body')
+      );
+    });
+
+    it('builds note content fields-only when fetchBody resolves null', async () => {
+      withBodyCapableProvider();
+      mockProvider.fetchBody = vi.fn().mockResolvedValue(null);
+      settings = createSettings({ syncPageBody: true });
+      orchestrator.updateSettings(settings);
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note' } },
+      ]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockProvider.fetchBody).toHaveBeenCalledWith('rec1');
+      expect(mockApp.vault.create).toHaveBeenCalled();
+    });
+
+    it('builds note content fields-only when fetchBody throws', async () => {
+      withBodyCapableProvider();
+      mockProvider.fetchBody = vi.fn().mockRejectedValue(new Error('boom'));
+      settings = createSettings({ syncPageBody: true });
+      orchestrator.updateSettings(settings);
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note' } },
+      ]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockProvider.fetchBody).toHaveBeenCalledWith('rec1');
+      expect(mockApp.vault.create).toHaveBeenCalled();
+    });
+
+    it('never calls fetchBody when the provider lacks bodySync/fetchBody', async () => {
+      settings = createSettings({ syncPageBody: true });
+      orchestrator.updateSettings(settings);
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note' } },
+      ]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockProvider.fetchBody).toBeUndefined();
+      expect(mockApp.vault.create).toHaveBeenCalled();
+    });
+
+    it('does not call fetchBody for a note skipped due to allowOverwrite=false + existing file', async () => {
+      withBodyCapableProvider();
+      settings = createSettings({ syncPageBody: true, allowOverwrite: false });
+      orchestrator.updateSettings(settings);
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 'Note' } },
+      ]);
+      // Pre-existing primaryField -> pullAll's shouldProcess pre-filter skips it entirely.
+      frontmatterParser.loadExistingPrimaryFields = vi.fn().mockResolvedValue(new Set(['rec1']));
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockProvider.fetchBody).not.toHaveBeenCalled();
+      expect(mockApp.vault.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('processSyncRequest — push', () => {
     it('should clean up status bar when active file is missing', async () => {
       mockApp.workspace.getActiveViewOfType.mockReturnValue(null);
