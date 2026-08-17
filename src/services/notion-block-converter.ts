@@ -17,9 +17,11 @@
  *
  * @handbook 4.4-provider-abstraction
  * @tested tests/services/notion-block-converter.test.ts
+ * @tested e2e:tests/e2e/run-notion-e2e.mjs
  */
 
 import { NOTION_BODY_MAX_DEPTH } from '../constants';
+import { joinRichText } from './notion-value-converter';
 import type { NotionBlock, NotionRichTextItem } from '../types';
 
 const BUDGET_EXHAUSTED_MARKER = '<!-- Body truncated: request budget exhausted -->';
@@ -269,7 +271,7 @@ function renderCode(block: NotionBlock): string {
   // Language lands on the fence line — strip backticks/whitespace so a
   // crafted value can't break or extend the fence.
   const lang = (data?.language === 'plain text' ? '' : data?.language ?? '').replace(/[`\s]/g, '');
-  const content = (data?.rich_text ?? []).map(i => i.plain_text ?? '').join('');
+  const content = joinRichText(data?.rich_text) ?? '';
   // A backtick run in the content must never close the fence — grow it.
   const longestRun = (content.match(/`+/g) ?? []).reduce((m, r) => Math.max(m, r.length), 0);
   const fence = '`'.repeat(Math.max(3, longestRun + 1));
