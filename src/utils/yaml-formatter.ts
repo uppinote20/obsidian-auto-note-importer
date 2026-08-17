@@ -69,8 +69,11 @@ export function formatFieldForBases(key: string, value: unknown): string | null 
   }
 
   // Handle dates
+  // Bases date columns parse ISO datetimes directly — clipping to date-only here
+  // caused push-back to overwrite remote timestamps with midnight (PR #125 Codex P1).
+  // Only pass the value through unchanged; date-only strings already match this shape.
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
-    return formatYamlValue(value.split('T')[0]);
+    return formatYamlValue(value);
   }
 
   // Handle objects

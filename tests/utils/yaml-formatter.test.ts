@@ -98,12 +98,18 @@ describe('formatFieldForBases', () => {
     expect(formatFieldForBases('price', 3.14)).toBe('3.14');
   });
 
-  it('should extract date portion from ISO date strings', () => {
-    expect(formatFieldForBases('date', '2024-01-15T10:30:00.000Z')).toBe('"2024-01-15"');
+  it('should preserve full ISO datetime strings (time is not clipped)', () => {
+    expect(formatFieldForBases('date', '2024-01-15T10:30:00.000Z')).toBe('"2024-01-15T10:30:00.000Z"');
   });
 
   it('should handle date-only strings', () => {
     expect(formatFieldForBases('date', '2024-01-15')).toBe('"2024-01-15"');
+  });
+
+  it('should preserve Notion date ranges with times intact', () => {
+    expect(
+      formatFieldForBases('range', '2026-09-10T10:00:00.000+09:00/2026-09-12T18:00:00.000+09:00')
+    ).toBe('"2026-09-10T10:00:00.000+09:00/2026-09-12T18:00:00.000+09:00"');
   });
 
   it('should format objects with key preview', () => {
