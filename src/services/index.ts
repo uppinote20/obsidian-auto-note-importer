@@ -1,4 +1,4 @@
-export { RateLimiter } from './rate-limiter';
+export { RateLimiter, getOrCreateRateLimiter, defaultRateLimiters } from './rate-limiter';
 export { FieldCache } from './field-cache';
 export { SeaTableMetadataCache } from './seatable-metadata-cache';
 export { SupabaseMetadataCache, SupabaseSchemaRpcMissingError } from './supabase-metadata-cache';
