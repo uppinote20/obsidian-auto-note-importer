@@ -64,7 +64,10 @@ export class AirtableClient implements DatabaseProvider {
     if (!apiKey || !baseId || !tableId) return null;
 
     try {
-      return await this.fieldCache.fetchFields(apiKey, baseId, tableId);
+      const fields = await this.fieldCache.fetchFields(apiKey, baseId, tableId);
+      // Map to the exact RemoteFieldInfo shape — returning AirtableField[]
+      // directly would leak `id`/`description` through structural typing.
+      return fields.map(f => ({ name: f.name, type: f.type }));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Field metadata unavailable: ${message}`);
