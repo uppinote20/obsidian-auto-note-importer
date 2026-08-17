@@ -194,6 +194,9 @@ export function wrapForNotionPush(notionType: string, value: unknown): WrapResul
       if (typeof value === 'boolean') return { ok: true, payload: { checkbox: value } };
       if (value === 'true') return { ok: true, payload: { checkbox: true } };
       if (value === 'false') return { ok: true, payload: { checkbox: false } };
+      // Some editors round-trip YAML booleans as 0/1 — coerce those two
+      // exact values; anything else is still rejected.
+      if (value === 0 || value === 1) return { ok: true, payload: { checkbox: value === 1 } };
       return { ok: false, reason: `Value is not a boolean: ${String(value)}` };
     }
     case 'select':

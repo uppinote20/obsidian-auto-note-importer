@@ -79,6 +79,7 @@ describe('NotionClient.fetchNotes', () => {
         json: {
           results: [
             { id: 'page-2', properties: { Name: { type: 'title', title: [{ plain_text: 'Beta' }] } } },
+            { id: 'page-3', in_trash: true, properties: { Name: { type: 'title', title: [{ plain_text: 'Trashed' }] } } },
           ],
           has_more: false,
           next_cursor: null,

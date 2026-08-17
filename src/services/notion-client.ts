@@ -136,6 +136,10 @@ export class NotionClient implements DatabaseProvider {
 
       const json = response.json as { results: NotionPage[]; has_more: boolean; next_cursor: string | null };
       for (const page of json.results) {
+        // The query endpoint normally excludes trashed pages, but the wire
+        // type carries `in_trash` — skip defensively, mirroring the
+        // listDataSources guard in notion-schema-cache.
+        if (page.in_trash) continue;
         allNotes.push({ id: page.id, primaryField: page.id, fields: flattenNotionProperties(page.properties) });
       }
 
