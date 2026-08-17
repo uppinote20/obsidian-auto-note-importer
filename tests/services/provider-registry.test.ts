@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type {
   Credential,
+  CredentialType,
   AirtableCredential,
   SeaTableCredential,
   ConfigEntry,
@@ -318,6 +319,31 @@ describe('provider-registry', () => {
     it('registers credential form renderer under supabase', () => {
       expect(hasCredentialFormRenderer('supabase')).toBe(true);
     });
+  });
+
+  describe('capability <-> method contract', () => {
+    // Every built-in credential type, with the minimal valid credential
+    // shape its factory needs. 'custom-api' has no built-in factory
+    // (registered elsewhere as a pending provider), so it's excluded.
+    const builtinCredentials: [CredentialType, Credential][] = [
+      ['airtable', createAirtableCredential()],
+      ['seatable', createSeaTableCredential()],
+      ['supabase', { id: 'cred-sb', name: 'Test Supabase', type: 'supabase', projectUrl: 'https://x.supabase.co', apiKey: 'anon-key' }],
+      ['notion', { id: 'cred-nt', name: 'Test Notion', type: 'notion', integrationToken: 'ntn_test' }],
+    ];
+
+    it.each(builtinCredentials)(
+      'if capabilities.bodySync is set, fetchBody must be implemented (%s)',
+      (type, credential) => {
+        expect(hasProvider(type)).toBe(true);
+        const provider = createProvider(credential, createConfig({ tableId: '0000' }), new RateLimiter(0), false, dummyShared);
+        if (provider.capabilities.bodySync) {
+          expect(typeof provider.fetchBody).toBe('function');
+        } else {
+          expect(provider.fetchBody).toBeUndefined();
+        }
+      },
+    );
   });
 
 });

@@ -23,7 +23,14 @@
  */
 
 import { Notice, requestUrl } from 'obsidian';
-import { NOTION_API_BASE_URL, NOTION_BATCH_SIZE, NOTION_PAGE_SIZE, NOTION_VERSION } from '../constants';
+import {
+  NOTION_API_BASE_URL,
+  NOTION_BATCH_SIZE,
+  NOTION_BODY_MAX_DEPTH,
+  NOTION_BODY_MAX_REQUESTS_PER_NOTE,
+  NOTION_PAGE_SIZE,
+  NOTION_VERSION,
+} from '../constants';
 import type {
   BatchUpdate,
   ConfigEntry,
@@ -31,6 +38,7 @@ import type {
   CredentialType,
   DatabaseProvider,
   FieldTypeMapper,
+  NotionBlock,
   NotionCredential,
   NotionPage,
   NotionPropertySchemaMap,
@@ -40,6 +48,7 @@ import type {
   SyncResult,
 } from '../types';
 import { buildBatchFailures, extractApiErrorDetails, formatBatchLimitError } from '../utils';
+import { blocksToMarkdown } from './notion-block-converter';
 import { flattenNotionProperties, wrapForNotionPush } from './notion-value-converter';
 import { notionFieldMapper } from './notion-field-mapper';
 import type { NotionSchemaCache } from './notion-schema-cache';
@@ -49,6 +58,7 @@ const NOTION_CAPABILITIES: ProviderCapabilities = {
   bidirectional: true,
   hasComputedFields: true,
   batchUpdateMaxSize: NOTION_BATCH_SIZE,
+  bodySync: 'pull',
 };
 
 export class NotionClient implements DatabaseProvider {
@@ -195,6 +205,75 @@ export class NotionClient implements DatabaseProvider {
     // the fetchNotes guard).
     if (json.in_trash) return null;
     return { id: json.id, primaryField: json.id, fields: flattenNotionProperties(json.properties) };
+  }
+
+  /**
+   * Fetches a page's body as Markdown, walking its block tree via
+   * `GET /blocks/{id}/children`. Owns a per-call request budget
+   * (`NOTION_BODY_MAX_REQUESTS_PER_NOTE`) shared between the root page's own
+   * pagination and every descendant `fetchChildren` call the converter
+   * makes — each page of results (root or child) costs exactly one request.
+   *
+   * Error policy differs by role:
+   * - Root page: 404 -> `null` (page is gone, caller proceeds fields-only);
+   *   any other non-2xx -> throws (surfaced to the orchestrator, which
+   *   catches it and falls back to fields-only sync for that note).
+   * - Child blocks (via `fetchChildren`): both 404 and non-2xx degrade to
+   *   `null` instead of throwing — the converter renders that subtree as a
+   *   truncation marker so the rest of the body still gets delivered.
+   * - Budget exhaustion: `fetchChildren` returns `null` with no request at
+   *   all once the budget hits zero. If the budget runs out mid-pagination
+   *   of a single call (root or child), pagination stops and whatever pages
+   *   were already collected are returned instead of discarding them.
+   */
+  async fetchBody(recordId: string): Promise<string | null> {
+    this.validateConfig();
+    if (!recordId) {
+      throw new Error('Notion page ID cannot be empty.');
+    }
+
+    let requestsRemaining = NOTION_BODY_MAX_REQUESTS_PER_NOTE;
+
+    const paginate = async (blockId: string, errorMode: 'throw' | 'null'): Promise<NotionBlock[] | null> => {
+      const collected: NotionBlock[] = [];
+      let cursor: string | undefined;
+      do {
+        if (requestsRemaining <= 0) return collected;
+        requestsRemaining--;
+
+        const url = `${NOTION_API_BASE_URL}/blocks/${blockId}/children?page_size=${NOTION_PAGE_SIZE}${cursor ? `&start_cursor=${cursor}` : ''}`;
+        const response = await this.rateLimiter.execute(() =>
+          requestUrl({ url, method: 'GET', headers: this.buildHeaders(), throw: false }),
+        );
+
+        if (response.status === 404) return null;
+        if (response.status < 200 || response.status >= 300) {
+          if (errorMode === 'throw') {
+            throw new Error(`Failed to fetch Notion page body ${recordId}: ${extractApiErrorDetails(response)}`);
+          }
+          return null;
+        }
+
+        const json = response.json as { results: NotionBlock[]; has_more: boolean; next_cursor: string | null };
+        for (const block of json.results) {
+          if (!block.in_trash) collected.push(block);
+        }
+        cursor = json.has_more && json.next_cursor ? json.next_cursor : undefined;
+      } while (cursor);
+
+      return collected;
+    };
+
+    const fetchChildren = (blockId: string): Promise<NotionBlock[] | null> => {
+      if (requestsRemaining <= 0) return Promise.resolve(null);
+      return paginate(blockId, 'null');
+    };
+
+    const rootBlocks = await paginate(recordId, 'throw');
+    if (rootBlocks === null) return null;
+    if (rootBlocks.length === 0) return '';
+
+    return blocksToMarkdown(rootBlocks, fetchChildren, { maxDepth: NOTION_BODY_MAX_DEPTH });
   }
 
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult> {
