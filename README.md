@@ -6,6 +6,8 @@
 
 **Two-way sync between your databases and your Obsidian vault.** Point it at Airtable, SeaTable, Supabase, or Notion — it pulls rows in as notes, pushes your edits back, and keeps computed fields fresh.
 
+[![Auto Note Importer intro video](https://img.youtube.com/vi/cX1_xOP-2mA/maxresdefault.jpg)](https://youtu.be/cX1_xOP-2mA)
+
 | Provider | Pull → notes | Push edits back | Computed fields | Page body |
 |:---|:---:|:---:|:---:|:---:|
 | **Airtable** | ✅ | ✅ | ✅ formula / rollup / lookup | — |
