@@ -136,9 +136,10 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: CFG_ID 
     document.querySelectorAll('.notice').forEach(n => n.remove());
   }
 
+  // enqueueSyncRequest() resolves once the queue has processed the request,
+  // so no settle delay is needed — Notices are appended synchronously too.
   async function sync(mode, scope) {
     await enqueueSync(mode, scope);
-    await new Promise(r => setTimeout(r, 1500));
   }
 `;
 
@@ -221,21 +222,32 @@ async function setup() {
 
 async function cleanup() {
   log('\n=== Cleanup ===');
-  await run(`(async () => {
+  const r = await run(`(async () => {
     ${HELPERS}
     const p = getPlugin();
-    try { await st('rows/', 'DELETE', { table_id: getConfig().tableId, row_ids: ${JSON.stringify(rowIds)} }); } catch {}
+    // Collect failures instead of swallowing them, so the Node side can say
+    // what was left behind rather than claiming a clean teardown.
+    const failures = [];
+    try { await st('rows/', 'DELETE', { table_id: getConfig().tableId, row_ids: ${JSON.stringify(rowIds)} }); }
+    catch (e) { failures.push('rows: ' + e.message); }
     for (const f of folderFiles()) await app.vault.delete(f);
     const folder = app.vault.getAbstractFileByPath('${FOLDER}');
-    if (folder) { try { await app.vault.delete(folder, true); } catch {} }
+    if (folder) {
+      try { await app.vault.delete(folder, true); }
+      catch (e) { failures.push('folder: ' + e.message); }
+    }
     const idx = p.settings.configs.findIndex(c => c.id === '${CFG_ID}');
     if (idx !== -1) { p.configManager.removeConfig('${CFG_ID}'); p.settings.configs.splice(idx, 1); }
     p.settings.credentials = p.settings.credentials.filter(c => c.id !== '${CRED_ID}');
     await p.saveSettings();
     delete globalThis.__reproSeaTableToken__;
-    return JSON.stringify({ ok: true });
+    return JSON.stringify({ failures });
   })()`, 30000);
-  log('Removed repro rows, local files, credential and config (columns kept on base).');
+  if (r.failures.length) {
+    log(`Cleanup incomplete — clean up manually: ${r.failures.join('; ')} (row ids: ${rowIds.join(', ')})`);
+  } else {
+    log('Removed repro rows, local files, credential and config (columns kept on base).');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +306,10 @@ async function checks() {
       const stateKeys = Object.keys(cfg).filter(k => /sync(ed)?at|since|lastmod/i.test(k));
       return JSON.stringify({ sizes, stateKeys });
     })()`, 90000);
-    const reproduced = r.sizes.length === 2 && r.sizes[1] === r.sizes[0] && r.sizes[1] >= 3 && r.stateKeys.length === 0;
+    // Judge by behaviour, not by key names: with no remote change in between,
+    // a delta-capable pull would return fewer records the second time.
+    // stateKeys stays in the detail as supporting evidence only.
+    const reproduced = r.sizes.length === 2 && r.sizes[1] === r.sizes[0] && r.sizes[1] >= 3;
     return { pass: reproduced, detail: JSON.stringify(r) };
   });
 
@@ -336,10 +351,10 @@ async function checks() {
       ${HELPERS}
       const tbl = await targetTable();
       const col = tbl.columns.find(c => c.name === '${LINK_COLUMN}' && c.type === 'link');
-      if (!col) return JSON.stringify({ skip: true });
+      if (!col || !col.data?.link_id) return JSON.stringify({ skip: true });
       await st('links/', 'POST', {
         table_id: tbl._id, other_table_id: tbl._id, link_id: col.data.link_id,
-        other_rows_ids_map: { '${rowA}': ['${rowIds[1]}'] },
+        other_rows_ids_map: { [${JSON.stringify(rowA)}]: ${JSON.stringify([rowIds[1]])} },
       });
       setMode('remote-wins', false);
       await sync('pull', 'all');
@@ -381,7 +396,10 @@ async function checks() {
     process.exit(0);
   } catch (e) {
     console.error('FATAL:', e.message);
-    try { if (rowIds.length && !process.argv.includes('--keep')) await cleanup(); } catch {}
+    if (rowIds.length && !process.argv.includes('--keep')) {
+      try { await cleanup(); }
+      catch (ce) { console.error(`Cleanup after FATAL also failed: ${ce.message} (row ids: ${rowIds.join(', ')})`); }
+    }
     process.exit(1);
   }
 })();
