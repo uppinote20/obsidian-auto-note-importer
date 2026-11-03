@@ -12,6 +12,7 @@ All suites drive a real Obsidian instance over the Chrome DevTools Protocol. Pre
 | SeaTable | `test:e2e:seatable{,:settings,:full}` | `SEATABLE_*` in `.env` |
 | Supabase | `test:e2e:supabase{,:settings,:full}` | `SUPABASE_URL` + `SUPABASE_KEY` in `.env` + demo schema below |
 | Notion | `test:e2e:notion{,:settings,:full}` | `NOTION_*` in `.env` + a data source shared with the integration |
+| Issue repro | `test:e2e:repro{,:full}` | `SEATABLE_*` in `.env`. Inverted suite: each check reports `REPRODUCED` while its open issue is still valid — once an issue is fixed, move its check into the provider suite |
 
 Run e2e with only the target vault open in Obsidian — the harness attaches to the first Obsidian window it finds.
 
