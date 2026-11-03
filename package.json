@@ -22,7 +22,9 @@
 		"test:e2e:supabase:full": "E2E_RUNNER=tests/e2e/run-supabase-e2e.mjs bash tests/e2e/start-e2e.sh --cleanup",
 		"test:e2e:notion": "node tests/e2e/run-notion-e2e.mjs --cleanup",
 		"test:e2e:notion:settings": "node tests/e2e/run-notion-settings-e2e.mjs",
-		"test:e2e:notion:full": "E2E_RUNNER=tests/e2e/run-notion-e2e.mjs bash tests/e2e/start-e2e.sh --cleanup"
+		"test:e2e:notion:full": "E2E_RUNNER=tests/e2e/run-notion-e2e.mjs bash tests/e2e/start-e2e.sh --cleanup",
+		"test:e2e:repro": "node tests/e2e/run-issue-repro.mjs",
+		"test:e2e:repro:full": "E2E_RUNNER=tests/e2e/run-issue-repro.mjs bash tests/e2e/start-e2e.sh"
 	},
 	"keywords": [
 		"obsidian-plugin",
