@@ -241,6 +241,10 @@ describe('SyncOrchestrator', () => {
       mockApp.vault.getAbstractFileByPath.mockReturnValue(null);
     });
 
+    // null / undefined / objects hit the early guard in determineFilename();
+    // '', whitespace and [] stringify to '' and land on the trailing
+    // sanitizeFileName(...) || primaryField fallback instead. Both paths are
+    // pinned here so neither can regress.
     it.each([
       ['null', null],
       ['undefined', undefined],
