@@ -328,6 +328,18 @@ export class SyncOrchestrator {
 
     const rawValue = note.fields[this.settings.filenameFieldName];
 
+    // Remote APIs either omit an empty field or send it as null — treat both
+    // the same. Without this, String(null) === 'null' slips past the
+    // primaryField fallback below and every empty-name record overwrites a
+    // single null.md (#134). Plain objects and arrays of objects get the same
+    // treatment as the subfolder path (#98): String() yields '[object Object]',
+    // which collides just the same. Empty strings and empty arrays don't need
+    // this guard — String() gives '' for both, so the sanitizeFileName(...)
+    // || primaryField fallback at the end already catches them.
+    if (rawValue == null || String(rawValue).startsWith('[object ')) {
+      return note.primaryField;
+    }
+
     try {
       const cacheKey = this.fieldCache.getCacheKey(this.settings.baseId, this.settings.tableId);
       const fieldInfo = this.fieldCache.getField(cacheKey, this.settings.filenameFieldName);

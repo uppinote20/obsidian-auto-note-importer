@@ -232,6 +232,60 @@ describe('SyncOrchestrator', () => {
     });
   });
 
+  // #134: remote APIs either omit an empty field or send it as null. Both must
+  // land on the record id — String(null) === 'null' used to slip past the
+  // primaryField fallback, collapsing every empty-name record into null.md.
+  describe('processSyncRequest — pull: empty filename fallback (#134)', () => {
+    beforeEach(() => {
+      mockApp.vault.adapter.exists.mockResolvedValue(true);
+      mockApp.vault.getAbstractFileByPath.mockReturnValue(null);
+    });
+
+    // null / undefined / objects hit the early guard in determineFilename();
+    // '', whitespace and [] stringify to '' and land on the trailing
+    // sanitizeFileName(...) || primaryField fallback instead. Both paths are
+    // pinned here so neither can regress.
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+      ['empty string', ''],
+      ['whitespace only', '   '],
+      ['empty array', []],
+      ['plain object', { id: 'usr1' }],
+      ['array of objects', [{ id: 'u1' }]],
+    ])('falls back to the record id when the filename field is %s', async (_label, value) => {
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: value } },
+      ]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/rec1.md', expect.any(String));
+    });
+
+    it('writes one note per record when several share an empty filename field', async () => {
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: null } },
+        { id: 'rec2', primaryField: 'rec2', fields: { title: null } },
+      ]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      const paths = mockApp.vault.create.mock.calls.map(([path]: [string]) => path);
+      expect(paths).toEqual(['Sync/rec1.md', 'Sync/rec2.md']);
+    });
+
+    it('still uses a non-empty value as the filename', async () => {
+      mockProvider.fetchNotes.mockResolvedValue([
+        { id: 'rec1', primaryField: 'rec1', fields: { title: 0 } },
+      ]);
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/0.md', expect.any(String));
+    });
+  });
+
   describe('processSyncRequest — pull: syncPageBody (#122)', () => {
     beforeEach(() => {
       mockApp.vault.adapter.exists.mockResolvedValue(true);
