@@ -4,7 +4,7 @@
  * @tested tests/builders/note-builder.test.ts
  */
 
-import { getNestedValue, formatYamlValue, formatFieldForBases } from '../utils';
+import { getNestedValue, formatYamlValue, formatFieldForBases, formatObjectLabel } from '../utils';
 import type { RemoteNote } from '../types';
 
 /**
@@ -62,16 +62,18 @@ export function parseTemplate(template: string, note: RemoteNote): string {
 
     if (value == null) return "";
 
+    // Object values render as their label (#133) rather than "[Object]";
+    // nested paths like {{Files.0.url}} resolve before reaching here.
     if (Array.isArray(value)) {
       const items = value.map(item =>
-        typeof item === "object" && item !== null ? "[Object]" : String(item)
+        typeof item === "object" && item !== null ? formatObjectLabel(item) : String(item)
       );
       return `[${items.join(", ")}]`;
     }
 
     if (typeof value === "boolean") return String(value);
     if (typeof value === "number" && isFinite(value)) return String(value);
-    if (typeof value === "object") return "[Object]";
+    if (typeof value === "object") return formatObjectLabel(value);
 
     const stringValue = String(value);
     const inFrontmatter = fmEnd !== -1 && offset < fmEnd;

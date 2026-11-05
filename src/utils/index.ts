@@ -9,6 +9,7 @@ export {
   escapeYamlString,
   formatYamlValue,
   formatFieldForBases,
+  formatObjectLabel,
 } from './yaml-formatter';
 
 export {

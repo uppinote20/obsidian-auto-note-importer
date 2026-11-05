@@ -71,10 +71,28 @@ describe('parseTemplate', () => {
     expect(parseTemplate('{{price}}', note)).toBe('3.14');
   });
 
-  it('should replace objects with [Object]', () => {
+  // #133: objects render through formatObjectLabel instead of "[Object]".
+  it('should render an unlabelled object as JSON', () => {
     const note = createNote({ data: { complex: 'value' } });
     const result = parseTemplate('{{data}}', note);
-    expect(result).toBe('[Object]');
+    expect(result).toBe('{"complex":"value"}');
+  });
+
+  it('should render a labelled object as its label', () => {
+    const note = createNote({ owner: { id: 'usr1', email: 'a@b.c', name: 'Kim' } });
+    expect(parseTemplate('{{owner}}', note)).toBe('Kim');
+  });
+
+  it('should render arrays of objects as their labels', () => {
+    const note = createNote({
+      Files: [{ url: 'https://x/a.png', filename: 'a.png' }, { url: 'https://x/b.png', filename: 'b.png' }],
+    });
+    expect(parseTemplate('{{Files}}', note)).toBe('[https://x/a.png, https://x/b.png]');
+  });
+
+  it('should still resolve nested paths into object arrays', () => {
+    const note = createNote({ Files: [{ url: 'https://x/a.png', filename: 'a.png' }] });
+    expect(parseTemplate('{{Files.0.filename}}', note)).toBe('a.png');
   });
 
   it('should resolve {{body}} to note.body when no body field exists', () => {
