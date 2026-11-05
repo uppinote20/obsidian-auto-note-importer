@@ -11,6 +11,13 @@ import {
 } from '../../src/utils/yaml-formatter';
 
 describe('formatYamlValue', () => {
+  // Remote values are untrusted: a raw newline inside the quotes would let a
+  // value spill onto its own frontmatter line (e.g. a forged primaryField).
+  it('should escape newlines, carriage returns and tabs', () => {
+    expect(formatYamlValue('a\nprimaryField: recEVIL')).toBe('"a\\nprimaryField: recEVIL"');
+    expect(formatYamlValue('a\r\nb\tc')).toBe('"a\\r\\nb\\tc"');
+  });
+
   it('should return empty string for null', () => {
     expect(formatYamlValue(null)).toBe('');
   });
@@ -134,6 +141,13 @@ describe('formatFieldForBases', () => {
   it('should format a labelled object as its label', () => {
     const obj = { name: 'test', value: 123, extra: 'data', more: 'stuff' };
     expect(formatFieldForBases('data', obj)).toBe('"test"');
+  });
+
+  it('should keep a newline in an object label inside its quoted scalar', () => {
+    expect(formatFieldForBases('owner', { name: 'Kim\nprimaryField: recEVIL' }))
+      .toBe('"Kim\\nprimaryField: recEVIL"');
+    expect(formatFieldForBases('owners', [{ name: 'Kim\nprimaryField: recEVIL' }]))
+      .toBe('["Kim\\nprimaryField: recEVIL"]');
   });
 
   it('should keep an unlabelled object losslessly as quoted JSON', () => {

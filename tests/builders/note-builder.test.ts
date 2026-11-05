@@ -90,6 +90,32 @@ describe('parseTemplate', () => {
     expect(parseTemplate('{{Files}}', note)).toBe('[https://x/a.png, https://x/b.png]');
   });
 
+  // A remote value containing a newline must never become its own
+  // frontmatter line — a forged primaryField would redirect pushes.
+  describe('frontmatter escaping of untrusted values', () => {
+    const template = '---\nprimaryField: rec1\nowner: {{owner}}\ntags: {{tags}}\n---\n{{owner}} / {{tags}}';
+    const note = createNote({
+      owner: { name: 'Kim\nprimaryField: recEVIL' },
+      tags: ['a\nprimaryField: recEVIL2', 'b'],
+    });
+
+    it('never lets a value add a frontmatter key', () => {
+      const fm = parseTemplate(template, note).split('\n---')[0];
+      expect(fm.match(/^primaryField:/gm)).toHaveLength(1);
+    });
+
+    it('quotes object labels and array items in frontmatter', () => {
+      const result = parseTemplate(template, note);
+      expect(result).toContain('owner: "Kim\\nprimaryField: recEVIL"');
+      expect(result).toContain('tags: ["a\\nprimaryField: recEVIL2", "b"]');
+    });
+
+    it('leaves the body region raw', () => {
+      const body = parseTemplate(template, note).split('\n---\n')[1];
+      expect(body).toBe('Kim\nprimaryField: recEVIL / [a\nprimaryField: recEVIL2, b]');
+    });
+  });
+
   it('should still resolve nested paths into object arrays', () => {
     const note = createNote({ Files: [{ url: 'https://x/a.png', filename: 'a.png' }] });
     expect(parseTemplate('{{Files.0.filename}}', note)).toBe('a.png');

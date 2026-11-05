@@ -6,10 +6,21 @@
  */
 
 /**
- * Escapes backslashes and double quotes for safe use in YAML double-quoted strings.
+ * Escapes a string for safe use inside a YAML double-quoted scalar.
+ *
+ * Besides backslashes and double quotes, line breaks and tabs are written as
+ * escape sequences: remote values are untrusted, and a raw newline would let
+ * a value spill onto its own frontmatter line — e.g. forging a second
+ * `primaryField` that redirects pushes to another record. The YAML parser
+ * decodes the escapes back, so the value round-trips unchanged.
  */
 export function escapeYamlString(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
 }
 
 /**

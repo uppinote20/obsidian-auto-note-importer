@@ -62,21 +62,26 @@ export function parseTemplate(template: string, note: RemoteNote): string {
 
     if (value == null) return "";
 
+    const inFrontmatter = fmEnd !== -1 && offset < fmEnd;
+
     // Object values render as their label (#133) rather than "[Object]";
     // nested paths like {{Files.0.url}} resolve before reaching here.
+    // In frontmatter every item is quoted: remote values are untrusted, and
+    // a raw newline would otherwise inject its own key (e.g. a forged
+    // primaryField). The body keeps the plain, unquoted rendering.
     if (Array.isArray(value)) {
       const items = value.map(item =>
         typeof item === "object" && item !== null ? formatObjectLabel(item) : String(item)
       );
-      return `[${items.join(", ")}]`;
+      return inFrontmatter
+        ? `[${items.map(item => formatYamlValue(item)).join(", ")}]`
+        : `[${items.join(", ")}]`;
     }
 
     if (typeof value === "boolean") return String(value);
     if (typeof value === "number" && isFinite(value)) return String(value);
-    if (typeof value === "object") return formatObjectLabel(value);
 
-    const stringValue = String(value);
-    const inFrontmatter = fmEnd !== -1 && offset < fmEnd;
+    const stringValue = typeof value === "object" ? formatObjectLabel(value) : String(value);
 
     if (inFrontmatter) {
       if (stringValue.includes("\n")) {
