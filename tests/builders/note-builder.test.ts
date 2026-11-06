@@ -130,6 +130,15 @@ describe('parseTemplate', () => {
       expect(result).toContain('tags: "a, b"');
     });
 
+    // Known limitation, pinned on purpose: a template that quotes an array
+    // placeholder asks for one string, so items are comma-joined and an item
+    // that itself contains a comma can't be told apart afterwards. Leave the
+    // placeholder unquoted (tags: {{Tags}}) to get a real YAML list.
+    it('comma-joins an array inside a quoted placeholder (item commas are ambiguous)', () => {
+      const result = parseTemplate('---\ntags: "{{Tags}}"\n---\n', createNote({ Tags: ['a, b', 'c'] }));
+      expect(result).toContain('tags: "a, b, c"');
+    });
+
     it('leaves the body region raw', () => {
       const body = parseTemplate(template, note).split('\n---\n')[1];
       expect(body).toBe('Kim\nprimaryField: recEVIL / [a\nprimaryField: recEVIL2, b]');
