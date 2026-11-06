@@ -16,7 +16,7 @@
  *   #123 object-shaped (file) column survives a push — guard works, the gap is
  *        only that no e2e suite asserts it
  *   #32  a self-link column pulls as raw values, not [[wikilinks]]
- *        (today the value is the literal "[Object]" — tracked as #133)
+ *        (since #133 the value renders as its display_value, e.g. ["Repro-B"])
  *
  * Provider: SeaTable (reuses SEATABLE_* from the repo-root .env). Uses its own
  * credential/config ids, so it never touches your configs or the SeaTable

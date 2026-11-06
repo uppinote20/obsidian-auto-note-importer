@@ -4,7 +4,7 @@
  * @tested tests/builders/note-builder.test.ts
  */
 
-import { getNestedValue, formatYamlValue, formatFieldForBases } from '../utils';
+import { getNestedValue, escapeYamlString, formatYamlValue, formatFieldForBases, formatObjectLabel } from '../utils';
 import type { RemoteNote } from '../types';
 
 /**
@@ -62,21 +62,38 @@ export function parseTemplate(template: string, note: RemoteNote): string {
 
     if (value == null) return "";
 
+    const inFrontmatter = fmEnd !== -1 && offset < fmEnd;
+    // A template may already wrap the placeholder in double quotes
+    // (the README's own examples do: title: "{{Title}}"). Adding a second
+    // pair would yield ""Hello"", which YAML parsers reject — so inside
+    // existing quotes only escape, never re-quote.
+    const alreadyQuoted = inFrontmatter &&
+      originalString[offset - 1] === '"' &&
+      originalString[offset + match.length] === '"';
+
+    // Object values render as their label (#133) rather than "[Object]";
+    // nested paths like {{Files.0.url}} resolve before reaching here.
+    // In frontmatter every item is quoted: remote values are untrusted, and
+    // a raw newline would otherwise inject its own key (e.g. a forged
+    // primaryField). The body keeps the plain, unquoted rendering.
     if (Array.isArray(value)) {
       const items = value.map(item =>
-        typeof item === "object" && item !== null ? "[Object]" : String(item)
+        typeof item === "object" && item !== null ? formatObjectLabel(item) : String(item)
       );
-      return `[${items.join(", ")}]`;
+      if (alreadyQuoted) return escapeYamlString(items.join(", "));
+      return inFrontmatter
+        ? `[${items.map(item => formatYamlValue(item)).join(", ")}]`
+        : `[${items.join(", ")}]`;
     }
 
     if (typeof value === "boolean") return String(value);
     if (typeof value === "number" && isFinite(value)) return String(value);
-    if (typeof value === "object") return "[Object]";
 
-    const stringValue = String(value);
-    const inFrontmatter = fmEnd !== -1 && offset < fmEnd;
+    const stringValue = typeof value === "object" ? formatObjectLabel(value) : String(value);
 
     if (inFrontmatter) {
+      if (alreadyQuoted) return escapeYamlString(stringValue);
+
       if (stringValue.includes("\n")) {
         const lineStart = originalString.lastIndexOf("\n", offset) + 1;
         const before = originalString.slice(lineStart, offset);

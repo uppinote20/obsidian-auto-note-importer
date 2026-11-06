@@ -71,10 +71,83 @@ describe('parseTemplate', () => {
     expect(parseTemplate('{{price}}', note)).toBe('3.14');
   });
 
-  it('should replace objects with [Object]', () => {
+  // #133: objects render through formatObjectLabel instead of "[Object]".
+  it('should render an unlabelled object as JSON', () => {
     const note = createNote({ data: { complex: 'value' } });
     const result = parseTemplate('{{data}}', note);
-    expect(result).toBe('[Object]');
+    expect(result).toBe('{"complex":"value"}');
+  });
+
+  it('should render a labelled object as its label', () => {
+    const note = createNote({ owner: { id: 'usr1', email: 'a@b.c', name: 'Kim' } });
+    expect(parseTemplate('{{owner}}', note)).toBe('Kim');
+  });
+
+  it('should render arrays of objects as their labels', () => {
+    const note = createNote({
+      Files: [{ url: 'https://x/a.png', filename: 'a.png' }, { url: 'https://x/b.png', filename: 'b.png' }],
+    });
+    expect(parseTemplate('{{Files}}', note)).toBe('[https://x/a.png, https://x/b.png]');
+  });
+
+  // A remote value containing a newline must never become its own
+  // frontmatter line — a forged primaryField would redirect pushes.
+  describe('frontmatter escaping of untrusted values', () => {
+    const template = '---\nprimaryField: rec1\nowner: {{owner}}\ntags: {{tags}}\n---\n{{owner}} / {{tags}}';
+    const note = createNote({
+      owner: { name: 'Kim\nprimaryField: recEVIL' },
+      tags: ['a\nprimaryField: recEVIL2', 'b'],
+    });
+
+    it('never lets a value add a frontmatter key', () => {
+      const fm = parseTemplate(template, note).split('\n---')[0];
+      expect(fm.match(/^primaryField:/gm)).toHaveLength(1);
+    });
+
+    it('quotes object labels and array items in frontmatter', () => {
+      const result = parseTemplate(template, note);
+      expect(result).toContain('owner: "Kim\\nprimaryField: recEVIL"');
+      expect(result).toContain('tags: ["a\\nprimaryField: recEVIL2", "b"]');
+    });
+
+    // The README's own templates wrap placeholders in quotes
+    // (title: "{{Title}}"); adding a second pair produced ""Hello"", which
+    // YAML parsers reject. Inside existing quotes only escape, never re-quote.
+    it('escapes without re-quoting a placeholder the template already quoted', () => {
+      const quoted = createNote({
+        Title: 'Hello "x"',
+        Data: { complex: 'v' },
+        Owner: { name: 'Kim\nprimaryField: recEVIL' },
+        Tags: ['a', 'b'],
+      });
+      const result = parseTemplate(
+        '---\ntitle: "{{Title}}"\ndata: "{{Data}}"\nowner: "{{ Owner }}"\ntags: "{{Tags}}"\n---\n',
+        quoted,
+      );
+      expect(result).toContain('title: "Hello \\"x\\""');
+      expect(result).toContain('data: "{\\"complex\\":\\"v\\"}"');
+      expect(result).toContain('owner: "Kim\\nprimaryField: recEVIL"');
+      expect(result).toContain('tags: "a, b"');
+    });
+
+    // Known limitation, pinned on purpose: a template that quotes an array
+    // placeholder asks for one string, so items are comma-joined and an item
+    // that itself contains a comma can't be told apart afterwards. Leave the
+    // placeholder unquoted (tags: {{Tags}}) to get a real YAML list.
+    it('comma-joins an array inside a quoted placeholder (item commas are ambiguous)', () => {
+      const result = parseTemplate('---\ntags: "{{Tags}}"\n---\n', createNote({ Tags: ['a, b', 'c'] }));
+      expect(result).toContain('tags: "a, b, c"');
+    });
+
+    it('leaves the body region raw', () => {
+      const body = parseTemplate(template, note).split('\n---\n')[1];
+      expect(body).toBe('Kim\nprimaryField: recEVIL / [a\nprimaryField: recEVIL2, b]');
+    });
+  });
+
+  it('should still resolve nested paths into object arrays', () => {
+    const note = createNote({ Files: [{ url: 'https://x/a.png', filename: 'a.png' }] });
+    expect(parseTemplate('{{Files.0.filename}}', note)).toBe('a.png');
   });
 
   it('should resolve {{body}} to note.body when no body field exists', () => {

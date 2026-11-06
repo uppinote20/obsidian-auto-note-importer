@@ -6,10 +6,18 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatYamlValue,
-  formatFieldForBases
+  formatFieldForBases,
+  formatObjectLabel
 } from '../../src/utils/yaml-formatter';
 
 describe('formatYamlValue', () => {
+  // Remote values are untrusted: a raw newline inside the quotes would let a
+  // value spill onto its own frontmatter line (e.g. a forged primaryField).
+  it('should escape newlines, carriage returns and tabs', () => {
+    expect(formatYamlValue('a\nprimaryField: recEVIL')).toBe('"a\\nprimaryField: recEVIL"');
+    expect(formatYamlValue('a\r\nb\tc')).toBe('"a\\r\\nb\\tc"');
+  });
+
   it('should return empty string for null', () => {
     expect(formatYamlValue(null)).toBe('');
   });
@@ -81,8 +89,26 @@ describe('formatFieldForBases', () => {
     expect(formatFieldForBases('mixed', ['a', 1, 'b'])).toBe('["a", "1", "b"]');
   });
 
-  it('should format arrays with objects as quoted comma-separated', () => {
-    expect(formatFieldForBases('items', [{ name: 'test' }, 'simple'])).toBe('"[Object], simple"');
+  // #133: object items used to collapse into the literal "[Object]".
+  it('should format arrays with objects as a list of their labels', () => {
+    expect(formatFieldForBases('items', [{ name: 'test' }, 'simple'])).toBe('["test", "simple"]');
+  });
+
+  it('should format a SeaTable link value as its display values', () => {
+    const link = [
+      { row_id: 'r1', display_value: 'Repro-B' },
+      { row_id: 'r2', display_value: 'Repro-C' },
+    ];
+    expect(formatFieldForBases('Related', link)).toBe('["Repro-B", "Repro-C"]');
+  });
+
+  it('should format attachment arrays as their URLs', () => {
+    const files = [{ name: 'repro.txt', url: 'https://example.com/repro.txt', type: 'file', size: 1 }];
+    expect(formatFieldForBases('Files', files)).toBe('["https://example.com/repro.txt"]');
+  });
+
+  it('should drop null items and stringify booleans inside arrays', () => {
+    expect(formatFieldForBases('mixed', [null, 'a', true])).toBe('["a", "true"]');
   });
 
   it('should return "true" for boolean true', () => {
@@ -112,9 +138,20 @@ describe('formatFieldForBases', () => {
     ).toBe('"2026-09-10T10:00:00.000+09:00/2026-09-12T18:00:00.000+09:00"');
   });
 
-  it('should format objects with key preview', () => {
+  it('should format a labelled object as its label', () => {
     const obj = { name: 'test', value: 123, extra: 'data', more: 'stuff' };
-    expect(formatFieldForBases('data', obj)).toBe('"[Object: name, value, extra]"');
+    expect(formatFieldForBases('data', obj)).toBe('"test"');
+  });
+
+  it('should keep a newline in an object label inside its quoted scalar', () => {
+    expect(formatFieldForBases('owner', { name: 'Kim\nprimaryField: recEVIL' }))
+      .toBe('"Kim\\nprimaryField: recEVIL"');
+    expect(formatFieldForBases('owners', [{ name: 'Kim\nprimaryField: recEVIL' }]))
+      .toBe('["Kim\\nprimaryField: recEVIL"]');
+  });
+
+  it('should keep an unlabelled object losslessly as quoted JSON', () => {
+    expect(formatFieldForBases('Location', { lat: 37.5, lng: 127 })).toBe('"{\\"lat\\":37.5,\\"lng\\":127}"');
   });
 
   it('should use block scalar for multiline strings', () => {
@@ -128,5 +165,49 @@ describe('formatFieldForBases', () => {
 
   it('should escape special characters in strings', () => {
     expect(formatFieldForBases('name', 'say "hello"')).toBe('"say \\"hello\\""');
+  });
+});
+
+describe('formatObjectLabel (#133)', () => {
+  it('prefers display_value (SeaTable link)', () => {
+    expect(formatObjectLabel({ row_id: 'r1', display_value: 'Repro-B' })).toBe('Repro-B');
+  });
+
+  it('prefers url over name (attachments)', () => {
+    expect(formatObjectLabel({ id: 'att1', url: 'https://x/y.png', filename: 'y.png' })).toBe('https://x/y.png');
+  });
+
+  it('uses name for collaborators', () => {
+    expect(formatObjectLabel({ id: 'usr1', email: 'a@b.c', name: 'Kim' })).toBe('Kim');
+  });
+
+  it('falls back through label, title, text, email and id', () => {
+    expect(formatObjectLabel({ label: 'Open', other: 1 })).toBe('Open');
+    expect(formatObjectLabel({ title: 'T' })).toBe('T');
+    expect(formatObjectLabel({ text: '123456', type: 'upce' })).toBe('123456');
+    expect(formatObjectLabel({ id: 'usr1', email: 'a@b.c' })).toBe('a@b.c');
+    expect(formatObjectLabel({ id: 'rec1' })).toBe('rec1');
+  });
+
+  it('skips empty label candidates', () => {
+    expect(formatObjectLabel({ display_value: '', name: 'fallback' })).toBe('fallback');
+  });
+
+  it('accepts numeric labels', () => {
+    expect(formatObjectLabel({ id: 42 })).toBe('42');
+  });
+
+  it('serialises arrays as JSON', () => {
+    expect(formatObjectLabel([1, 2])).toBe('[1,2]');
+  });
+
+  it('falls back to "[Object]" when the value cannot be serialised', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(formatObjectLabel(circular)).toBe('[Object]');
+  });
+
+  it('serialises objects without a label key as JSON', () => {
+    expect(formatObjectLabel({ lat: 37.5, lng: 127 })).toBe('{"lat":37.5,"lng":127}');
   });
 });
