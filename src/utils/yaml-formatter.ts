@@ -71,7 +71,13 @@ export function formatObjectLabel(value: object): string {
     if (typeof candidate === 'string' && candidate !== '') return candidate;
     if (typeof candidate === 'number' && isFinite(candidate)) return String(candidate);
   }
-  return JSON.stringify(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    // Provider responses are parsed JSON, so this is defensive only — a
+    // circular structure or BigInt can't be serialised.
+    return '[Object]';
+  }
 }
 
 /**

@@ -197,6 +197,16 @@ describe('formatObjectLabel (#133)', () => {
     expect(formatObjectLabel({ id: 42 })).toBe('42');
   });
 
+  it('serialises arrays as JSON', () => {
+    expect(formatObjectLabel([1, 2])).toBe('[1,2]');
+  });
+
+  it('falls back to "[Object]" when the value cannot be serialised', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(formatObjectLabel(circular)).toBe('[Object]');
+  });
+
   it('serialises objects without a label key as JSON', () => {
     expect(formatObjectLabel({ lat: 37.5, lng: 127 })).toBe('{"lat":37.5,"lng":127}');
   });

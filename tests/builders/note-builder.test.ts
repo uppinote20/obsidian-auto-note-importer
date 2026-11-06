@@ -110,6 +110,26 @@ describe('parseTemplate', () => {
       expect(result).toContain('tags: ["a\\nprimaryField: recEVIL2", "b"]');
     });
 
+    // The README's own templates wrap placeholders in quotes
+    // (title: "{{Title}}"); adding a second pair produced ""Hello"", which
+    // YAML parsers reject. Inside existing quotes only escape, never re-quote.
+    it('escapes without re-quoting a placeholder the template already quoted', () => {
+      const quoted = createNote({
+        Title: 'Hello "x"',
+        Data: { complex: 'v' },
+        Owner: { name: 'Kim\nprimaryField: recEVIL' },
+        Tags: ['a', 'b'],
+      });
+      const result = parseTemplate(
+        '---\ntitle: "{{Title}}"\ndata: "{{Data}}"\nowner: "{{ Owner }}"\ntags: "{{Tags}}"\n---\n',
+        quoted,
+      );
+      expect(result).toContain('title: "Hello \\"x\\""');
+      expect(result).toContain('data: "{\\"complex\\":\\"v\\"}"');
+      expect(result).toContain('owner: "Kim\\nprimaryField: recEVIL"');
+      expect(result).toContain('tags: "a, b"');
+    });
+
     it('leaves the body region raw', () => {
       const body = parseTemplate(template, note).split('\n---\n')[1];
       expect(body).toBe('Kim\nprimaryField: recEVIL / [a\nprimaryField: recEVIL2, b]');
