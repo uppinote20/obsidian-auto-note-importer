@@ -404,5 +404,25 @@ describe('FrontmatterParser snapshot readers', () => {
     it('returns {} without frontmatter', () => {
       expect(parser.parseFieldsFromContent('just body')).toEqual({});
     });
+
+    it('returns null when the frontmatter YAML is malformed', () => {
+      expect(parser.parseFieldsFromContent('---\nkey: [unclosed\n---\n')).toBeNull();
+    });
+
+    it('returns {} for empty frontmatter', () => {
+      expect(parser.parseFieldsFromContent('---\n---\nbody')).toEqual({});
+    });
+
+    it('does not read fields from a later fence in the body', () => {
+      expect(parser.parseFieldsFromContent('---\n---\nbody\n\n---\nx: 1\n---')).toEqual({});
+    });
+
+    it('does not accept a closing fence with trailing characters', () => {
+      expect(parser.parseFieldsFromContent('---\nA: 1\n---x\n')).toEqual({});
+    });
+
+    it('handles CRLF line endings', () => {
+      expect(parser.parseFieldsFromContent('---\r\nA: 1\r\n---\r\nbody')).toEqual({ A: 1 });
+    });
   });
 });

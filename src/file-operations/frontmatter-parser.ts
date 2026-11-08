@@ -110,16 +110,29 @@ export class FrontmatterParser {
 
   /**
    * Parses the frontmatter of a markdown string with Obsidian's YAML parser,
-   * dropping system fields. Returns `{}` when there is no frontmatter.
+   * dropping system fields. Returns `{}` when there is no (or empty) frontmatter
+   * and `null` when the frontmatter cannot be parsed — callers must leave the
+   * snapshot untouched on `null`.
    */
-  parseFieldsFromContent(content: string): Record<string, unknown> {
-    // Closing fence must start a line so a block scalar keeps its trailing newline.
-    const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/);
+  parseFieldsFromContent(content: string): Record<string, unknown> | null {
+    // Closing fence must start a line (so a block scalar keeps its trailing
+    // newline) and end the line; the body group is optional for `---\n---`.
+    const match = content.match(/^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/);
     if (!match) {
       return {};
     }
 
-    const parsed = parseYaml(match[1]);
+    // Empty frontmatter (`---\n---`) is a valid empty document.
+    if (!match[1]?.trim()) {
+      return {};
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = parseYaml(match[1]);
+    } catch {
+      return null;
+    }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return {};
     }
