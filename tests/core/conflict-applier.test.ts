@@ -147,6 +147,14 @@ describe('ConflictApplier', () => {
     expect(state.pendingConflicts()).toHaveLength(0);
   });
 
+  it('keep-local on a writable field pins the local value', async () => {
+    seed(conflict({ writable: true }));
+    const result = await applier(false).apply([{ conflict: conflict({ writable: true }), choice: 'keep-local' }]);
+    expect(result.applied).toBe(1);
+    expect(provider.updateRecord).not.toHaveBeenCalled();
+    expect(state.getRecord('rec1')?.fields.Status).toMatchObject({ pinnedLocal: true });
+  });
+
   it.each<ConflictChoice>(['obsidian', 'remote', 'keep-local'])('%s: a changed remote marks the entry stale and writes nothing', async (choice) => {
     seed(conflict());
     provider.fetchRecord.mockResolvedValue({ id: 'rec1', primaryField: 'rec1', fields: { Status: 'Remote 2' } });

@@ -64,10 +64,14 @@ export function buildApplyList(
   return byConfig;
 }
 
-/** Choices a row offers: "Use Obsidian" needs a writable field and bidirectional sync. */
+/**
+ * Choices a row offers: "Use Obsidian" needs a writable field and bidirectional
+ * sync. Without it, "Keep local" (pin the value so pulls stop overwriting it)
+ * is the only way to keep a local edit.
+ */
 export function offeredChoices(c: PendingConflict, bidirectional: boolean): ConflictChoice[] {
-  if (!c.writable) return ['later', 'remote', 'keep-local'];
-  return bidirectional ? ['later', 'obsidian', 'remote'] : ['later', 'remote'];
+  if (c.writable && bidirectional) return ['later', 'obsidian', 'remote'];
+  return ['later', 'remote', 'keep-local'];
 }
 
 /**

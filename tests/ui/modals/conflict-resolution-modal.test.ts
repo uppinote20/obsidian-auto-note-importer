@@ -48,12 +48,13 @@ describe('buildApplyList', () => {
 });
 
 describe('offeredChoices', () => {
-  it('writable: Obsidian only with bidirectional sync', () => {
-    expect(offeredChoices(conflict(), true)).toEqual(['later', 'obsidian', 'remote']);
-    expect(offeredChoices(conflict(), false)).toEqual(['later', 'remote']);
-  });
-  it('non-writable: restore remote or keep local', () => {
-    expect(offeredChoices(conflict({ writable: false }), true)).toEqual(['later', 'remote', 'keep-local']);
+  it.each([
+    { writable: true, bidirectional: true, expected: ['later', 'obsidian', 'remote'] },
+    { writable: true, bidirectional: false, expected: ['later', 'remote', 'keep-local'] },
+    { writable: false, bidirectional: true, expected: ['later', 'remote', 'keep-local'] },
+    { writable: false, bidirectional: false, expected: ['later', 'remote', 'keep-local'] },
+  ])('writable=$writable bidirectional=$bidirectional', ({ writable, bidirectional, expected }) => {
+    expect(offeredChoices(conflict({ writable }), bidirectional)).toEqual(expected);
   });
 });
 
