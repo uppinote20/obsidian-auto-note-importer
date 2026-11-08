@@ -66,4 +66,36 @@ describe('threeWayMerge', () => {
       expect(judge({ F: { local: 'a\n', remote: 'a' } }, { F: 'a\n' }, { F: 'a' })).toBe('unchanged');
     });
   });
+
+  describe('remote value in local form (cross-form comparisons)', () => {
+    const judgeForm = (
+      snapshot: Record<string, FieldSnapshot> | undefined,
+      local: Record<string, unknown>,
+      remote: Record<string, unknown>,
+      remoteLocalForm: Record<string, unknown>,
+    ) => threeWayMerge(snapshot, local, remote, F, remoteLocalForm).F;
+    const obj = (url: string, sig = 1) => [{ url, filename: 'a.png', sig }];
+
+    it('no snapshot: local equal to the remote local form is unchanged', () => {
+      expect(judgeForm(undefined, { F: ['u'] }, { F: obj('u') }, { F: ['u'] })).toBe('unchanged');
+      // Without the local form the raw object never matches the label.
+      expect(judge(undefined, { F: ['u'] }, { F: obj('u') })).toBe('conflict');
+    });
+    it('no snapshot: local differing from the remote local form is a conflict', () => {
+      expect(judgeForm(undefined, { F: ['v'] }, { F: obj('u') }, { F: ['u'] })).toBe('conflict');
+    });
+    it('both changed: equal to the remote local form is both-same, else conflict', () => {
+      const snap = { F: { local: ['a'], remote: obj('a') } };
+      expect(judgeForm(snap, { F: ['b'] }, { F: obj('b') }, { F: ['b'] })).toBe('both-same');
+      expect(judgeForm(snap, { F: ['c'] }, { F: obj('b') }, { F: ['b'] })).toBe('conflict');
+    });
+    it('remote-change detection still uses the raw remote value', () => {
+      const snap = { F: { local: ['a'], remote: obj('a', 1) } };
+      expect(judgeForm(snap, { F: ['a'] }, { F: obj('a', 2) }, { F: ['a'] })).toBe('remote-only');
+    });
+    it('a field missing from the local form falls back to the raw remote value', () => {
+      expect(judgeForm(undefined, { F: 1 }, { F: 1 }, {})).toBe('unchanged');
+      expect(judgeForm(undefined, { F: ['u'] }, { F: obj('u') }, {})).toBe('conflict');
+    });
+  });
 });

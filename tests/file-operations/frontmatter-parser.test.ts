@@ -366,26 +366,23 @@ describe('FrontmatterParser snapshot readers', () => {
     return new FrontmatterParser(mockApp as any);
   };
 
-  describe('readComparableFields', () => {
-    it('keeps null, object and read-only keys but drops system fields', () => {
-      const parser = createParser({
-        primaryField: 'rec1',
-        position: { line: 1 },
-        Name: 'a',
-        Empty: null,
-        Total: 5,
-        Obj: { x: 1 }
-      });
-      expect(parser.readComparableFields({} as any)).toEqual({
-        Name: 'a',
-        Empty: null,
-        Total: 5,
-        Obj: { x: 1 }
+  describe('parseNoteContent', () => {
+    const parser = createParser();
+
+    it('returns the primaryField as record id alongside the non-system fields', () => {
+      expect(parser.parseNoteContent('---\nprimaryField: rec1\nName: a\nEmpty: null\n---\nbody')).toEqual({
+        recordId: 'rec1',
+        fields: { Name: 'a', Empty: null },
       });
     });
 
-    it('returns null when there is no frontmatter', () => {
-      expect(createParser().readComparableFields({} as any)).toBeNull();
+    it('has a null record id when primaryField is absent', () => {
+      expect(parser.parseNoteContent('---\nName: a\n---\n')).toEqual({ recordId: null, fields: { Name: 'a' } });
+      expect(parser.parseNoteContent('no frontmatter')).toEqual({ recordId: null, fields: {} });
+    });
+
+    it('returns null when the frontmatter cannot be parsed', () => {
+      expect(parser.parseNoteContent('---\nbad: [unclosed\n---\n')).toBeNull();
     });
   });
 

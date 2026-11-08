@@ -358,27 +358,48 @@ export class SyncOrchestrator {
       }
     }
 
-    // A note without readable frontmatter has no local values to keep.
-    const local = existingFile instanceof TFile
-      ? this.frontmatterParser.readComparableFields(existingFile) ?? {}
+    let currentContent: string | null = null;
+    if (existingFile instanceof TFile) {
+      try {
+        currentContent = await this.app.vault.read(existingFile);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Failed to read note: ${safeTitle}${this.settings.debugMode ? ` (${message})` : ''}`);
+        return "error";
+      }
+    }
+
+    // Local values come from the file's own text (the same source as the
+    // recorded local baseline), never the asynchronously updated metadataCache.
+    // Unparseable frontmatter has no local values to keep (overwritten as before).
+    const local = currentContent !== null
+      ? this.frontmatterParser.parseFieldsFromContent(currentContent) ?? {}
       : {};
+
+    // The remote values as they read back once written: object fields render
+    // as labels, so local-vs-remote comparisons must use this form.
+    const remoteContent = this.frontmatterParser.ensurePrimaryField(await this.buildNoteContent(note), note.primaryField);
+    const remoteLocalForm = this.frontmatterParser.parseFieldsFromContent(remoteContent) ?? undefined;
+
     const recordId = note.primaryField;
     const fieldNames = this.judgedFieldNames(local, note.fields, run.metadata);
     const snapshot = this.syncState.getRecord(recordId)?.fields;
-    const verdicts = threeWayMerge(snapshot, local, note.fields, fieldNames);
+    const verdicts = threeWayMerge(snapshot, local, note.fields, fieldNames, remoteLocalForm);
     const plan = planPull(this.settings.conflictResolution, verdicts, run.writable);
     const keep: Record<string, unknown> = {};
     for (const field of plan.keepLocal) keep[field] = local[field];
 
     // Filename and folder above come from the raw remote values; only the
     // built content sees the kept local values.
-    let content = await this.buildNoteContent({ ...note, fields: { ...note.fields, ...keep } });
-    content = this.frontmatterParser.ensurePrimaryField(content, note.primaryField);
+    let content = remoteContent;
+    if (plan.keepLocal.length > 0) {
+      content = await this.buildNoteContent({ ...note, fields: { ...note.fields, ...keep } });
+      content = this.frontmatterParser.ensurePrimaryField(content, note.primaryField);
+    }
 
     let result: NoteCreationResult;
     try {
       if (existingFile instanceof TFile) {
-        const currentContent = await this.app.vault.read(existingFile);
         if (currentContent !== content) {
           await this.app.vault.modify(existingFile, content);
           result = "updated";
@@ -581,16 +602,29 @@ export class SyncOrchestrator {
     const toSend: JudgedPush[] = [];
 
     for (const file of files) {
-      const recordId = this.frontmatterParser.getRecordId(file);
+      // Local values come from the file's own text (the same source as the
+      // recorded local baseline), never the asynchronously updated metadataCache.
+      let parsed: { recordId: string | null; fields: Record<string, unknown> } | null;
+      try {
+        parsed = this.frontmatterParser.parseNoteContent(await this.app.vault.read(file));
+      } catch {
+        parsed = null;
+      }
+      if (!parsed) {
+        // Unreadable / unparseable frontmatter: skip, keep the snapshot.
+        errorCount++;
+        if (this.settings.debugMode) {
+          new Notice(`Auto Note Importer: Skipping ${file.name} (frontmatter could not be read)`);
+        }
+        continue;
+      }
+      const { recordId, fields: local } = parsed;
       if (!recordId) {
         if (this.settings.debugMode) {
           new Notice(`Auto Note Importer: Skipping ${file.name} (no primaryField)`);
         }
         continue;
       }
-
-      const local = this.frontmatterParser.readComparableFields(file);
-      if (!local) continue;
 
       let remote: RemoteNote | null;
       try {

@@ -17,6 +17,12 @@ import { FileWatcher } from '../../src/file-operations/file-watcher';
 import { SyncStateStore } from '../../src/core/sync-state-store';
 import type { ConfigSyncStateHandle } from '../../src/core/sync-state-store';
 import type { App, DataAdapter } from 'obsidian';
+import { dump } from 'js-yaml';
+
+/** Note file content with the given frontmatter (what local values are now read from). */
+function noteContent(frontmatter: Record<string, unknown>): string {
+  return `---\n${dump(frontmatter)}---\nold body\n`;
+}
 
 function createSettings(overrides: Partial<LegacySettings> = {}): LegacySettings {
   return {
@@ -454,6 +460,7 @@ describe('SyncOrchestrator', () => {
       return file;
     });
     mockApp.vault.adapter.exists.mockResolvedValue(true);
+    mockApp._files.set('Sync/note.md', noteContent({ primaryField: 'rec1', ...frontmatter }));
     (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
       getFileCache: vi.fn().mockReturnValue({ frontmatter: { primaryField: 'rec1', ...frontmatter } }),
     };
@@ -756,6 +763,30 @@ describe('SyncOrchestrator', () => {
       expect(syncState.getRecord('rec1')?.fields).toEqual({ Title: { local: 'same', remote: 'same' } });
     });
 
+    it('reads local values from the file content even when metadataCache lacks the file', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPushFile({ Count: 11 }, { Count: 10 });
+      (mockApp as unknown as { metadataCache: unknown }).metadataCache = { getFileCache: vi.fn().mockReturnValue(null) };
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.batchUpdate).toHaveBeenCalledWith([{ recordId: 'rec1', fields: { Count: 11 } }]);
+    });
+
+    it('skips a file whose frontmatter cannot be parsed, counting an error and keeping its snapshot', async () => {
+      setMode('obsidian-wins');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPushFile({ Count: 11 }, { Count: 10 });
+      mockApp._files.set('Sync/note.md', '---\nprimaryField: rec1\nbad: [unclosed\n---\n');
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+      expect(noticeTexts()).toContain('Auto Note Importer: 0 synced, 1 errors');
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 10, remote: 10 });
+    });
+
     it('a failed batchUpdate result leaves the snapshot unchanged', async () => {
       setMode('manual');
       syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
@@ -814,6 +845,8 @@ describe('SyncOrchestrator', () => {
       const file2 = createMockTFile('Sync/b.md');
       const folder = createMockTFolder('Sync', [file1, file2]);
       mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => (path === 'Sync' ? folder : null));
+      mockApp._files.set('Sync/a.md', noteContent({ primaryField: 'recA', Title: 'same' }));
+      mockApp._files.set('Sync/b.md', noteContent({ primaryField: 'recB', Title: 'same' }));
       (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
         getFileCache: vi.fn((f: { path: string }) => ({
           frontmatter: { primaryField: f.path === 'Sync/a.md' ? 'recA' : 'recB', Title: 'same' },
@@ -832,23 +865,24 @@ describe('SyncOrchestrator', () => {
 
   /**
    * Pull fixtures: the vault holds `Sync/<id>.md` for every id in `local`
-   * (frontmatter served through metadataCache), and the remote returns one
+   * (as file content; metadataCache serves `cached`, default the same), and the remote returns one
    * record per entry of `remote`. Overwrite is on so existing notes are pulled.
    */
   function setupPull(
     local: Record<string, Record<string, unknown>>,
     remote: Record<string, Record<string, unknown>>,
+    cached: Record<string, Record<string, unknown>> = local,
   ): void {
     settings = { ...settings, allowOverwrite: true };
     orchestrator.updateSettings(settings);
     mockApp._folders.add('Sync');
     for (const id of Object.keys(local)) {
-      mockApp._files.set(`Sync/${id}.md`, `---\nprimaryField: "${id}"\n---\nold body\n`);
+      mockApp._files.set(`Sync/${id}.md`, noteContent({ primaryField: id, ...local[id] }));
     }
     (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
       getFileCache: vi.fn((f: { path: string }) => {
         const id = f.path.replace(/^Sync\//, '').replace(/\.md$/, '');
-        return id in local ? { frontmatter: { primaryField: id, ...local[id] } } : null;
+        return id in cached ? { frontmatter: { primaryField: id, ...cached[id] } } : null;
       }),
     };
     const notes = () => Object.entries(remote).map(([id, fields]) => ({ id, primaryField: id, fields: { ...fields } }));
@@ -1017,6 +1051,41 @@ describe('SyncOrchestrator', () => {
 
       expect(second.newConflicts).toEqual([]);
       expect(syncState.pendingConflicts()).toHaveLength(1);
+    });
+
+    it('no snapshot: an object field rendered as its label converges (no conflict), then a new signed URL is remote-only', async () => {
+      setMode('manual');
+      const remote = { rec1: { Files: [{ url: 'https://x/a.png', filename: 'a.png' }] as unknown } };
+      setupPull({ rec1: { Files: ['https://x/a.png'] } }, remote);
+
+      const first = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(first.newConflicts).toEqual([]);
+      expect(syncState.pendingConflicts()).toEqual([]);
+      expect(syncState.getRecord('rec1')?.fields.Files).toEqual({
+        local: ['https://x/a.png'],
+        remote: [{ url: 'https://x/a.png', filename: 'a.png' }],
+      });
+
+      remote.rec1.Files = [{ url: 'https://x/a.png?sig=2', filename: 'a.png' }];
+      const second = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(second.newConflicts).toEqual([]);
+      expect(syncState.pendingConflicts()).toEqual([]);
+      expect(writtenFields()).toMatchObject({ Files: ['https://x/a.png?sig=2'] });
+    });
+
+    it('judges local values from the file content, not a stale metadataCache', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPull({ rec1: { Count: 10 } }, { rec1: { Count: 12 } }, { rec1: { Count: 11 } });
+
+      const result = await orchestrator.processSyncRequest('pull', 'all');
+
+      // Remote change applied, not reverted by a stale cached value.
+      expect(writtenFields()).toMatchObject({ Count: 12 });
+      expect(result.newConflicts).toEqual([]);
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 12, remote: 12 });
     });
 
     it('pullCurrent judges its record the same way (manual conflict kept and queued)', async () => {

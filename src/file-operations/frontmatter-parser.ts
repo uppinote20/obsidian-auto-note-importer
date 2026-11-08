@@ -85,46 +85,27 @@ export class FrontmatterParser {
   }
 
   /**
-   * Reads every non-system frontmatter key for snapshot comparison.
-   * Unlike `extractSyncableFields`, null values and read-only / object-shaped
-   * keys are kept so they can be judged against a sync snapshot.
-   */
-  readComparableFields(file: TFile): Record<string, unknown> | null {
-    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-
-    if (!frontmatter) {
-      return null;
-    }
-
-    const fields: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(frontmatter)) {
-      if (isSystemField(key)) {
-        continue;
-      }
-      fields[key] = value;
-    }
-
-    return fields;
-  }
-
-  /**
    * Parses the frontmatter of a markdown string with Obsidian's YAML parser,
    * dropping system fields. Returns `{}` when there is no (or empty) frontmatter
    * and `null` when the frontmatter cannot be parsed — callers must leave the
    * snapshot untouched on `null`.
    */
   parseFieldsFromContent(content: string): Record<string, unknown> | null {
+    return this.parseNoteContent(content)?.fields ?? null;
+  }
+
+  /**
+   * Like `parseFieldsFromContent`, plus the note's `primaryField` (record id,
+   * `null` when absent). Returns `null` when the frontmatter cannot be parsed.
+   * Reads the file's own text, so it never sees a stale `metadataCache`.
+   */
+  parseNoteContent(content: string): { recordId: string | null; fields: Record<string, unknown> } | null {
     // Closing fence must start a line (so a block scalar keeps its trailing
     // newline) and end the line; the body group is optional for `---\n---`.
     const match = content.match(/^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??---[ \t]*(?:\r?\n|$)/);
-    if (!match) {
-      return {};
-    }
-
-    // Empty frontmatter (`---\n---`) is a valid empty document.
-    if (!match[1]?.trim()) {
-      return {};
+    // No frontmatter, or empty frontmatter (`---\n---`), is a valid empty document.
+    if (!match || !match[1]?.trim()) {
+      return { recordId: null, fields: {} };
     }
 
     let parsed: unknown;
@@ -134,17 +115,19 @@ export class FrontmatterParser {
       return null;
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return {};
+      return { recordId: null, fields: {} };
     }
 
+    const raw = parsed as Record<string, unknown>;
     const fields: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(raw)) {
       if (isSystemField(key)) {
         continue;
       }
       fields[key] = value;
     }
-    return fields;
+    const recordId = raw.primaryField != null && raw.primaryField !== '' ? String(raw.primaryField) : null;
+    return { recordId, fields };
   }
 
   /**
