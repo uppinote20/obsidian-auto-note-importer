@@ -20,11 +20,23 @@ export type SyncProcessor = (request: SyncRequest) => Promise<void>;
  */
 export type SyncErrorCallback = (error: unknown, request: SyncRequest) => void;
 
+/** A non-sync task run in sequence with the queued sync requests. */
+interface ExclusiveTask {
+  kind: 'exclusive';
+  run: () => Promise<void>;
+}
+
+type QueueItem = SyncRequest | ExclusiveTask;
+
+function isExclusive(item: QueueItem): item is ExclusiveTask {
+  return 'kind' in item && item.kind === 'exclusive';
+}
+
 /**
  * Manages sync requests in a queue to prevent race conditions.
  */
 export class SyncQueue {
-  private queue: SyncRequest[] = [];
+  private queue: QueueItem[] = [];
   private isProcessing = false;
   private processor: SyncProcessor;
   private onError?: SyncErrorCallback;
@@ -53,14 +65,16 @@ export class SyncQueue {
       trigger
     };
 
-    // Try to merge with existing request of the same type
+    // Try to merge with an existing request of the same type — only one queued
+    // after the last exclusive task, so a later request never jumps ahead of it.
+    const lastExclusive = this.queue.map(isExclusive).lastIndexOf(true);
     const existingIndex = this.queue.findIndex(
-      r => r.mode === mode && r.scope === scope
+      (r, i) => i > lastExclusive && !isExclusive(r) && r.mode === mode && r.scope === scope
     );
 
     if (existingIndex >= 0 && filePaths) {
       // Merge file paths
-      const existing = this.queue[existingIndex];
+      const existing = this.queue[existingIndex] as SyncRequest;
       const mergedPaths = new Set([
         ...(existing.filePaths || []),
         ...filePaths
@@ -80,6 +94,21 @@ export class SyncQueue {
   }
 
   /**
+   * Runs `fn` on the same sequential chain as sync requests: after any
+   * in-flight or queued request, before requests enqueued later. Resolves or
+   * rejects with `fn`'s outcome.
+   */
+  runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push({
+        kind: 'exclusive',
+        run: () => Promise.resolve().then(fn).then(resolve, reject),
+      });
+      void this.processQueue();
+    });
+  }
+
+  /**
    * Processes the queue sequentially.
    */
   private async processQueue(): Promise<void> {
@@ -92,6 +121,12 @@ export class SyncQueue {
     while (this.queue.length > 0) {
       const request = this.queue.shift();
       if (!request) break;
+
+      if (isExclusive(request)) {
+        // Settles its own promise; never throws.
+        await request.run();
+        continue;
+      }
 
       try {
         await this.processor(request);

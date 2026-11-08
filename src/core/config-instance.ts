@@ -23,11 +23,13 @@ import type {
   Credential,
   SharedServices,
   DatabaseProvider,
+  PendingConflict,
 } from '../types';
 import { RateLimiter, createProvider, getOrCreateRateLimiter as getOrCreateSharedRateLimiter } from '../services';
 import { SyncQueue, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
 import { ConflictApplier } from './conflict-applier';
+import type { ApplyResult, ConflictChoice } from './conflict-applier';
 import { FileWatcher } from '../file-operations';
 import { buildLegacySettings } from '../utils';
 
@@ -167,6 +169,14 @@ export class ConfigInstance {
       this.shared.frontmatterParser,
       this.settings.bidirectionalSync && this.databaseProvider.capabilities.bidirectional,
     );
+  }
+
+  /**
+   * Applies conflict choices on this config's sync queue, so an Apply never
+   * interleaves with a running sync (it waits for in-flight and queued runs).
+   */
+  applyConflicts(choices: Array<{ conflict: PendingConflict; choice: ConflictChoice }>): Promise<ApplyResult> {
+    return this.syncQueue.runExclusive(() => this.createConflictApplier().apply(choices));
   }
 
   /**

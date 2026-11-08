@@ -229,7 +229,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
           failed: choices.map(({ conflict }) => ({ conflict, error: 'This config is disabled or has no credential' })),
         };
       }
-      return instance.createConflictApplier().apply(choices);
+      return instance.applyConflicts(choices);
     },
   };
 

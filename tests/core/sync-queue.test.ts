@@ -230,4 +230,56 @@ describe('SyncQueue', () => {
       expect((onError.mock.calls[0][0] as Error).message).toBe('Test error');
     });
   });
+  describe('runExclusive', () => {
+    function deferred(): { promise: Promise<void>; resolve: () => void } {
+      let resolve!: () => void;
+      const promise = new Promise<void>(r => { resolve = r; });
+      return { promise, resolve };
+    }
+
+    it('runs only after the in-flight request resolves', async () => {
+      const gate = deferred();
+      const events: string[] = [];
+      const queue = new SyncQueue(async (request) => {
+        events.push(`start ${request.mode}`);
+        await gate.promise;
+        events.push(`end ${request.mode}`);
+      });
+
+      const sync = queue.enqueue('pull', 'all');
+      const exclusive = queue.runExclusive(async () => { events.push('apply'); return 7; });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(events).toEqual(['start pull']);
+
+      gate.resolve();
+      await expect(exclusive).resolves.toBe(7);
+      await sync;
+      expect(events).toEqual(['start pull', 'end pull', 'apply']);
+    });
+
+    it('runs before requests enqueued after it, which never merge into earlier ones', async () => {
+      const gate = deferred();
+      const events: string[] = [];
+      const queue = new SyncQueue(async (request) => {
+        events.push(`${request.mode}:${(request.filePaths ?? []).join(',')}`);
+        if (events.length === 1) await gate.promise;
+      });
+
+      void queue.enqueue('pull', 'all');
+      void queue.enqueue('push', 'modified', ['a.md']);
+      const exclusive = queue.runExclusive(async () => { events.push('apply'); });
+      void queue.enqueue('push', 'modified', ['b.md']);
+      gate.resolve();
+      await exclusive;
+      await vi.waitFor(() => expect(events).toHaveLength(4));
+      expect(events).toEqual(['pull:', 'push:a.md', 'apply', 'push:b.md']);
+    });
+
+    it('rejects with the task error and keeps processing later requests', async () => {
+      const queue = new SyncQueue(mockProcessor);
+      await expect(queue.runExclusive(async () => { throw new Error('nope'); })).rejects.toThrow('nope');
+      await queue.enqueue('pull', 'all');
+      expect(mockProcessor).toHaveBeenCalledTimes(1);
+    });
+  });
 });

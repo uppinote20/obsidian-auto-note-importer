@@ -168,6 +168,23 @@ describe('ConfigInstance', () => {
     });
   });
 
+  describe('applyConflicts', () => {
+    it('runs the applier on the sync queue chain', async () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig(), createCredential(), shared);
+      const syncQueueInstance = vi.mocked(SyncQueue).mock.instances[0];
+      vi.mocked(syncQueueInstance.runExclusive).mockImplementation(async (fn) => fn());
+      const result = { applied: 1, stale: [], failed: [], removed: [] };
+      vi.mocked(ConflictApplier.prototype.apply).mockResolvedValue(result);
+      const choices = [{ conflict: { recordId: 'r1', field: 'f' } as never, choice: 'remote' as const }];
+
+      await expect(instance.applyConflicts(choices)).resolves.toBe(result);
+
+      expect(syncQueueInstance.runExclusive).toHaveBeenCalledTimes(1);
+      expect(ConflictApplier.prototype.apply).toHaveBeenCalledWith(choices);
+      instance.destroy();
+    });
+  });
+
   describe('scheduler', () => {
     it('should start scheduler when syncInterval > 0 and enabled', () => {
       const config = createConfig({ enabled: true, syncInterval: 5 });
