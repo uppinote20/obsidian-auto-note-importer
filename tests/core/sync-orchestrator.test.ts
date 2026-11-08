@@ -652,6 +652,21 @@ describe('SyncOrchestrator', () => {
       expect(syncState.pendingConflicts()).toHaveLength(1);
     });
 
+    it.each(['remote-wins', 'obsidian-wins'] as const)('%s: a queue entry left from a manual period is dropped on push', async (mode) => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPushFile({ Count: 11 }, { Count: 12 });
+      await orchestrator.processSyncRequest('push', 'all');
+      expect(syncState.pendingConflicts()).toHaveLength(1);
+
+      setMode(mode);
+      mockProvider.batchUpdate.mockClear();
+      setupPushFile({ Count: 11 }, { Count: 12 });
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(syncState.pendingConflicts()).toEqual([]);
+    });
+
     it('a pending conflict whose values changed is reported as new again', async () => {
       setMode('manual');
       syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });

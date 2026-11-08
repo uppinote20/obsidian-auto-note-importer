@@ -811,6 +811,9 @@ export class SyncOrchestrator {
     const pending = enqueue.size > 0
       ? this.syncState.pendingConflicts().filter(p => p.recordId === recordId)
       : [];
+    // remote-wins / obsidian-wins resolve conflicts automatically and never
+    // queue them, so any entry left from an earlier manual period is stale.
+    const autoResolves = this.settings.conflictResolution !== 'manual';
     for (const [field, verdict] of Object.entries(verdicts)) {
       if (enqueue.has(field)) {
         const conflict: PendingConflict = {
@@ -831,7 +834,7 @@ export class SyncOrchestrator {
           || !areValuesEqual(previous.remote, conflict.remote);
         this.syncState.upsertConflict(conflict);
         if (isNew) newConflicts.push(conflict);
-      } else if (verdict !== 'conflict' || settled.has(field)) {
+      } else if (autoResolves || verdict !== 'conflict' || settled.has(field)) {
         this.syncState.removeConflict(recordId, field);
       }
     }
