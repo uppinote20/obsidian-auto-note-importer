@@ -71,6 +71,19 @@ describe('applySetAll', () => {
     expect(choices.get('n1')).toBe('keep-local');
   });
 
+  it('keep-local sets writable rows without bidirectional and non-writable rows; bidirectional writable keeps its own', () => {
+    const mixed = [
+      { key: 'wn', offered: offeredChoices(conflict(), false) },
+      { key: 'nw', offered: offeredChoices(conflict({ writable: false }), true) },
+      { key: 'wb', offered: offeredChoices(conflict(), true) },
+    ];
+    const choices = new Map<string, ConflictChoice>([['wn', 'later'], ['nw', 'later'], ['wb', 'obsidian']]);
+    applySetAll(mixed, 'keep-local', choices);
+    expect(choices.get('wn')).toBe('keep-local');
+    expect(choices.get('nw')).toBe('keep-local');
+    expect(choices.get('wb')).toBe('obsidian');
+  });
+
   it.each<ConflictChoice>(['remote', 'later'])('%s applies to every row', (choice) => {
     const choices = new Map<string, ConflictChoice>([['w1', 'obsidian'], ['n1', 'keep-local']]);
     applySetAll(rows, choice, choices);

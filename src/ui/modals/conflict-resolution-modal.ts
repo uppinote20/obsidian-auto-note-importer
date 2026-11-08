@@ -236,7 +236,7 @@ export class ConflictResolutionModal extends Modal {
     if (error) row.createDiv({ cls: 'ani-conflict-error', text: error });
   }
 
-  /** "Set all to: Obsidian / {provider} / Later" for one config group. */
+  /** "Set all to: Obsidian / Keep local / {provider} / Later" for one config group. */
   private renderSetAll(parent: HTMLElement, group: ConflictGroup): void {
     const rows = group.conflicts.map(c => ({ key: keyOf(group.configId, c), offered: offeredChoices(c, group.bidirectional) }));
     const bar = parent.createDiv({ cls: 'ani-conflict-set-all' });
@@ -253,6 +253,7 @@ export class ConflictResolutionModal extends Modal {
       });
     };
     if (rows.some(r => r.offered.includes('obsidian'))) addButton('obsidian', 'Obsidian');
+    if (rows.some(r => r.offered.includes('keep-local'))) addButton('keep-local', 'Keep local');
     addButton('remote', group.providerLabel);
     addButton('later', 'Later');
   }
