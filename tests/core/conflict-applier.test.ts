@@ -109,6 +109,23 @@ describe('ConflictApplier', () => {
     expect(state.pendingConflicts()).toHaveLength(0);
   });
 
+  it('remote does not overwrite an edit made while the remote record was being fetched', async () => {
+    seed(conflict());
+    // The user edits the field during the fetchRecord await: processFrontMatter sees the new value.
+    app.fileManager.processFrontMatter.mockImplementationOnce(async (_file: unknown, fn: (fm: Record<string, unknown>) => void) => {
+      const fm: Record<string, unknown> = { Status: 'Edited meanwhile', Other: 'x' };
+      fn(fm);
+      expect(fm.Status).toBe('Edited meanwhile');
+    });
+    const removeSpy = vi.spyOn(state, 'removeConflict');
+    const result = await applier().apply([{ conflict: conflict(), choice: 'remote' }]);
+    expect(result.applied).toBe(0);
+    expect(result.stale).toEqual([expect.objectContaining({ local: 'Edited meanwhile', stale: true })]);
+    expect(removeSpy).not.toHaveBeenCalled();
+    expect(state.getRecord('rec1')?.fields.Status).toBeUndefined();
+    expect(state.pendingConflicts()[0]).toMatchObject({ local: 'Edited meanwhile', stale: true });
+  });
+
   it('remote writes an object value as its label (the form the note builder writes)', async () => {
     const remoteValue = { id: 'u1', name: 'Alice' };
     seed(conflict({ remote: remoteValue, writable: false }));

@@ -116,9 +116,25 @@ export class ConflictApplier {
       }
       case 'remote': {
         const value = toFrontmatterValue(currentRemote);
+        // The note text above was read before awaiting fetchRecord(); re-check
+        // the live value inside the atomic frontmatter edit so an edit made in
+        // that window is never overwritten.
+        let editedMeanwhile = false;
+        let liveLocal: unknown;
         await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+          if (!areValuesEqual(fm[field], conflict.local)) {
+            editedMeanwhile = true;
+            liveLocal = fm[field];
+            return;
+          }
           fm[field] = value;
         });
+        if (editedMeanwhile) {
+          const refreshed: PendingConflict = { ...conflict, local: liveLocal, remote: currentRemote, stale: true };
+          this.syncState.upsertConflict(refreshed);
+          result.stale.push(refreshed);
+          return;
+        }
         const written = await this.readNote(file).catch(() => null);
         const local = written && field in written.fields ? written.fields[field] : value;
         this.settle(conflict, { local, remote: currentRemote });
