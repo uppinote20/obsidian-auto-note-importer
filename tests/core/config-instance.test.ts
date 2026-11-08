@@ -18,12 +18,14 @@ import { SyncOrchestrator } from '../../src/core/sync-orchestrator';
 import { SyncQueue } from '../../src/core/sync-queue';
 import { FieldCache } from '../../src/services/field-cache';
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
+import { ConflictApplier } from '../../src/core/conflict-applier';
 
 // Mock all service constructors
 vi.mock('../../src/services/airtable-client');
 vi.mock('../../src/file-operations/file-watcher');
 vi.mock('../../src/core/sync-orchestrator');
 vi.mock('../../src/core/sync-queue');
+vi.mock('../../src/core/conflict-applier');
 
 function createConfig(overrides: Partial<ConfigEntry> = {}): ConfigEntry {
   return {
@@ -140,6 +142,28 @@ describe('ConfigInstance', () => {
       expect(settingsArg.baseId).toBe('appXYZ');
       expect(settingsArg.tableId).toBe('tblABC');
 
+      instance.destroy();
+    });
+  });
+
+  describe('createConflictApplier', () => {
+    it.each([
+      [true, true, true],
+      [false, true, false],
+      [true, false, false],
+    ])('bidirectionalSync=%s, provider bidirectional=%s → applier may write remote: %s', (setting, capable, expected) => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ bidirectionalSync: setting }), createCredential(), shared);
+      const provider = vi.mocked(AirtableClient).mock.instances[0] as unknown as { capabilities: { bidirectional: boolean } };
+      provider.capabilities = { bidirectional: capable } as never;
+      const forConfigSpy = vi.spyOn(shared.syncState, 'forConfig');
+
+      instance.createConflictApplier();
+
+      const args = vi.mocked(ConflictApplier).mock.calls[0];
+      expect(args[1]).toBe(forConfigSpy.mock.results[0].value);
+      expect(args[2]).toBe(provider);
+      expect(args[3]).toBe(shared.frontmatterParser);
+      expect(args[4]).toBe(expected);
       instance.destroy();
     });
   });

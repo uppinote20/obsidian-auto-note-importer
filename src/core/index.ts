@@ -15,3 +15,6 @@ export type { ConfigSyncStateHandle } from './sync-state-store';
 
 export { threeWayMerge } from './three-way-merge';
 export type { FieldVerdict } from './three-way-merge';
+
+export { ConflictApplier } from './conflict-applier';
+export type { ConflictChoice, ApplyResult } from './conflict-applier';

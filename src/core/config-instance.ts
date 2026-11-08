@@ -27,6 +27,7 @@ import type {
 import { RateLimiter, createProvider, getOrCreateRateLimiter as getOrCreateSharedRateLimiter } from '../services';
 import { SyncQueue, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
+import { ConflictApplier } from './conflict-applier';
 import { FileWatcher } from '../file-operations';
 import { buildLegacySettings } from '../utils';
 
@@ -152,6 +153,20 @@ export class ConfigInstance {
     trigger: SyncTrigger = 'user',
   ): Promise<void> {
     return this.syncQueue.enqueue(mode, scope, filePaths, trigger);
+  }
+
+  /**
+   * Applier for this config's queued conflicts. Built per use so it sees the
+   * current `bidirectionalSync` setting and provider.
+   */
+  createConflictApplier(): ConflictApplier {
+    return new ConflictApplier(
+      this.app,
+      this.shared.syncState.forConfig(this.configId),
+      this.databaseProvider,
+      this.shared.frontmatterParser,
+      this.settings.bidirectionalSync && this.databaseProvider.capabilities.bidirectional,
+    );
   }
 
   /**

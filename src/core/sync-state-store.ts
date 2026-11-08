@@ -33,6 +33,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+function isAtOrUnder(filePath: string, path: string): boolean {
+  return filePath === path || filePath.startsWith(`${path}/`);
+}
+
 function isValidStateFile(v: unknown): v is SyncStateFile {
   if (!isPlainObject(v) || v.version !== 1 || !isPlainObject(v.configs)) return false;
   return Object.values(v.configs).every(
@@ -104,6 +108,35 @@ export class SyncStateStore {
       for (const conflict of cfg.pendingConflicts) out.push({ configId, conflict });
     }
     return out;
+  }
+
+  /** Drops pending conflicts of a deleted note (or of every note under a deleted folder). */
+  removeConflictsForPath(path: string): boolean {
+    let changed = false;
+    for (const cfg of Object.values(this.state.configs)) {
+      const kept = cfg.pendingConflicts.filter(p => !isAtOrUnder(p.filePath, path));
+      if (kept.length !== cfg.pendingConflicts.length) {
+        cfg.pendingConflicts = kept;
+        changed = true;
+      }
+    }
+    if (changed) this.dirty = true;
+    return changed;
+  }
+
+  /** Points pending conflicts at a renamed note (or at the notes of a renamed folder). */
+  renameConflictPath(oldPath: string, newPath: string): boolean {
+    let changed = false;
+    for (const cfg of Object.values(this.state.configs)) {
+      for (const p of cfg.pendingConflicts) {
+        if (isAtOrUnder(p.filePath, oldPath)) {
+          p.filePath = newPath + p.filePath.slice(oldPath.length);
+          changed = true;
+        }
+      }
+    }
+    if (changed) this.dirty = true;
+    return changed;
   }
 
   forConfig(configId: string): ConfigSyncStateHandle {

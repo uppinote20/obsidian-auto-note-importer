@@ -154,6 +154,30 @@ describe('SyncStateStore', () => {
     expect(store.allPending().map(e => e.configId).sort()).toEqual(['a', 'b']);
   });
 
+  it('removeConflictsForPath drops entries of that note (or folder) in every config', () => {
+    store.forConfig('a').upsertConflict({ ...conflict('r1', 'f'), filePath: 'Sync/A.md' });
+    store.forConfig('b').upsertConflict({ ...conflict('r2', 'f'), filePath: 'Sync/A.md' });
+    store.forConfig('b').upsertConflict({ ...conflict('r3', 'f'), filePath: 'Sync/Sub/B.md' });
+    store.forConfig('b').upsertConflict({ ...conflict('r4', 'f'), filePath: 'Sync/AB.md' });
+    expect(store.removeConflictsForPath('Sync/A.md')).toBe(true);
+    expect(store.allPending().map(e => e.conflict.recordId)).toEqual(['r3', 'r4']);
+    expect(store.removeConflictsForPath('Sync/Sub')).toBe(true);
+    expect(store.allPending().map(e => e.conflict.recordId)).toEqual(['r4']);
+    expect(store.removeConflictsForPath('Other.md')).toBe(false);
+  });
+
+  it('renameConflictPath follows a renamed note or folder', async () => {
+    store.forConfig('a').upsertConflict({ ...conflict('r1', 'f'), filePath: 'Sync/A.md' });
+    store.forConfig('a').upsertConflict({ ...conflict('r2', 'f'), filePath: 'Sync/Sub/B.md' });
+    store.forConfig('a').upsertConflict({ ...conflict('r3', 'f'), filePath: 'Sync/SubX.md' });
+    expect(store.renameConflictPath('Sync/A.md', 'Sync/A2.md')).toBe(true);
+    expect(store.renameConflictPath('Sync/Sub', 'Sync/New')).toBe(true);
+    expect(store.renameConflictPath('None.md', 'X.md')).toBe(false);
+    expect(store.allPending().map(e => e.conflict.filePath)).toEqual(['Sync/A2.md', 'Sync/New/B.md', 'Sync/SubX.md']);
+    await store.flush();
+    expect(adapter.write).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps state and retries when write fails', async () => {
     store.forConfig('a').setFields('r1', { f: { local: 1, remote: 1 } });
     (adapter.write as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('disk'));
