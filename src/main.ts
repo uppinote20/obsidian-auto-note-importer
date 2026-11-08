@@ -14,7 +14,7 @@ import { Plugin, normalizePath } from "obsidian";
 import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
 import { DEFAULT_SETTINGS, CREDENTIAL_TYPE_LABELS } from './types';
 import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache, NotionSchemaCache, defaultRateLimiters } from './services';
-import { ConfigManager } from './core';
+import { ConfigManager, SyncStateStore } from './core';
 import { FrontmatterParser } from './file-operations';
 import { AutoNoteImporterSettingTab } from './ui';
 import { migrateSettings, hydrateConfigDefaults } from './utils/migration';
@@ -36,14 +36,14 @@ export default class AutoNoteImporterPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
-    this.initializeServices();
+    await this.initializeServices();
     this.registerCommands();
   }
 
   /**
    * Initializes ConfigManager and shared services.
    */
-  private initializeServices(): void {
+  private async initializeServices(): Promise<void> {
     this.fieldCache = new FieldCache();
     this.seatableMetadataCache = new SeaTableMetadataCache();
     this.supabaseMetadataCache = new SupabaseMetadataCache();
@@ -56,6 +56,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
     // per-credential budget (PR #125 Codex P2 / Claude Medium).
     this.notionSchemaCache = new NotionSchemaCache();
 
+    const syncState = new SyncStateStore(this.app.vault.adapter, `${this.manifest.dir}/sync-state.json`);
+    await syncState.load();
+
     const shared: SharedServices = {
       rateLimiters: defaultRateLimiters,
       fieldCache: this.fieldCache,
@@ -63,6 +66,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       supabaseMetadataCache: this.supabaseMetadataCache,
       notionSchemaCache: this.notionSchemaCache,
       frontmatterParser: new FrontmatterParser(this.app),
+      syncState,
       statusBarFactory: () => this.addStatusBarItem(),
       getDebugMode: () => this.settings.debugMode,
     };

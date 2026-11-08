@@ -184,6 +184,14 @@ export function createMockApp() {
       }),
       adapter: {
         exists: vi.fn(async (path: string) => files.has(path) || folders.has(path)),
+        read: vi.fn(async (path: string) => {
+          const content = files.get(path);
+          if (content === undefined) throw new Error(`ENOENT: ${path}`);
+          return content;
+        }),
+        write: vi.fn(async (path: string, content: string) => {
+          files.set(path, content);
+        }),
       },
       on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
         const handlers = eventHandlers.get(event) || [];

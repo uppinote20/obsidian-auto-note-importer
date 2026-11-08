@@ -6,6 +6,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { App } from 'obsidian';
 import { createMockApp } from 'obsidian';
+import type { DataAdapter } from 'obsidian';
+import { SyncStateStore } from '../../src/core/sync-state-store';
 import type { ConfigEntry, Credential, SharedServices } from '../../src/types';
 import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
 import { ConfigInstance } from '../../src/core/config-instance';
@@ -50,6 +52,7 @@ function createSharedServices(overrides: Partial<SharedServices> = {}): SharedSe
     rateLimiters: new Map(),
     fieldCache: new FieldCache(),
     frontmatterParser: new FrontmatterParser({} as App),
+    syncState: new SyncStateStore(createMockApp().vault.adapter as unknown as DataAdapter, 'sync-state.json'),
     statusBarFactory: vi.fn(() => {
       const el = document.createElement('div');
       el.textContent = '';

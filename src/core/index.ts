@@ -9,5 +9,8 @@ export type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
 export { ConfigInstance } from './config-instance';
 export { ConfigManager } from './config-manager';
 
+export { SyncStateStore } from './sync-state-store';
+export type { ConfigSyncStateHandle } from './sync-state-store';
+
 export { threeWayMerge } from './three-way-merge';
 export type { FieldVerdict } from './three-way-merge';

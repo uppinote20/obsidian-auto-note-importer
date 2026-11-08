@@ -6,6 +6,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { App } from 'obsidian';
 import { createMockApp } from 'obsidian';
+import type { DataAdapter } from 'obsidian';
+import { SyncStateStore } from '../../src/core/sync-state-store';
 import type { ConfigEntry, Credential, SharedServices } from '../../src/types';
 import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
 import { ConfigManager } from '../../src/core/config-manager';
@@ -40,6 +42,7 @@ function createSharedServices(): SharedServices {
     rateLimiters: new Map(),
     fieldCache: new FieldCache(),
     frontmatterParser: new FrontmatterParser({} as App),
+    syncState: new SyncStateStore(createMockApp().vault.adapter as unknown as DataAdapter, 'sync-state.json'),
     statusBarFactory: vi.fn(() => document.createElement('div')),
     getDebugMode: vi.fn(() => false),
   };
@@ -123,6 +126,13 @@ describe('ConfigManager', () => {
 
       expect(instance.destroy).toHaveBeenCalledTimes(1);
       expect(manager.getInstance('cfg-1')).toBeUndefined();
+    });
+
+    it('should drop persisted sync state for the config', () => {
+      const spy = vi.spyOn(shared.syncState, 'removeConfig');
+      manager.addConfig(createConfig({ id: 'cfg-1' }), createCredential());
+      manager.removeConfig('cfg-1');
+      expect(spy).toHaveBeenCalledWith('cfg-1');
     });
 
     it('should do nothing for non-existent config', () => {
