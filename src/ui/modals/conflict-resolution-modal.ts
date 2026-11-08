@@ -64,6 +64,26 @@ export function buildApplyList(
   return byConfig;
 }
 
+/** Choices a row offers: "Use Obsidian" needs a writable field and bidirectional sync. */
+export function offeredChoices(c: PendingConflict, bidirectional: boolean): ConflictChoice[] {
+  if (!c.writable) return ['later', 'remote', 'keep-local'];
+  return bidirectional ? ['later', 'obsidian', 'remote'] : ['later', 'remote'];
+}
+
+/**
+ * "Set all to": sets `choice` on every row that offers it; rows that don't
+ * (e.g. Obsidian on a non-writable field) keep their own choice.
+ */
+export function applySetAll(
+  rows: Array<{ key: string; offered: ConflictChoice[] }>,
+  choice: ConflictChoice,
+  choices: Map<string, ConflictChoice>,
+): void {
+  for (const { key, offered } of rows) {
+    if (offered.includes(choice)) choices.set(key, choice);
+  }
+}
+
 /** Plain-text rendering of a field value. */
 function formatValue(value: unknown): string {
   if (value === undefined || value === null || value === '') return '(empty)';
@@ -82,6 +102,8 @@ export class ConflictResolutionModal extends Modal {
   private choices = new Map<ConflictKey, ConflictChoice>();
   /** Rows of the current render; Apply sends these, never fresh store entries. */
   private rendered = new Map<ConflictKey, RenderedConflict>();
+  /** Choice dropdown per rendered row (for "Set all to"). */
+  private selects = new Map<ConflictKey, HTMLSelectElement>();
   private errors = new Map<ConflictKey, string>();
   private applying = false;
 
@@ -127,6 +149,7 @@ export class ConflictResolutionModal extends Modal {
     contentEl.empty();
     contentEl.addClass('ani-conflict-modal');
     this.rendered.clear();
+    this.selects.clear();
 
     const groups = this.visibleGroups();
     if (groups.length === 0) {
@@ -143,6 +166,7 @@ export class ConflictResolutionModal extends Modal {
     for (const group of groups) {
       const groupEl = contentEl.createDiv({ cls: 'ani-conflict-group' });
       groupEl.createEl('h3', { cls: 'ani-conflict-config', text: `${group.configName} (${group.providerLabel})` });
+      this.renderSetAll(groupEl, group);
 
       const byNote = new Map<string, PendingConflict[]>();
       for (const c of group.conflicts) {
@@ -182,19 +206,16 @@ export class ConflictResolutionModal extends Modal {
     addValue('Previous sync', c.snapshot ? c.snapshot.local : undefined);
 
     const select = row.createEl('select', { cls: 'dropdown ani-conflict-choice' });
-    const addOption = (value: ConflictChoice, text: string): void => {
-      select.createEl('option', { value, text });
+    const offered = offeredChoices(c, group.bidirectional);
+    const optionText: Record<ConflictChoice, string> = {
+      later: 'Later',
+      obsidian: 'Use Obsidian',
+      remote: c.writable ? `Use ${group.providerLabel}` : `Restore ${group.providerLabel} value`,
+      'keep-local': 'Keep local (not synced)',
     };
-    addOption('later', 'Later');
-    if (c.writable) {
-      if (group.bidirectional) addOption('obsidian', 'Use Obsidian');
-      addOption('remote', `Use ${group.providerLabel}`);
-    } else {
-      addOption('remote', `Restore ${group.providerLabel} value`);
-      addOption('keep-local', 'Keep local (not synced)');
-    }
+    for (const value of offered) select.createEl('option', { value, text: optionText[value] });
+    this.selects.set(key, select);
     // Keep a choice made before a re-render if this row still offers it.
-    const offered = Array.from(select.options).map(o => o.value);
     const previous = this.choices.get(key);
     const initial: ConflictChoice = previous && offered.includes(previous) ? previous : 'later';
     select.value = initial;
@@ -205,6 +226,27 @@ export class ConflictResolutionModal extends Modal {
 
     const error = this.errors.get(key);
     if (error) row.createDiv({ cls: 'ani-conflict-error', text: error });
+  }
+
+  /** "Set all to: Obsidian / {provider} / Later" for one config group. */
+  private renderSetAll(parent: HTMLElement, group: ConflictGroup): void {
+    const rows = group.conflicts.map(c => ({ key: keyOf(group.configId, c), offered: offeredChoices(c, group.bidirectional) }));
+    const bar = parent.createDiv({ cls: 'ani-conflict-set-all' });
+    bar.createSpan({ cls: 'ani-conflict-set-all-label', text: 'Set all to:' });
+    const addButton = (choice: ConflictChoice, text: string): void => {
+      const button = bar.createEl('button', { text });
+      button.addEventListener('click', () => {
+        applySetAll(rows, choice, this.choices);
+        for (const { key } of rows) {
+          const select = this.selects.get(key);
+          const value = this.choices.get(key);
+          if (select && value) select.value = value;
+        }
+      });
+    };
+    if (rows.some(r => r.offered.includes('obsidian'))) addButton('obsidian', 'Obsidian');
+    addButton('remote', group.providerLabel);
+    addButton('later', 'Later');
   }
 
   private renderButtons(canApply: boolean): void {

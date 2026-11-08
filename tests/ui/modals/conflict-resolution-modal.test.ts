@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildApplyList } from '../../../src/ui/modals/conflict-resolution-modal';
+import { applySetAll, buildApplyList, offeredChoices } from '../../../src/ui/modals/conflict-resolution-modal';
 import type { RenderedConflict } from '../../../src/ui/modals/conflict-resolution-modal';
 import type { ConflictChoice } from '../../../src/core/conflict-applier';
 import type { PendingConflict } from '../../../src/types';
@@ -44,5 +44,36 @@ describe('buildApplyList', () => {
   it('skips rendered rows no longer pending (a sync settled them; re-queueing them would resurrect them)', () => {
     const rendered = new Map<string, RenderedConflict>([['a', { configId: 'cfg-1', conflict: conflict() }]]);
     expect(buildApplyList(rendered, new Map([['a', 'obsidian']]), new Set()).size).toBe(0);
+  });
+});
+
+describe('offeredChoices', () => {
+  it('writable: Obsidian only with bidirectional sync', () => {
+    expect(offeredChoices(conflict(), true)).toEqual(['later', 'obsidian', 'remote']);
+    expect(offeredChoices(conflict(), false)).toEqual(['later', 'remote']);
+  });
+  it('non-writable: restore remote or keep local', () => {
+    expect(offeredChoices(conflict({ writable: false }), true)).toEqual(['later', 'remote', 'keep-local']);
+  });
+});
+
+describe('applySetAll', () => {
+  const rows = [
+    { key: 'w1', offered: offeredChoices(conflict(), true) },
+    { key: 'n1', offered: offeredChoices(conflict({ writable: false }), true) },
+  ];
+
+  it('sets every row that offers the choice; others keep their own', () => {
+    const choices = new Map<string, ConflictChoice>([['w1', 'later'], ['n1', 'keep-local']]);
+    applySetAll(rows, 'obsidian', choices);
+    expect(choices.get('w1')).toBe('obsidian');
+    expect(choices.get('n1')).toBe('keep-local');
+  });
+
+  it.each<ConflictChoice>(['remote', 'later'])('%s applies to every row', (choice) => {
+    const choices = new Map<string, ConflictChoice>([['w1', 'obsidian'], ['n1', 'keep-local']]);
+    applySetAll(rows, choice, choices);
+    expect(choices.get('w1')).toBe(choice);
+    expect(choices.get('n1')).toBe(choice);
   });
 });

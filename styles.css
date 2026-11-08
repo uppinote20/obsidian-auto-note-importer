@@ -325,6 +325,19 @@
   margin: 12px 0 8px;
 }
 
+.ani-conflict-set-all {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-2);
+}
+
+.ani-conflict-set-all-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
 .ani-conflict-note {
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
