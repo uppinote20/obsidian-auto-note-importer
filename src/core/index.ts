@@ -1,7 +1,7 @@
 export { SyncQueue } from './sync-queue';
 export type { SyncProcessor } from './sync-queue';
 
-export { ConflictResolver, planPush, planPull } from './conflict-resolver';
+export { planPush, planPull } from './conflict-resolver';
 export type { PushPlan, PullPlan } from './conflict-resolver';
 
 export { SyncOrchestrator } from './sync-orchestrator';

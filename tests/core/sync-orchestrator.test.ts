@@ -6,16 +6,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SyncOrchestrator } from '../../src/core/sync-orchestrator';
 import type { StatusBarHandle, StatusBarController } from '../../src/core/sync-orchestrator';
-import type { LegacySettings } from '../../src/types';
+import type { LegacySettings, FieldTypeMapper, RemoteFieldInfo, BatchUpdate } from '../../src/types';
 import { DEFAULT_LEGACY_SETTINGS } from '../../src/types';
 // Import from 'obsidian' (aliased to mock) to ensure same module identity as source code
-import { createMockApp, createMockTFile, createMockTFolder } from 'obsidian';
+import { createMockApp, createMockTFile, createMockTFolder, Notice } from 'obsidian';
 import { createMockDatabaseProvider } from '../__mocks__/database-client.mock';
 import { FieldCache } from '../../src/services/field-cache';
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
 import { FileWatcher } from '../../src/file-operations/file-watcher';
-import { ConflictResolver } from '../../src/core/conflict-resolver';
-import type { App } from 'obsidian';
+import { SyncStateStore } from '../../src/core/sync-state-store';
+import type { ConfigSyncStateHandle } from '../../src/core/sync-state-store';
+import type { App, DataAdapter } from 'obsidian';
 
 function createSettings(overrides: Partial<LegacySettings> = {}): LegacySettings {
   return {
@@ -46,7 +47,8 @@ describe('SyncOrchestrator', () => {
   let fieldCache: FieldCache;
   let frontmatterParser: FrontmatterParser;
   let fileWatcher: FileWatcher;
-  let conflictResolver: ConflictResolver;
+  let syncStore: SyncStateStore;
+  let syncState: ConfigSyncStateHandle;
   let statusBar: ReturnType<typeof createMockStatusBar>;
   let orchestrator: SyncOrchestrator;
   let settings: LegacySettings;
@@ -60,7 +62,8 @@ describe('SyncOrchestrator', () => {
     fieldCache = new FieldCache();
     frontmatterParser = new FrontmatterParser(mockApp as unknown as App);
     fileWatcher = new FileWatcher(mockApp as unknown as App, settings, vi.fn());
-    conflictResolver = new ConflictResolver(settings, mockProvider as never);
+    syncStore = new SyncStateStore(mockApp.vault.adapter as unknown as DataAdapter, 'sync-state.json');
+    syncState = syncStore.forConfig('cfg-1');
     statusBar = createMockStatusBar();
 
     orchestrator = new SyncOrchestrator(
@@ -70,7 +73,7 @@ describe('SyncOrchestrator', () => {
       fieldCache,
       frontmatterParser,
       fileWatcher,
-      conflictResolver,
+      syncState,
       statusBar
     );
   });
@@ -403,130 +406,330 @@ describe('SyncOrchestrator', () => {
     });
   });
 
-  describe('processSyncRequest — push: field metadata (#124)', () => {
-    function setupSingleFilePush() {
-      const file = createMockTFile('Sync/note.md');
-      const folder = createMockTFolder('Sync', [file]);
-      mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => {
-        if (path === 'Sync') return folder;
-        return file;
-      });
-      mockApp.vault.adapter.exists.mockResolvedValue(true);
-      vi.spyOn(conflictResolver, 'shouldSkipConflictDetection').mockReturnValue(true);
-      mockProvider.batchUpdate.mockResolvedValue([{ success: true, recordId: 'rec1', updatedFields: {} }]);
-      return file;
-    }
+  // Mapper used by push tests that pass field metadata: every type is
+  // pushable except `formula` (read-only).
+  const pushableMapper: FieldTypeMapper = {
+    mapToStandardType: () => 'unknown',
+    isReadOnly: (type: string) => type === 'formula',
+    isPushable: (type: string) => type !== 'formula',
+    isFilenameSafe: () => false,
+    isSubfolderSafe: () => false,
+    getFilenameSafeTypes: () => [],
+    getSubfolderSafeTypes: () => [],
+    getReadOnlyTypes: () => ['formula'],
+  };
 
-    it('calls provider.fetchFieldMetadata and passes it through to extractSyncableFields, excluding non-pushable fields from batchUpdate', async () => {
-      setupSingleFilePush();
-      const metadata = [
+  function rebuildOrchestrator(provider: typeof mockProvider): void {
+    mockProvider = provider;
+    orchestrator = new SyncOrchestrator(
+      mockApp as unknown as App,
+      settings,
+      mockProvider as never,
+      fieldCache,
+      frontmatterParser,
+      fileWatcher,
+      syncState,
+      statusBar,
+    );
+  }
+
+  function setMode(mode: LegacySettings['conflictResolution']): void {
+    settings = { ...settings, conflictResolution: mode };
+    orchestrator.updateSettings(settings);
+  }
+
+  /**
+   * One note `Sync/note.md` (record `rec1`) with the given frontmatter, and a
+   * remote record with the given fields (`null` = record deleted remotely).
+   * batchUpdate echoes success for every update unless overridden.
+   */
+  function setupPushFile(
+    frontmatter: Record<string, unknown>,
+    remoteFields: Record<string, unknown> | null,
+  ) {
+    const file = createMockTFile('Sync/note.md');
+    const folder = createMockTFolder('Sync', [file]);
+    mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => {
+      if (path === 'Sync') return folder;
+      return file;
+    });
+    mockApp.vault.adapter.exists.mockResolvedValue(true);
+    (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
+      getFileCache: vi.fn().mockReturnValue({ frontmatter: { primaryField: 'rec1', ...frontmatter } }),
+    };
+    mockProvider.fetchRecord.mockResolvedValue(
+      remoteFields ? { id: 'rec1', primaryField: 'rec1', fields: remoteFields } : null,
+    );
+    mockProvider.batchUpdate.mockImplementation(async (batch: BatchUpdate[]) =>
+      batch.map(u => ({ success: true, recordId: u.recordId, updatedFields: u.fields })),
+    );
+    return file;
+  }
+
+  function sentFields(): Array<Record<string, unknown>> {
+    return mockProvider.batchUpdate.mock.calls.flatMap(
+      ([batch]) => (batch as BatchUpdate[]).map(u => u.fields),
+    );
+  }
+
+  function noticeTexts(): string[] {
+    return vi.mocked(Notice).mock.calls.map(c => String(c[0]));
+  }
+
+  describe('processSyncRequest — push: field metadata (#124)', () => {
+    it('fetches field metadata and never sends a non-pushable field', async () => {
+      rebuildOrchestrator(createMockDatabaseProvider({ fieldTypeMapper: pushableMapper }));
+      setMode('obsidian-wins');
+      setupPushFile({ Title: 'value', Formula: 'local' }, { Title: 'old', Formula: 'remote' });
+      mockProvider.fetchFieldMetadata.mockResolvedValue([
         { name: 'Title', type: 'singleLineText' },
         { name: 'Formula', type: 'formula' },
-      ];
-      mockProvider.fetchFieldMetadata.mockResolvedValue(metadata);
-
-      vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
-      const extractSpy = vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Title: 'value' });
+      ] satisfies RemoteFieldInfo[]);
 
       await orchestrator.processSyncRequest('push', 'all');
 
       expect(mockProvider.fetchFieldMetadata).toHaveBeenCalled();
-      expect(extractSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), metadata);
-
-      const batchArg = mockProvider.batchUpdate.mock.calls[0][0];
-      expect(batchArg[0].fields).not.toHaveProperty('Formula');
+      expect(sentFields()).toEqual([{ Title: 'value' }]);
     });
 
-    it('passes undefined to extractSyncableFields when fetchFieldMetadata resolves null', async () => {
-      setupSingleFilePush();
+    it('treats every judged field as writable when fetchFieldMetadata resolves null (fail-open)', async () => {
+      // NOOP mapper says nothing is pushable — must not matter without metadata.
+      setMode('obsidian-wins');
+      setupPushFile({ Title: 'value' }, { Title: 'old' });
       mockProvider.fetchFieldMetadata.mockResolvedValue(null);
-
-      vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
-      const extractSpy = vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Title: 'value' });
 
       await orchestrator.processSyncRequest('push', 'all');
 
-      expect(extractSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined);
+      expect(sentFields()).toEqual([{ Title: 'value' }]);
     });
 
     it('treats a rejecting fetchFieldMetadata (contract violation) as null (defensive catch)', async () => {
-      setupSingleFilePush();
+      setMode('obsidian-wins');
+      setupPushFile({ Title: 'value' }, { Title: 'old' });
       mockProvider.fetchFieldMetadata.mockRejectedValue(new Error('should never happen per contract'));
 
-      vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
-      const extractSpy = vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Title: 'value' });
+      await expect(orchestrator.processSyncRequest('push', 'all')).resolves.toEqual({ newConflicts: [] });
 
-      await expect(orchestrator.processSyncRequest('push', 'all')).resolves.toBeUndefined();
-
-      expect(extractSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined);
+      expect(sentFields()).toEqual([{ Title: 'value' }]);
     });
 
-    it('does not raise a conflict for a non-pushable field that differs remotely (conflict-asymmetry regression)', async () => {
-      // Non-airtable provider whose field mapper marks 'formula' as not pushable.
-      const nonPushableMapper = {
-        mapToStandardType: () => 'unknown',
-        isReadOnly: (type: string) => type === 'formula',
-        isPushable: (type: string) => type !== 'formula',
-        isFilenameSafe: () => false,
-        isSubfolderSafe: () => false,
-        getFilenameSafeTypes: () => [],
-        getSubfolderSafeTypes: () => [],
-        getReadOnlyTypes: () => ['formula'],
-      };
-      mockProvider = createMockDatabaseProvider({
-        providerType: 'seatable',
-        fieldTypeMapper: nonPushableMapper,
-      });
-      conflictResolver = new ConflictResolver(settings, mockProvider as never);
-      orchestrator = new SyncOrchestrator(
-        mockApp as unknown as App,
-        settings,
-        mockProvider as never,
-        fieldCache,
-        frontmatterParser,
-        fileWatcher,
-        conflictResolver,
-        statusBar
+    it('does not queue a conflict for a non-pushable field that differs remotely (conflict-asymmetry regression)', async () => {
+      rebuildOrchestrator(createMockDatabaseProvider({ providerType: 'seatable', fieldTypeMapper: pushableMapper }));
+      setMode('manual');
+      setupPushFile(
+        { Title: 'same', Formula: 'local-computed-value' },
+        { Title: 'same', Formula: 'remote-computed-value' },
       );
-
-      const file = setupSingleFilePush();
-      vi.spyOn(conflictResolver, 'shouldSkipConflictDetection').mockReturnValue(false);
-
-      (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
-        getFileCache: vi.fn().mockReturnValue({
-          frontmatter: {
-            primaryField: 'rec1',
-            Title: 'same',
-            Formula: 'local-computed-value',
-          },
-        }),
-      };
-
       mockProvider.fetchFieldMetadata.mockResolvedValue([
         { name: 'Title', type: 'singleLineText' },
         { name: 'Formula', type: 'formula' },
       ]);
-      mockProvider.fetchRecord.mockResolvedValue({
-        id: 'rec1',
-        primaryField: 'rec1',
-        fields: { Title: 'same', Formula: 'remote-computed-value' },
-      });
 
-      const detectSpy = vi.spyOn(conflictResolver, 'detectConflicts');
+      const result = await orchestrator.processSyncRequest('push', 'all');
+
+      expect(sentFields().some(f => 'Formula' in f)).toBe(false);
+      expect(result.newConflicts).toEqual([]);
+      expect(syncState.pendingConflicts()).toEqual([]);
+    });
+  });
+
+  describe('processSyncRequest — push: three-way snapshot (#82)', () => {
+    it('manual: pushes a local-only edit (#82 repro)', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPushFile({ Count: 11 }, { Count: 10 });
+
+      const result = await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.batchUpdate).toHaveBeenCalledWith([{ recordId: 'rec1', fields: { Count: 11 } }]);
+      expect(result.newConflicts).toEqual([]);
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 11, remote: 11 });
+    });
+
+    it('manual: a field changed on both sides is not sent and is queued once', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPushFile({ Count: 11 }, { Count: 12 });
+
+      const result = await orchestrator.processSyncRequest('push', 'all');
+
+      expect(sentFields().some(f => 'Count' in f)).toBe(false);
+      expect(result.newConflicts).toHaveLength(1);
+      expect(result.newConflicts[0]).toMatchObject({
+        recordId: 'rec1',
+        filePath: 'Sync/note.md',
+        field: 'Count',
+        local: 11,
+        remote: 12,
+        snapshot: { local: 10, remote: 10 },
+        writable: true,
+      });
+      expect(typeof result.newConflicts[0].detectedAt).toBe('string');
+      expect(syncState.pendingConflicts()).toHaveLength(1);
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 10, remote: 10 });
+      expect(noticeTexts()).toContain('Auto Note Importer: 1 sync conflict(s) need resolving (Airtable)');
+    });
+
+    it('manual: a conflict without a snapshot carries snapshot null', async () => {
+      setMode('manual');
+      setupPushFile({ Count: 11 }, { Count: 12 });
+
+      const result = await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+      expect(result.newConflicts).toHaveLength(1);
+      expect(result.newConflicts[0].snapshot).toBeNull();
+    });
+
+    it('remote-wins: sends only the locally-changed field, never reverts a remote-only change', async () => {
+      setMode('remote-wins');
+      syncState.setFields('rec1', { A: { local: 'a', remote: 'a' }, B: { local: 'b', remote: 'b' } });
+      setupPushFile({ A: 'a2', B: 'b' }, { A: 'a', B: 'b2' });
 
       await orchestrator.processSyncRequest('push', 'all');
 
-      // 'Formula' was filtered out by extractSyncableFields (not pushable),
-      // so detectConflicts never sees it and can't flag a conflict for it.
-      const [, fieldsArg] = detectSpy.mock.calls[0];
-      expect(fieldsArg).not.toHaveProperty('Formula');
-      expect(await detectSpy.mock.results[0].value).toEqual([]);
+      expect(sentFields()).toEqual([{ A: 'a2' }]);
+      // B's remote-only change is left for pull — its baseline must not move.
+      expect(syncState.getRecord('rec1')?.fields.B).toEqual({ local: 'b', remote: 'b' });
+    });
+
+    it('obsidian-wins: sends the whole local field set and reports overwritten remote changes', async () => {
+      setMode('obsidian-wins');
+      syncState.setFields('rec1', { A: { local: 'a', remote: 'a' }, B: { local: 'b', remote: 'b' } });
+      setupPushFile({ A: 'a2', B: 'b' }, { A: 'a', B: 'b2' });
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(sentFields()).toEqual([{ A: 'a2', B: 'b' }]);
+      expect(noticeTexts().some(t => t.includes('Overwrote remote changes: B'))).toBe(true);
+      expect(syncState.getRecord('rec1')?.fields.B).toEqual({ local: 'b', remote: 'b' });
+    });
+
+    it('Review Focus 1: format asymmetry between sides (block-scalar newline) is not a change', async () => {
+      for (const mode of ['manual', 'remote-wins'] as const) {
+        mockProvider.batchUpdate.mockClear();
+        setMode(mode);
+        syncState.setFields('rec1', { Notes: { local: 'a\n', remote: 'a' } });
+        setupPushFile({ Notes: 'a\n' }, { Notes: 'a' });
+
+        const result = await orchestrator.processSyncRequest('push', 'all');
+
+        expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+        expect(result.newConflicts).toEqual([]);
+      }
+    });
+
+    it('Review Focus 2: local-only keys unknown to the remote are never sent or queued', async () => {
+      rebuildOrchestrator(createMockDatabaseProvider({ fieldTypeMapper: pushableMapper }));
+      mockProvider.fetchFieldMetadata.mockResolvedValue([{ name: 'Title', type: 'singleLineText' }]);
+      for (const mode of ['manual', 'remote-wins', 'obsidian-wins'] as const) {
+        mockProvider.batchUpdate.mockClear();
+        setMode(mode);
+        setupPushFile({ Title: 'x', created: '2024-01-01', status: 'draft' }, { Title: 'x' });
+
+        const result = await orchestrator.processSyncRequest('push', 'all');
+
+        for (const fields of sentFields()) {
+          expect(fields).not.toHaveProperty('created');
+          expect(fields).not.toHaveProperty('status');
+        }
+        expect(result.newConflicts).toEqual([]);
+        expect(syncState.pendingConflicts()).toEqual([]);
+        expect(Object.keys(syncState.getRecord('rec1')?.fields ?? {})).toEqual(['Title']);
+      }
+    });
+
+    it('without metadata, only remote keys are judged (local-only keys are never sent)', async () => {
+      setMode('obsidian-wins');
+      mockProvider.fetchFieldMetadata.mockResolvedValue(null);
+      setupPushFile({ Title: 'x', created: '2024-01-01' }, { Title: 'x' });
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(sentFields()).toEqual([{ Title: 'x' }]);
+    });
+
+    it('records a snapshot for unchanged fields without sending anything', async () => {
+      setMode('manual');
+      setupPushFile({ Title: 'same' }, { Title: 'same' });
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+      expect(syncState.getRecord('rec1')?.fields).toEqual({ Title: { local: 'same', remote: 'same' } });
+    });
+
+    it('a failed batchUpdate result leaves the snapshot unchanged', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      const before = structuredClone(syncState.getRecord('rec1'));
+      setupPushFile({ Count: 11 }, { Count: 10 });
+      mockProvider.batchUpdate.mockResolvedValue([{ success: false, recordId: 'rec1', error: 'boom' }]);
+
+      await orchestrator.processSyncRequest('push', 'all');
 
       expect(mockProvider.batchUpdate).toHaveBeenCalled();
-      const batchArg = mockProvider.batchUpdate.mock.calls[0][0];
-      expect(batchArg[0].fields).not.toHaveProperty('Formula');
+      expect(syncState.getRecord('rec1')).toEqual(before);
+    });
 
-      void file;
+    it('a rejected batchUpdate leaves the snapshot unchanged', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      const before = structuredClone(syncState.getRecord('rec1'));
+      setupPushFile({ Count: 11 }, { Count: 10 });
+      mockProvider.batchUpdate.mockRejectedValue(new Error('network'));
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(syncState.getRecord('rec1')).toEqual(before);
+    });
+
+    it('a record deleted remotely is skipped, counted as an error, snapshot untouched', async () => {
+      setMode('obsidian-wins');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      const before = structuredClone(syncState.getRecord('rec1'));
+      setupPushFile({ Count: 11 }, null);
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+      expect(syncState.getRecord('rec1')).toEqual(before);
+      expect(noticeTexts()).toContain('Auto Note Importer: 0 synced, 1 errors');
+    });
+
+    it('removes a pending conflict once the field is no longer in conflict', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      syncState.upsertConflict({
+        recordId: 'rec1', filePath: 'Sync/note.md', field: 'Count', local: 9, remote: 8,
+        snapshot: { local: 10, remote: 10 }, writable: true, detectedAt: '2026-01-01T00:00:00.000Z',
+      });
+      setupPushFile({ Count: 11 }, { Count: 10 });
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(syncState.pendingConflicts()).toEqual([]);
+    });
+
+    it('flushes the sync state once per push run', async () => {
+      setMode('manual');
+      const file1 = createMockTFile('Sync/a.md');
+      const file2 = createMockTFile('Sync/b.md');
+      const folder = createMockTFolder('Sync', [file1, file2]);
+      mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => (path === 'Sync' ? folder : null));
+      (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
+        getFileCache: vi.fn((f: { path: string }) => ({
+          frontmatter: { primaryField: f.path === 'Sync/a.md' ? 'recA' : 'recB', Title: 'same' },
+        })),
+      };
+      mockProvider.fetchRecord.mockImplementation(async (id: string) => ({ id, primaryField: id, fields: { Title: 'same' } }));
+      const flushSpy = vi.spyOn(syncStore, 'flush');
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(flushSpy).toHaveBeenCalledTimes(1);
+      expect(syncState.getRecord('recA')).toBeDefined();
+      expect(syncState.getRecord('recB')).toBeDefined();
     });
   });
 
@@ -534,26 +737,14 @@ describe('SyncOrchestrator', () => {
     it('should execute two phases when autoSyncComputedFields is true', async () => {
       settings.autoSyncComputedFields = true;
       settings.formulaSyncDelay = 0;
+      settings.conflictResolution = 'obsidian-wins';
       orchestrator.updateSettings(settings);
-
-      const file = createMockTFile('Sync/note.md');
-      const folder = createMockTFolder('Sync', [file]);
-      mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => {
-        if (path === 'Sync') return folder;
-        return file;
-      });
-      mockApp.vault.adapter.exists.mockResolvedValue(true);
-
-      vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
-      vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Name: 'test' });
-      vi.spyOn(conflictResolver, 'shouldSkipConflictDetection').mockReturnValue(true);
-
-      mockProvider.batchUpdate.mockResolvedValue([{ success: true, recordId: 'rec1', updatedFields: {} }]);
+      setupPushFile({ Name: 'test' }, { Name: 'old' });
       mockProvider.fetchNotes.mockResolvedValue([]);
 
       await orchestrator.processSyncRequest('bidirectional', 'all');
 
-      // Phase 1: push to Airtable
+      // Phase 1: push to the remote
       expect(mockProvider.batchUpdate).toHaveBeenCalled();
       // Phase 2: pull back
       expect(mockProvider.fetchNotes).toHaveBeenCalled();
@@ -561,28 +752,27 @@ describe('SyncOrchestrator', () => {
 
     it('should skip phase 2 when autoSyncComputedFields is false', async () => {
       settings.autoSyncComputedFields = false;
+      settings.conflictResolution = 'obsidian-wins';
       orchestrator.updateSettings(settings);
-
-      const file = createMockTFile('Sync/note.md');
-      const folder = createMockTFolder('Sync', [file]);
-      mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => {
-        if (path === 'Sync') return folder;
-        return file;
-      });
-
-      vi.spyOn(frontmatterParser, 'getRecordId').mockReturnValue('rec1');
-      vi.spyOn(frontmatterParser, 'extractSyncableFields').mockReturnValue({ Name: 'test' });
-      vi.spyOn(conflictResolver, 'shouldSkipConflictDetection').mockReturnValue(true);
-
-      mockProvider.batchUpdate.mockResolvedValue([{ success: true, recordId: 'rec1', updatedFields: {} }]);
+      setupPushFile({ Name: 'test' }, { Name: 'old' });
 
       await orchestrator.processSyncRequest('bidirectional', 'all');
 
       expect(mockProvider.batchUpdate).toHaveBeenCalled();
       expect(mockProvider.fetchNotes).not.toHaveBeenCalled();
     });
-  });
 
+    it('returns the push phase conflicts', async () => {
+      settings.autoSyncComputedFields = false;
+      settings.conflictResolution = 'manual';
+      orchestrator.updateSettings(settings);
+      setupPushFile({ Name: 'local' }, { Name: 'remote' });
+
+      const result = await orchestrator.processSyncRequest('bidirectional', 'all');
+
+      expect(result.newConflicts.map(c => c.field)).toEqual(['Name']);
+    });
+  });
   describe('processSyncRequest — scope: current', () => {
     it('should sync current file from airtable', async () => {
       const file = createMockTFile('Sync/note.md');
@@ -610,7 +800,7 @@ describe('SyncOrchestrator', () => {
       // Should not throw
       await expect(
         orchestrator.processSyncRequest('pull', 'all')
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ newConflicts: [] });
     });
   });
 
@@ -625,7 +815,7 @@ describe('SyncOrchestrator', () => {
         fieldCache,
         frontmatterParser,
         fileWatcher,
-        conflictResolver,
+        syncState,
         statusBar,
       );
     }

@@ -16,7 +16,6 @@ import { RateLimiter } from '../../src/services/rate-limiter';
 import { FileWatcher } from '../../src/file-operations/file-watcher';
 import { SyncOrchestrator } from '../../src/core/sync-orchestrator';
 import { SyncQueue } from '../../src/core/sync-queue';
-import { ConflictResolver } from '../../src/core/conflict-resolver';
 import { FieldCache } from '../../src/services/field-cache';
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
 
@@ -25,7 +24,6 @@ vi.mock('../../src/services/airtable-client');
 vi.mock('../../src/file-operations/file-watcher');
 vi.mock('../../src/core/sync-orchestrator');
 vi.mock('../../src/core/sync-queue');
-vi.mock('../../src/core/conflict-resolver');
 
 function createConfig(overrides: Partial<ConfigEntry> = {}): ConfigEntry {
   return {
@@ -87,10 +85,20 @@ describe('ConfigInstance', () => {
 
       expect(instance.configId).toBe('cfg-1');
       expect(AirtableClient).toHaveBeenCalledTimes(1);
-      expect(ConflictResolver).toHaveBeenCalledTimes(1);
       expect(FileWatcher).toHaveBeenCalledTimes(1);
       expect(SyncOrchestrator).toHaveBeenCalledTimes(1);
       expect(SyncQueue).toHaveBeenCalledTimes(1);
+
+      instance.destroy();
+    });
+
+    it('should hand the orchestrator a sync-state handle scoped to the config id', () => {
+      const forConfigSpy = vi.spyOn(shared.syncState, 'forConfig');
+
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig(), createCredential(), shared);
+
+      expect(forConfigSpy).toHaveBeenCalledWith('cfg-1');
+      expect(vi.mocked(SyncOrchestrator).mock.calls[0][6]).toBe(forConfigSpy.mock.results[0].value);
 
       instance.destroy();
     });
@@ -269,7 +277,6 @@ describe('ConfigInstance', () => {
       const instance = new ConfigInstance(mockApp as unknown as App, config, credential, shared);
 
       const airtableInstance = vi.mocked(AirtableClient).mock.instances[0];
-      const conflictInstance = vi.mocked(ConflictResolver).mock.instances[0];
       const orchestratorInstance = vi.mocked(SyncOrchestrator).mock.instances[0];
       const fileWatcherInstance = vi.mocked(FileWatcher).mock.instances[0];
 
@@ -279,7 +286,6 @@ describe('ConfigInstance', () => {
       instance.updateSettings(updatedConfig, updatedCredential);
 
       expect(airtableInstance.reconfigure).toHaveBeenCalled();
-      expect(conflictInstance.updateSettings).toHaveBeenCalled();
       expect(orchestratorInstance.updateSettings).toHaveBeenCalled();
       expect(fileWatcherInstance.teardown).toHaveBeenCalled();
       expect(fileWatcherInstance.updateSettings).toHaveBeenCalled();

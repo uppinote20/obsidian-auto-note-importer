@@ -4,6 +4,7 @@
  */
 
 import type { SyncScope } from './settings.types';
+import type { PendingConflict } from './sync-state.types';
 
 /**
  * Sync direction/mode.
@@ -22,6 +23,20 @@ export interface SyncRequest {
   scope: SyncScope;
   filePaths?: string[];
   timestamp: number;
+}
+
+/**
+ * Who started a sync run: a user command or background sync (watcher,
+ * interval). Behaviour keyed on it arrives with the conflict modal.
+ */
+export type SyncTrigger = 'user' | 'auto';
+
+/**
+ * Outcome of one `SyncOrchestrator.processSyncRequest` run.
+ */
+export interface SyncRunResult {
+  /** Conflicts queued for manual resolution during this run. */
+  newConflicts: PendingConflict[];
 }
 
 /**

@@ -17,11 +17,15 @@
  */
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
-import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseProvider, RemoteFieldInfo } from '../types';
+import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseProvider, RemoteFieldInfo, SyncRunResult, SyncTrigger, PendingConflict, FieldSnapshot } from '../types';
 import { CREDENTIAL_TYPE_LABELS } from '../types';
-import { DEBUG_DELAY_MULTIPLIER } from '../constants';
+import { DEBUG_DELAY_MULTIPLIER, isSystemField } from '../constants';
 import { FieldCache } from '../services';
-import { ConflictResolver } from './conflict-resolver';
+import { planPush } from './conflict-resolver';
+import type { PushPlan } from './conflict-resolver';
+import { threeWayMerge } from './three-way-merge';
+import type { FieldVerdict } from './three-way-merge';
+import type { ConfigSyncStateHandle } from './sync-state-store';
 import { FrontmatterParser, FileWatcher } from '../file-operations';
 import { parseTemplate, buildMarkdownContent, generateBasesContent, resolveBasesFilePath, collectFieldNames } from '../builders';
 import { sanitizeFileName, sanitizeSubfolderValue, validateAndSanitizeFilename, assertNever } from '../utils';
@@ -35,6 +39,17 @@ export interface StatusBarController {
   createItem(): StatusBarHandle;
 }
 
+/** One note judged for push: everything needed to record the outcome. */
+interface JudgedPush {
+  recordId: string;
+  filePath: string;
+  local: Record<string, unknown>;
+  remote: Record<string, unknown>;
+  snapshot: Record<string, FieldSnapshot> | undefined;
+  verdicts: Record<string, FieldVerdict>;
+  plan: PushPlan;
+}
+
 export class SyncOrchestrator {
   private app: App;
   private settings: LegacySettings;
@@ -42,7 +57,7 @@ export class SyncOrchestrator {
   private fieldCache: FieldCache;
   private frontmatterParser: FrontmatterParser;
   private fileWatcher: FileWatcher;
-  private conflictResolver: ConflictResolver;
+  private syncState: ConfigSyncStateHandle;
   private statusBar: StatusBarController;
 
   constructor(
@@ -52,7 +67,7 @@ export class SyncOrchestrator {
     fieldCache: FieldCache,
     frontmatterParser: FrontmatterParser,
     fileWatcher: FileWatcher,
-    conflictResolver: ConflictResolver,
+    syncState: ConfigSyncStateHandle,
     statusBar: StatusBarController
   ) {
     this.app = app;
@@ -61,7 +76,7 @@ export class SyncOrchestrator {
     this.fieldCache = fieldCache;
     this.frontmatterParser = frontmatterParser;
     this.fileWatcher = fileWatcher;
-    this.conflictResolver = conflictResolver;
+    this.syncState = syncState;
     this.statusBar = statusBar;
   }
 
@@ -74,9 +89,19 @@ export class SyncOrchestrator {
     return CREDENTIAL_TYPE_LABELS[this.provider.providerType];
   }
 
-  async processSyncRequest(mode: SyncMode, scope: SyncScope, filePaths?: string[]): Promise<void> {
+  /**
+   * Runs one sync. `trigger` is accepted for the conflict-modal flow and not
+   * acted on yet. Pull phases report no conflicts until pull judgement lands.
+   */
+  async processSyncRequest(
+    mode: SyncMode,
+    scope: SyncScope,
+    filePaths?: string[],
+    trigger?: SyncTrigger,
+  ): Promise<SyncRunResult> {
     const statusBarItem = this.statusBar.createItem();
     const label = this.providerLabel;
+    let newConflicts: PendingConflict[] = [];
 
     try {
       switch (mode) {
@@ -98,16 +123,16 @@ export class SyncOrchestrator {
 
           if (files.length === 0) {
             new Notice(`Auto Note Importer: No files to sync for scope: ${scope}`);
-            return;
+            return { newConflicts };
           }
 
           if (mode === 'push') {
             statusBarItem.setText(`Syncing ${files.length} file(s) to ${label}...`);
-            await this.pushFiles(files);
+            newConflicts = await this.pushFiles(files);
             new Notice(`Auto Note Importer: Synced ${files.length} file(s) to ${label}`);
           } else {
             statusBarItem.setText(`Phase 1/2 - Syncing ${files.length} file(s) to ${label}...`);
-            await this.pushFiles(files);
+            newConflicts = await this.pushFiles(files);
 
             if (this.settings.autoSyncComputedFields) {
               const delay = this.settings.debugMode
@@ -137,6 +162,7 @@ export class SyncOrchestrator {
     } finally {
       statusBarItem.remove();
     }
+    return { newConflicts };
   }
 
   private async getFilesToSync(scope: SyncScope): Promise<TFile[]> {
@@ -413,7 +439,14 @@ export class SyncOrchestrator {
     return buildMarkdownContent(note);
   }
 
-  private async pushFiles(files: TFile[]): Promise<void> {
+  /**
+   * Pushes local edits, judging every field three-way against the sync
+   * snapshot (snapshot vs local frontmatter vs freshly fetched remote) and
+   * letting `planPush` decide per conflict mode what is sent. Only records
+   * whose push succeeds get their snapshot advanced. Returns the conflicts
+   * queued for manual resolution in this run.
+   */
+  private async pushFiles(files: TFile[]): Promise<PendingConflict[]> {
     // Provider-agnostic: each provider serves its own cached metadata and
     // fails open with null (#124). The defensive catch is belt-and-suspenders —
     // the contract already forbids rejection.
@@ -423,83 +456,192 @@ export class SyncOrchestrator {
     } catch {
       remoteFields = null;
     }
+    const metadata = remoteFields ? new Map(remoteFields.map(f => [f.name, f])) : null;
+    // Without metadata every judged field is writable (fail-open, handbook §4.4).
+    const writable = (field: string): boolean => {
+      if (!metadata) return true;
+      const info = metadata.get(field);
+      return info !== undefined && this.provider.fieldTypeMapper.isPushable(info.type);
+    };
 
-    const batchUpdates: BatchUpdate[] = [];
+    const label = this.providerLabel;
+    const mode = this.settings.conflictResolution;
+    const newConflicts: PendingConflict[] = [];
+    const overwrote: string[] = [];
+    let syncedCount = 0;
     let errorCount = 0;
-    const skipConflictDetection = this.conflictResolver.shouldSkipConflictDetection();
 
-    for (const file of files) {
-      const recordId = this.frontmatterParser.getRecordId(file);
-      if (!recordId) {
-        if (this.settings.debugMode) {
-          new Notice(`Auto Note Importer: Skipping ${file.name} (no primaryField)`);
-        }
-        continue;
-      }
+    try {
+      const toSend: JudgedPush[] = [];
 
-      const fields = this.frontmatterParser.extractSyncableFields(
-        file,
-        this.provider.fieldTypeMapper,
-        remoteFields ?? undefined,
-      );
-      if (!fields) continue;
-
-      if (!skipConflictDetection) {
-        try {
-          const conflicts = await this.conflictResolver.detectConflicts(recordId, fields, file.path);
-          if (conflicts.length > 0) {
-            const result = await this.conflictResolver.resolve(conflicts, fields, recordId);
-            if (!result.success) {
-              errorCount++;
-            }
-            continue;
+      for (const file of files) {
+        const recordId = this.frontmatterParser.getRecordId(file);
+        if (!recordId) {
+          if (this.settings.debugMode) {
+            new Notice(`Auto Note Importer: Skipping ${file.name} (no primaryField)`);
           }
+          continue;
+        }
+
+        const local = this.frontmatterParser.readComparableFields(file);
+        if (!local) continue;
+
+        let remote: RemoteNote | null;
+        try {
+          remote = await this.provider.fetchRecord(recordId);
         } catch (error) {
           errorCount++;
           if (this.settings.debugMode) {
             const message = error instanceof Error ? error.message : 'Unknown error';
-            new Notice(`Auto Note Importer: Conflict check failed for ${file.name}: ${message}`);
+            new Notice(`Auto Note Importer: Remote fetch failed for ${file.name}: ${message}`);
           }
           continue;
         }
-      }
-
-      batchUpdates.push({ recordId, fields });
-    }
-
-    let syncedCount = 0;
-    // Guard against a misimplemented provider reporting 0 — would otherwise infinite-loop below.
-    const batchSize = Math.max(1, this.provider.capabilities.batchUpdateMaxSize);
-
-    for (let i = 0; i < batchUpdates.length; i += batchSize) {
-      const batch = batchUpdates.slice(i, i + batchSize);
-
-      try {
-        const results = await this.provider.batchUpdate(batch);
-        const failures: string[] = [];
-        for (const result of results) {
-          if (result.success) {
-            syncedCount++;
-          } else {
-            errorCount++;
-            failures.push(result.error);
+        if (!remote) {
+          errorCount++;
+          if (this.settings.debugMode) {
+            new Notice(`Auto Note Importer: Skipping ${file.name} (record not found in ${label})`);
           }
+          continue;
         }
-        if (failures.length > 0) {
-          new Notice(`Auto Note Importer: Batch errors: ${failures.join('; ')}`);
+
+        const fieldNames = this.judgedFieldNames(local, remote.fields, metadata);
+        const snapshot = this.syncState.getRecord(recordId)?.fields;
+        const verdicts = threeWayMerge(snapshot, local, remote.fields, fieldNames);
+        const plan = planPush(mode, verdicts, local, writable);
+        const judged: JudgedPush = {
+          recordId, filePath: file.path, local, remote: remote.fields, snapshot, verdicts, plan,
+        };
+
+        if (Object.keys(plan.send).length > 0) {
+          toSend.push(judged);
+        } else {
+          // Nothing to write: the judgement itself is the successful outcome.
+          this.recordPushOutcome(judged, writable, newConflicts, overwrote);
         }
-      } catch (error) {
-        errorCount += batch.length;
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        new Notice(`Auto Note Importer: Batch update failed: ${message}`);
+      }
+
+      // Guard against a misimplemented provider reporting 0 — would otherwise infinite-loop below.
+      const batchSize = Math.max(1, this.provider.capabilities.batchUpdateMaxSize);
+
+      for (let i = 0; i < toSend.length; i += batchSize) {
+        const batch = toSend.slice(i, i + batchSize);
+        const updates: BatchUpdate[] = batch.map(j => ({ recordId: j.recordId, fields: j.plan.send }));
+
+        try {
+          const results = await this.provider.batchUpdate(updates);
+          const unmatched = [...batch];
+          const failures: string[] = [];
+          for (const result of results) {
+            const idx = unmatched.findIndex(j => j.recordId === result.recordId);
+            const judged = idx >= 0 ? unmatched.splice(idx, 1)[0] : undefined;
+            if (result.success) {
+              syncedCount++;
+              if (judged) this.recordPushOutcome(judged, writable, newConflicts, overwrote);
+            } else {
+              errorCount++;
+              failures.push(result.error);
+            }
+          }
+          if (failures.length > 0) {
+            new Notice(`Auto Note Importer: Batch errors: ${failures.join('; ')}`);
+          }
+        } catch (error) {
+          errorCount += batch.length;
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: Batch update failed: ${message}`);
+        }
+      }
+
+      if (errorCount > 0) {
+        new Notice(`Auto Note Importer: ${syncedCount} synced, ${errorCount} errors`);
+      }
+      if (overwrote.length > 0) {
+        const names = [...new Set(overwrote)].join(', ');
+        new Notice(`Auto Note Importer: Overwrote remote changes: ${names} (${label})`);
+      }
+      if (newConflicts.length > 0) {
+        new Notice(`Auto Note Importer: ${newConflicts.length} sync conflict(s) need resolving (${label})`);
+      }
+
+      this.fileWatcher.clearPending();
+    } finally {
+      await this.syncState.flush();
+    }
+
+    return newConflicts;
+  }
+
+  /**
+   * Fields judged for one record: every remote key, plus local keys the
+   * provider's field metadata knows. Without metadata only remote keys —
+   * local-only keys (e.g. `created`) are never pushed blind. System fields
+   * are never judged.
+   */
+  private judgedFieldNames(
+    local: Record<string, unknown>,
+    remote: Record<string, unknown>,
+    metadata: Map<string, RemoteFieldInfo> | null,
+  ): string[] {
+    const names = new Set(Object.keys(remote));
+    if (metadata) {
+      for (const key of Object.keys(local)) {
+        if (metadata.has(key)) names.add(key);
+      }
+    }
+    return [...names].filter(name => !isSystemField(name));
+  }
+
+  /**
+   * Records a successful push for one record: advances the snapshot for sent
+   * and in-sync (`unchanged` / `both-same`) fields, queues `manual` conflicts,
+   * and drops queue entries the run settled. Fields left for pull
+   * (`remote-only`, unsent `local-only` / `conflict`) keep their baseline.
+   */
+  private recordPushOutcome(
+    judged: JudgedPush,
+    writable: (field: string) => boolean,
+    newConflicts: PendingConflict[],
+    overwrote: string[],
+  ): void {
+    const { recordId, filePath, local, remote, snapshot, verdicts, plan } = judged;
+    const fields: Record<string, FieldSnapshot> = {};
+
+    for (const [field, sent] of Object.entries(plan.send)) {
+      fields[field] = { local: local[field], remote: sent };
+    }
+    for (const [field, verdict] of Object.entries(verdicts)) {
+      if (field in fields) continue;
+      if (verdict === 'unchanged' || verdict === 'both-same') {
+        fields[field] = { local: local[field], remote: remote[field] };
+      }
+    }
+    if (Object.keys(fields).length > 0) {
+      this.syncState.setFields(recordId, fields);
+    }
+
+    const enqueue = new Set(plan.enqueue);
+    const detectedAt = new Date().toISOString();
+    for (const [field, verdict] of Object.entries(verdicts)) {
+      if (enqueue.has(field)) {
+        const conflict: PendingConflict = {
+          recordId,
+          filePath,
+          field,
+          local: local[field],
+          remote: remote[field],
+          snapshot: snapshot?.[field] ?? null,
+          writable: writable(field),
+          detectedAt,
+        };
+        this.syncState.upsertConflict(conflict);
+        newConflicts.push(conflict);
+      } else if (verdict !== 'conflict' || field in plan.send) {
+        this.syncState.removeConflict(recordId, field);
       }
     }
 
-    if (errorCount > 0) {
-      new Notice(`Auto Note Importer: ${syncedCount} synced, ${errorCount} errors`);
-    }
-
-    this.fileWatcher.clearPending();
+    overwrote.push(...plan.overwroteRemote);
   }
 
   private async resolveTableName(): Promise<string> {

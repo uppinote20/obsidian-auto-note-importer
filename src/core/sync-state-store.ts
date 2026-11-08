@@ -25,6 +25,8 @@ export interface ConfigSyncStateHandle {
   upsertConflict(c: PendingConflict): void;
   removeConflict(recordId: string, field: string): void;
   pendingConflicts(): PendingConflict[];
+  /** Persists the whole store (delegates to `SyncStateStore.flush`). */
+  flush(): Promise<void>;
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -172,6 +174,8 @@ export class SyncStateStore {
       },
 
       pendingConflicts: () => [...(peek()?.pendingConflicts ?? [])],
+
+      flush: () => this.flush(),
     };
   }
 }

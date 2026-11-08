@@ -27,6 +27,8 @@ export type {
 export type {
   SyncMode,
   SyncRequest,
+  SyncTrigger,
+  SyncRunResult,
   NoteCreationResult,
 } from './sync.types';
 
