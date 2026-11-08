@@ -25,6 +25,9 @@ describe('threeWayMerge', () => {
     it('field absent from both is unchanged', () => {
       expect(judge(undefined, {}, {})).toBe('unchanged');
     });
+    it('field absent from local but present in remote is unchanged', () => {
+      expect(judge(undefined, {}, { F: 'x' })).toBe('unchanged');
+    });
     it('snapshot lacking the field is treated as no snapshot', () => {
       expect(judge({ G: { local: 1, remote: 1 } }, { F: 1 }, { F: 2 })).toBe('conflict');
       expect(judge({ G: { local: 1, remote: 1 } }, { F: 1 }, { F: 1 })).toBe('unchanged');

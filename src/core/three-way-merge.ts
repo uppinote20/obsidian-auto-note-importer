@@ -12,8 +12,8 @@ export type FieldVerdict = 'unchanged' | 'local-only' | 'remote-only' | 'both-sa
 /**
  * Judge each field. Local is compared to `snapshot.local` and remote to
  * `snapshot.remote` (never cross-side) so format asymmetry does not read as a
- * change. A field missing from local is never a local change. Without a
- * snapshot for the field, local and remote are compared directly.
+ * change. A field missing from local is never a local change (with or
+ * without a snapshot; templates may omit remote fields). Without a snapshot for the field, local and remote are compared directly.
  */
 export function threeWayMerge(
   snapshot: Record<string, FieldSnapshot> | undefined,
@@ -29,7 +29,8 @@ export function threeWayMerge(
     const base = snapshot?.[name];
 
     if (!base) {
-      result[name] = areValuesEqual(localValue, remoteValue) ? 'unchanged' : 'conflict';
+      const absentLocally = !(name in local);
+      result[name] = absentLocally || areValuesEqual(localValue, remoteValue) ? 'unchanged' : 'conflict';
       continue;
     }
 
