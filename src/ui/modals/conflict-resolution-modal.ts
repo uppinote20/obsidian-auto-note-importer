@@ -34,6 +34,36 @@ function keyOf(configId: string, c: PendingConflict): ConflictKey {
   return JSON.stringify([configId, c.recordId, c.field]);
 }
 
+/** A conflict as the modal rendered it (the values the user is choosing between). */
+export interface RenderedConflict {
+  configId: string;
+  conflict: PendingConflict;
+}
+
+/**
+ * Apply list per config from the rendered rows and their choices. Uses the
+ * rendered conflict objects, so the applier's stale check compares against the
+ * values the user saw — not ones a later sync re-queued while the modal was open.
+ * Rows no longer in `pendingKeys` were settled meanwhile and are skipped (the
+ * stale path would otherwise re-queue them).
+ */
+export function buildApplyList(
+  rendered: Map<string, RenderedConflict>,
+  choices: Map<string, ConflictChoice>,
+  pendingKeys: Set<string>,
+): Map<string, Array<{ conflict: PendingConflict; choice: ConflictChoice }>> {
+  const byConfig = new Map<string, Array<{ conflict: PendingConflict; choice: ConflictChoice }>>();
+  for (const [key, { configId, conflict }] of rendered) {
+    if (!pendingKeys.has(key)) continue;
+    const choice = choices.get(key) ?? 'later';
+    if (choice === 'later') continue;
+    const list = byConfig.get(configId) ?? [];
+    list.push({ conflict, choice });
+    byConfig.set(configId, list);
+  }
+  return byConfig;
+}
+
 /** Plain-text rendering of a field value. */
 function formatValue(value: unknown): string {
   if (value === undefined || value === null || value === '') return '(empty)';
@@ -50,6 +80,8 @@ export class ConflictResolutionModal extends Modal {
   /** Entries this modal shows; `null` = every pending conflict. */
   private keys: Set<ConflictKey> | null;
   private choices = new Map<ConflictKey, ConflictChoice>();
+  /** Rows of the current render; Apply sends these, never fresh store entries. */
+  private rendered = new Map<ConflictKey, RenderedConflict>();
   private errors = new Map<ConflictKey, string>();
   private applying = false;
 
@@ -94,6 +126,7 @@ export class ConflictResolutionModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass('ani-conflict-modal');
+    this.rendered.clear();
 
     const groups = this.visibleGroups();
     if (groups.length === 0) {
@@ -130,6 +163,7 @@ export class ConflictResolutionModal extends Modal {
 
   private renderField(parent: HTMLElement, group: ConflictGroup, c: PendingConflict): void {
     const key = keyOf(group.configId, c);
+    this.rendered.set(key, { configId: group.configId, conflict: c });
     const row = parent.createDiv({ cls: 'ani-conflict-field' });
 
     const header = row.createDiv({ cls: 'ani-conflict-field-header' });
@@ -188,18 +222,17 @@ export class ConflictResolutionModal extends Modal {
   private async applyChoices(button: HTMLButtonElement): Promise<void> {
     if (this.applying) return;
 
-    const byConfig = new Map<string, Array<{ conflict: PendingConflict; choice: ConflictChoice }>>();
-    for (const group of this.visibleGroups()) {
-      for (const conflict of group.conflicts) {
-        const choice = this.choices.get(keyOf(group.configId, conflict)) ?? 'later';
-        if (choice === 'later') continue;
-        const list = byConfig.get(group.configId) ?? [];
-        list.push({ conflict, choice });
-        byConfig.set(group.configId, list);
-      }
-    }
+    const pendingKeys = new Set(this.host.getGroups().flatMap(g => g.conflicts.map(c => keyOf(g.configId, c))));
+    const byConfig = buildApplyList(this.rendered, this.choices, pendingKeys);
     if (byConfig.size === 0) {
-      new Notice('Auto Note Importer: No resolution chosen. Pick a value for a field, or close to resolve later.');
+      const chosen = [...this.rendered.keys()].some(k => (this.choices.get(k) ?? 'later') !== 'later');
+      if (chosen) {
+        new Notice('Auto Note Importer: The chosen conflicts were already settled by a sync.');
+        if (this.visibleGroups().length === 0) this.close();
+        else this.render();
+      } else {
+        new Notice('Auto Note Importer: No resolution chosen. Pick a value for a field, or close to resolve later.');
+      }
       return;
     }
 

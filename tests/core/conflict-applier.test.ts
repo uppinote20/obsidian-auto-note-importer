@@ -154,6 +154,19 @@ describe('ConflictApplier', () => {
     expect(state.pendingConflicts()).toEqual([expect.objectContaining({ local: 'Local 2', stale: true })]);
   });
 
+  it.each<ConflictChoice>(['obsidian', 'remote'])('%s: the shown values are judged, even after a sync re-queued moved values', async (choice) => {
+    const shown = conflict();
+    seed(shown);
+    // An auto sync re-detects the conflict with a moved remote while the modal is open.
+    seed(conflict({ remote: 'Remote 2' }));
+    provider.fetchRecord.mockResolvedValue({ id: 'rec1', primaryField: 'rec1', fields: { Status: 'Remote 2' } });
+    const result = await applier().apply([{ conflict: shown, choice }]);
+    expect(result.applied).toBe(0);
+    expect(result.stale).toEqual([expect.objectContaining({ remote: 'Remote 2', stale: true })]);
+    expect(provider.updateRecord).not.toHaveBeenCalled();
+    expect(app.fileManager.processFrontMatter).not.toHaveBeenCalled();
+  });
+
   it('a stale entry applies once its refreshed values still hold', async () => {
     const refreshed = conflict({ remote: 'Remote 2', stale: true });
     seed(refreshed);
