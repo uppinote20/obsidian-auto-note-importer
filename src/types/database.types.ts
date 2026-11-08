@@ -52,17 +52,6 @@ export type SyncResult =
   | { success: false; recordId: string; error: string };
 
 /**
- * Information about a field conflict between Obsidian and a remote database.
- */
-export interface ConflictInfo {
-  field: string;
-  obsidianValue: unknown;
-  remoteValue: unknown;
-  recordId: string;
-  filePath: string;
-}
-
-/**
  * Batch update request structure.
  */
 export interface BatchUpdate {
