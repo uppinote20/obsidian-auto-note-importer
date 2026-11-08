@@ -417,6 +417,10 @@ describe('FrontmatterParser snapshot readers', () => {
       expect(parser.parseFieldsFromContent('---\n---\nbody\n\n---\nx: 1\n---')).toEqual({});
     });
 
+    it('does not capture a mapping-shaped body after empty frontmatter', () => {
+      expect(parser.parseFieldsFromContent('---\n---\na: 1\n\n---\nx: 1\n---')).toEqual({});
+    });
+
     it('does not accept a closing fence with trailing characters', () => {
       expect(parser.parseFieldsFromContent('---\nA: 1\n---x\n')).toEqual({});
     });

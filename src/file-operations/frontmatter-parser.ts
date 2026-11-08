@@ -117,7 +117,7 @@ export class FrontmatterParser {
   parseFieldsFromContent(content: string): Record<string, unknown> | null {
     // Closing fence must start a line (so a block scalar keeps its trailing
     // newline) and end the line; the body group is optional for `---\n---`.
-    const match = content.match(/^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/);
+    const match = content.match(/^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??---[ \t]*(?:\r?\n|$)/);
     if (!match) {
       return {};
     }
