@@ -222,13 +222,13 @@ describe('SupabaseClient.batchUpdate (upsert)', () => {
   it('POSTs to rest/v1/table with on_conflict=pk and merge-duplicates prefer', async () => {
     mockRequestUrl.mockResolvedValueOnce({
       status: 200,
-      json: [{ id: 'r1', title: 'foo' }, { id: 'r2', status: 'archived' }],
+      json: [{ id: 'r1', title: 'foo' }, { id: 'r2', title: 'bar' }],
       headers: {},
     });
     const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), defaultSpecCache());
     const result = await c.batchUpdate([
       { recordId: 'r1', fields: { title: 'foo' } },
-      { recordId: 'r2', fields: { status: 'archived' } },
+      { recordId: 'r2', fields: { title: 'bar' } },
     ]);
     const call = mockRequestUrl.mock.calls[0][0];
     expect(call.url).toContain('/rest/v1/notes?on_conflict=id');
@@ -237,12 +237,47 @@ describe('SupabaseClient.batchUpdate (upsert)', () => {
     expect(call.headers.Prefer).toContain('return=representation');
     expect(JSON.parse(call.body)).toEqual([
       { id: 'r1', title: 'foo' },
-      { id: 'r2', status: 'archived' },
+      { id: 'r2', title: 'bar' },
     ]);
     expect(result).toEqual([
       { success: true, recordId: 'r1', updatedFields: { id: 'r1', title: 'foo' } },
-      { success: true, recordId: 'r2', updatedFields: { id: 'r2', status: 'archived' } },
+      { success: true, recordId: 'r2', updatedFields: { id: 'r2', title: 'bar' } },
     ]);
+  });
+
+  it('splits updates with different field sets into one request per key set, results in input order', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 200, json: [{ id: 'r1', title: 'a' }, { id: 'r3', title: 'c' }], headers: {} })
+      .mockResolvedValueOnce({ status: 200, json: [{ id: 'r2', status: 'archived' }], headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), defaultSpecCache());
+    const result = await c.batchUpdate([
+      { recordId: 'r1', fields: { title: 'a' } },
+      { recordId: 'r2', fields: { status: 'archived' } },
+      { recordId: 'r3', fields: { title: 'c' } },
+    ]);
+    expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(mockRequestUrl.mock.calls[0][0].body)).toEqual([
+      { id: 'r1', title: 'a' }, { id: 'r3', title: 'c' },
+    ]);
+    expect(JSON.parse(mockRequestUrl.mock.calls[1][0].body)).toEqual([
+      { id: 'r2', status: 'archived' },
+    ]);
+    expect(result.map(r => r.recordId)).toEqual(['r1', 'r2', 'r3']);
+    expect(result.every(r => r.success)).toBe(true);
+  });
+
+  it('fails only the records of a group whose request fails', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 200, json: [{ id: 'r1', title: 'a' }], headers: {} })
+      .mockResolvedValueOnce({ status: 400, json: { message: 'boom' }, headers: {} });
+    const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), defaultSpecCache());
+    const result = await c.batchUpdate([
+      { recordId: 'r1', fields: { title: 'a' } },
+      { recordId: 'r2', fields: { status: 'x' } },
+    ]);
+    expect(result[0]).toMatchObject({ success: true, recordId: 'r1' });
+    expect(result[1]).toMatchObject({ success: false, recordId: 'r2' });
+    expect(result[1].error).toMatch(/Failed to batch update Supabase rows/);
   });
 
   it('attaches Content-Profile for non-public schemas', async () => {

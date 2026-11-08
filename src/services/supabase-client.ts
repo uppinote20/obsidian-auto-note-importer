@@ -381,6 +381,66 @@ export class SupabaseClient implements DatabaseProvider {
     return result;
   }
 
+  /** POST one same-key-set upsert group and map the representation back to per-record results. */
+  private async sendUpsertGroup(
+    url: string,
+    pk: string,
+    updates: BatchUpdate[],
+    body: Record<string, unknown>[],
+  ): Promise<SyncResult[]> {
+    // `return=representation` always on: the conflict-resolver and the
+    // bidirectional sync flow both rely on `SyncResult.updatedFields` to
+    // pull server-computed values (defaults, generated columns) back into
+    // the local note. A push-only optimization to `return=minimal` would
+    // require plumbing the orchestrator mode through to the provider and
+    // is tracked separately rather than here.
+    const response = await this.rateLimiter.execute(() =>
+      this.request({
+        url,
+        method: 'POST',
+        headers: {
+          ...this.buildHeaders({ write: true }),
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates,return=representation',
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+
+    if (response.status !== 200 && response.status !== 201) {
+      return buildBatchFailures(updates, `Failed to batch update Supabase rows: ${extractApiErrorDetails(response)}`);
+    }
+
+    const returned = (response.json as Record<string, unknown>[] | undefined) ?? [];
+
+    // Empty representation on a 200/201 means the upsert ran but the RLS
+    // policy denied SELECT (common for write-only audit tables, or WITH
+    // CHECK passing while USING denies). Treat as success for every
+    // requested record — we can't fabricate updatedFields, but at least
+    // the user doesn't see N false failures for N successful writes.
+    if (returned.length === 0) {
+      return updates.map<SyncResult>(u => ({ success: true, recordId: u.recordId }));
+    }
+
+    const returnedByPk = new Map<string, Record<string, unknown>>();
+    for (const row of returned) {
+      const v = row[pk];
+      if (v !== undefined && v !== null) returnedByPk.set(String(v), row);
+    }
+
+    return updates.map<SyncResult>(u => {
+      const row = returnedByPk.get(u.recordId);
+      if (row) {
+        return { success: true, recordId: u.recordId, updatedFields: row };
+      }
+      return {
+        success: false,
+        recordId: u.recordId,
+        error: 'Row not updated - RLS denial or PK missing.',
+      };
+    });
+  }
+
   async batchUpdate(updates: BatchUpdate[]): Promise<SyncResult[]> {
     if (updates.length === 0) return [];
 
@@ -458,57 +518,30 @@ export class SupabaseClient implements DatabaseProvider {
         return { ...filtered, [pk]: u.recordId };
       });
 
-      // `return=representation` always on: the conflict-resolver and the
-      // bidirectional sync flow both rely on `SyncResult.updatedFields` to
-      // pull server-computed values (defaults, generated columns) back into
-      // the local note. A push-only optimization to `return=minimal` would
-      // require plumbing the orchestrator mode through to the provider and
-      // is tracked separately rather than here.
-      const response = await this.rateLimiter.execute(() =>
-        this.request({
-          url,
-          method: 'POST',
-          headers: {
-            ...this.buildHeaders({ write: true }),
-            'Content-Type': 'application/json',
-            'Prefer': 'resolution=merge-duplicates,return=representation',
-          },
-          body: JSON.stringify(body),
-        }),
-      );
-
-      if (response.status !== 200 && response.status !== 201) {
-        return buildBatchFailures(updates, `Failed to batch update Supabase rows: ${extractApiErrorDetails(response)}`);
-      }
-
-      const returned = (response.json as Record<string, unknown>[] | undefined) ?? [];
-
-      // Empty representation on a 200/201 means the upsert ran but the RLS
-      // policy denied SELECT (common for write-only audit tables, or WITH
-      // CHECK passing while USING denies). Treat as success for every
-      // requested record — we can't fabricate updatedFields, but at least
-      // the user doesn't see N false failures for N successful writes.
-      if (returned.length === 0) {
-        return updates.map<SyncResult>(u => ({ success: true, recordId: u.recordId }));
-      }
-
-      const returnedByPk = new Map<string, Record<string, unknown>>();
-      for (const row of returned) {
-        const v = row[pk];
-        if (v !== undefined && v !== null) returnedByPk.set(String(v), row);
-      }
-
-      return updates.map<SyncResult>(u => {
-        const row = returnedByPk.get(u.recordId);
-        if (row) {
-          return { success: true, recordId: u.recordId, updatedFields: row };
-        }
-        return {
-          success: false,
-          recordId: u.recordId,
-          error: 'Row not updated - RLS denial or PK missing.',
-        };
+      // PostgREST bulk upsert requires every object in one request to share
+      // the same key set ("all object keys must match"). Push sends sparse
+      // per-record field sets, so group rows by their exact column set and
+      // send one request per group. A group's failure fails only its records.
+      const groups = new Map<string, number[]>();
+      body.forEach((row, i) => {
+        const key = Object.keys(row).sort().join('\u0000');
+        const idxs = groups.get(key);
+        if (idxs) idxs.push(i);
+        else groups.set(key, [i]);
       });
+
+      const results: SyncResult[] = new Array(updates.length);
+      for (const idxs of groups.values()) {
+        const groupUpdates = idxs.map(i => updates[i]);
+        let groupResults: SyncResult[];
+        try {
+          groupResults = await this.sendUpsertGroup(url, pk, groupUpdates, idxs.map(i => body[i]));
+        } catch (error) {
+          groupResults = buildBatchFailures(groupUpdates, error instanceof Error ? error.message : 'Unknown error occurred');
+        }
+        idxs.forEach((origIdx, j) => { results[origIdx] = groupResults[j]; });
+      }
+      return results;
     } catch (error) {
       return buildBatchFailures(updates, error instanceof Error ? error.message : 'Unknown error occurred');
     }
