@@ -47,6 +47,14 @@ function isValidStateFile(v: unknown): v is SyncStateFile {
 export class SyncStateStore {
   private state: SyncStateFile = { version: 1, configs: {} };
   private dirty = false;
+  /**
+   * Set when an existing file could not be read: the session keeps state in
+   * memory only, so an empty store never overwrites the real file (e.g. an
+   * iCloud placeholder that failed to download).
+   */
+  private writeBlocked = false;
+  /** Flushes run one after another so writes land in call order. */
+  private flushChain: Promise<void> = Promise.resolve();
 
   constructor(private adapter: DataAdapter, private path: string) {}
 
@@ -56,13 +64,20 @@ export class SyncStateStore {
 
     let raw: string;
     try {
-      if (!(await this.adapter.exists(this.path))) return;
+      if (!(await this.adapter.exists(this.path))) {
+        this.writeBlocked = false;
+        return;
+      }
       raw = await this.adapter.read(this.path);
     } catch (error) {
       console.error('Auto Note Importer: failed to read sync-state.json', error);
-      new Notice('Auto Note Importer: could not read sync-state.json. Starting with empty sync state.');
+      if (!this.writeBlocked) {
+        new Notice('Auto Note Importer: could not read sync-state.json. Sync state will not be saved until Obsidian restarts.');
+      }
+      this.writeBlocked = true;
       return;
     }
+    this.writeBlocked = false;
 
     try {
       const parsed: unknown = JSON.parse(raw);
@@ -74,12 +89,21 @@ export class SyncStateStore {
     }
   }
 
-  async flush(): Promise<void> {
-    if (!this.dirty) return;
+  /** Persists the store; calls are serialized, and a mutation made during a write is saved by the next flush. */
+  flush(): Promise<void> {
+    const run = this.flushChain.then(() => this.write());
+    this.flushChain = run;
+    return run;
+  }
+
+  private async write(): Promise<void> {
+    if (!this.dirty || this.writeBlocked) return;
+    // Cleared before the await so changes made during the write mark the store dirty again.
+    this.dirty = false;
     try {
       await this.adapter.write(this.path, JSON.stringify(this.state));
-      this.dirty = false;
     } catch (error) {
+      this.dirty = true;
       console.error('Auto Note Importer: failed to write sync-state.json', error);
       new Notice('Auto Note Importer: could not save sync-state.json. Will retry on next sync.');
     }

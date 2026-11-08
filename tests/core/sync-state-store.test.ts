@@ -188,4 +188,58 @@ describe('SyncStateStore', () => {
     expect(adapter.write).toHaveBeenCalledTimes(2);
     expect(app._files.has(PATH)).toBe(true);
   });
+  it('persists a mutation made while a write is in flight on the next flush', async () => {
+    const h = store.forConfig('a');
+    h.setFields('r1', { f: { local: 1, remote: 1 } });
+    const write = adapter.write as unknown as ReturnType<typeof vi.fn>;
+    let release!: () => void;
+    write.mockImplementationOnce((path: string, data: string) => new Promise<void>(resolve => {
+      release = () => { app._files.set(path, data); resolve(); };
+    }));
+    const first = store.flush();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    h.setFields('r1', { g: { local: 2, remote: 2 } });
+    release();
+    await first;
+    await store.flush();
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(app._files.get(PATH)!).configs.a.records.r1.fields.g).toEqual({ local: 2, remote: 2 });
+  });
+
+  it('serializes overlapping flushes so the later state lands last', async () => {
+    const h = store.forConfig('a');
+    const write = adapter.write as unknown as ReturnType<typeof vi.fn>;
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    write.mockImplementationOnce((path: string, data: string) => new Promise<void>(resolve => {
+      releaseFirst = () => { order.push('first'); app._files.set(path, data); resolve(); };
+    }));
+    write.mockImplementationOnce(async (path: string, data: string) => {
+      order.push('second');
+      app._files.set(path, data);
+    });
+    h.setFields('r1', { f: { local: 1, remote: 1 } });
+    const first = store.flush();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    h.setFields('r1', { f: { local: 2, remote: 2 } });
+    const second = store.flush();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['first', 'second']);
+    expect(JSON.parse(app._files.get(PATH)!).configs.a.records.r1.fields.f).toEqual({ local: 2, remote: 2 });
+  });
+
+  it('never writes in a session whose existing file could not be read', async () => {
+    app._files.set(PATH, '{"version":1,"configs":{"a":{"records":{"r1":{"syncedAt":"x","fields":{}}},"pendingConflicts":[]}}}');
+    (adapter.read as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('EAGAIN'));
+    await store.load();
+    expect(Notice).toHaveBeenCalledTimes(1);
+    expect(String((Notice as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0])).toMatch(/^Auto Note Importer: /);
+    store.forConfig('a').setFields('r2', { f: { local: 1, remote: 1 } });
+    await store.flush();
+    await store.flush();
+    expect(adapter.write).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledTimes(1);
+  });
 });
