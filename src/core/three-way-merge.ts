@@ -13,7 +13,8 @@ export type FieldVerdict = 'unchanged' | 'local-only' | 'remote-only' | 'both-sa
  * Judge each field. Local is compared to `snapshot.local` and remote to
  * `snapshot.remote` (never cross-side) so format asymmetry does not read as a
  * change. A field missing from local is never a local change (with or
- * without a snapshot; templates may omit remote fields). Without a snapshot for the field, local and remote are compared directly.
+ * without a snapshot; templates may omit remote fields). Without a snapshot for the field, local and remote are compared directly;
+ * a differing field absent from remote (empty cell) is a local fill (`local-only`).
  */
 export function threeWayMerge(
   snapshot: Record<string, FieldSnapshot> | undefined,
@@ -30,7 +31,13 @@ export function threeWayMerge(
 
     if (!base) {
       const absentLocally = !(name in local);
-      result[name] = absentLocally || areValuesEqual(localValue, remoteValue) ? 'unchanged' : 'conflict';
+      if (absentLocally || areValuesEqual(localValue, remoteValue)) {
+        result[name] = 'unchanged';
+      } else {
+        // Remotes omit empty cells (Airtable), so a key missing remotely but
+        // filled locally is a local fill, not a disagreement.
+        result[name] = name in remote ? 'conflict' : 'local-only';
+      }
       continue;
     }
 

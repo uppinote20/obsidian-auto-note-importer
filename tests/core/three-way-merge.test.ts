@@ -28,6 +28,12 @@ describe('threeWayMerge', () => {
     it('field absent from local but present in remote is unchanged', () => {
       expect(judge(undefined, {}, { F: 'x' })).toBe('unchanged');
     });
+    it('field present locally but absent remotely is local-only (filling an empty remote cell)', () => {
+      expect(judge(undefined, { F: 'Done' }, {})).toBe('local-only');
+    });
+    it('empty local value with the field absent remotely is unchanged', () => {
+      expect(judge(undefined, { F: null }, {})).toBe('unchanged');
+    });
     it('snapshot lacking the field is treated as no snapshot', () => {
       expect(judge({ G: { local: 1, remote: 1 } }, { F: 1 }, { F: 2 })).toBe('conflict');
       expect(judge({ G: { local: 1, remote: 1 } }, { F: 1 }, { F: 1 })).toBe('unchanged');

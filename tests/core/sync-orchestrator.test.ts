@@ -648,6 +648,23 @@ describe('SyncOrchestrator', () => {
       expect(syncState.pendingConflicts()[0].local).toBe(13);
     });
 
+    it('remote-wins: fills a field the remote omits (empty cell) without a conflict', async () => {
+      rebuildOrchestrator(createMockDatabaseProvider({ fieldTypeMapper: pushableMapper }));
+      setMode('remote-wins');
+      mockProvider.fetchFieldMetadata.mockResolvedValue([
+        { name: 'Title', type: 'singleLineText' },
+        { name: 'Status', type: 'singleSelect' },
+      ]);
+      setupPushFile({ Title: 't', Status: 'Done' }, { Title: 't' });
+
+      const result = await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.batchUpdate).toHaveBeenCalledWith([{ recordId: 'rec1', fields: { Status: 'Done' } }]);
+      expect(result.newConflicts).toEqual([]);
+      expect(syncState.pendingConflicts()).toEqual([]);
+      expect(noticeTexts().some(t => t.includes('Overwrote remote changes'))).toBe(false);
+    });
+
     it('Review Focus 1: format asymmetry between sides (block-scalar newline) is not a change', async () => {
       for (const mode of ['manual', 'remote-wins'] as const) {
         mockProvider.batchUpdate.mockClear();
