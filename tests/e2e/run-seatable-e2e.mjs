@@ -11,6 +11,9 @@
  * @covers src/core/sync-orchestrator.ts
  * @covers src/core/config-instance.ts
  * @covers src/core/config-manager.ts
+ * @covers src/core/three-way-merge.ts
+ * @covers src/core/sync-state-store.ts
+ * @covers src/core/conflict-resolver.ts
  *
  * Prerequisites:
  *   1. Obsidian running with --remote-debugging-port=9222
