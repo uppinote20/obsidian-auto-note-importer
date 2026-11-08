@@ -26,7 +26,10 @@ export interface PullPlan {
 
 /**
  * Maps verdicts to a push plan for the given conflict mode.
- * Non-writable fields are never sent.
+ * Non-writable fields are never sent. A cleared (`null` / `undefined`) local
+ * value is sent only when the field changed locally (`local-only` /
+ * `conflict`), so obsidian-wins' whole-set send never wipes a remote value
+ * the user did not touch.
  */
 export function planPush(
   mode: ConflictResolutionMode,
@@ -37,17 +40,17 @@ export function planPush(
   const plan: PushPlan = { send: {}, overwroteRemote: [], enqueue: [] };
 
   for (const [field, verdict] of Object.entries(verdicts)) {
-    if (!writable(field)) continue;
-    const hasLocal = field in local && local[field] !== undefined;
+    if (!writable(field) || !(field in local)) continue;
+    const changedLocally = verdict === 'local-only' || verdict === 'conflict';
+    if (local[field] == null && !changedLocally) continue;
 
     if (mode === 'obsidian-wins') {
-      if (!hasLocal) continue;
       plan.send[field] = local[field];
       if (verdict === 'conflict' || verdict === 'remote-only') {
         plan.overwroteRemote.push(field);
       }
     } else if (verdict === 'local-only') {
-      if (hasLocal) plan.send[field] = local[field];
+      plan.send[field] = local[field];
     } else if (verdict === 'conflict' && mode === 'manual') {
       plan.enqueue.push(field);
     }

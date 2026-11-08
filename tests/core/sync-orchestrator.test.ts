@@ -605,6 +605,22 @@ describe('SyncOrchestrator', () => {
       expect(syncState.getRecord('rec1')?.fields.B).toEqual({ local: 'b', remote: 'b' });
     });
 
+    it('obsidian-wins: an unchanged null local value does not clear a remote value', async () => {
+      setMode('obsidian-wins');
+      syncState.setFields('rec1', {
+        Status: { local: null, remote: null },
+        Title: { local: 't', remote: 't' },
+      });
+      setupPushFile({ Status: null, Title: 't2' }, { Status: 'Done', Title: 't' });
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(sentFields()).toEqual([{ Title: 't2' }]);
+      expect(noticeTexts().some(t => t.includes('Overwrote remote changes') && t.includes('Status'))).toBe(false);
+      // Status stays remote-only for pull; its baseline must not move.
+      expect(syncState.getRecord('rec1')?.fields.Status).toEqual({ local: null, remote: null });
+    });
+
     it('re-detecting the same conflict is not reported as new, but stays queued', async () => {
       setMode('manual');
       syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });

@@ -46,6 +46,25 @@ describe('planPush / planPull', () => {
       expect(planPush('remote-wins', verdicts, local, notRo).enqueue).toEqual([]);
     });
 
+    it.each(['remote-only', 'unchanged', 'both-same'] as const)(
+      'obsidian-wins does not send a null local value judged %s (never clears remote blind)',
+      (verdict) => {
+        const plan = planPush('obsidian-wins', { Status: verdict, Title: verdict }, { Status: null, Title: 't' }, all);
+        expect(plan.send).toEqual({ Title: 't' });
+        expect(plan.overwroteRemote).not.toContain('Status');
+      },
+    );
+
+    it.each(['local-only', 'conflict'] as const)('obsidian-wins sends a null local value judged %s', (verdict) => {
+      const plan = planPush('obsidian-wins', { Status: verdict }, { Status: null }, all);
+      expect(plan.send).toEqual({ Status: null });
+    });
+
+    it.each(['remote-wins', 'manual'] as const)('%s sends a locally cleared (null) local-only field', (mode) => {
+      const plan = planPush(mode, { Status: 'local-only' }, { Status: null }, all);
+      expect(plan.send).toEqual({ Status: null });
+    });
+
     it.each(['obsidian-wins', 'remote-wins', 'manual'] as const)('%s never sends non-writable fields', (mode) => {
       const plan = planPush(mode, verdicts, local, () => false);
       expect(plan.send).toEqual({});
