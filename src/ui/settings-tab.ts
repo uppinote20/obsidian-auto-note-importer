@@ -48,6 +48,11 @@ const CONFLICT_MODE_DESCRIPTIONS: Record<ConflictResolutionMode, string> = {
   'remote-wins': 'Push skips fields changed on both sides. Pull replaces them with the remote value (with a notice).',
 };
 
+function conflictModeDescription(config: ConfigEntry): string {
+  const base = CONFLICT_MODE_DESCRIPTIONS[config.conflictResolution];
+  return config.bidirectionalSync ? base : `${base} Push applies only when bidirectional sync is on.`;
+}
+
 /**
  * Interface for the plugin that the settings tab needs.
  */
@@ -1048,10 +1053,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private getSyncSummary(config: ConfigEntry): string {
-    if (!config.bidirectionalSync) return '';
-    const parts: string[] = [];
-    parts.push(config.conflictResolution);
-    if (config.watchForChanges) parts.push('watching');
+    const parts: string[] = [config.conflictResolution];
+    if (config.bidirectionalSync && config.watchForChanges) parts.push('watching');
     return parts.join(' \u00B7 ');
   }
 
@@ -2631,21 +2634,22 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           this.debounceDisplay();
         }));
 
-    if (config.bidirectionalSync) {
-      const conflictSetting = new Setting(containerEl)
-        .setName("Conflict resolution")
-        .setDesc(CONFLICT_MODE_DESCRIPTIONS[config.conflictResolution])
-        .addDropdown(dropdown => dropdown
-          .addOption('manual', 'Manual (queue for review)')
-          .addOption('obsidian-wins', 'Obsidian wins')
-          .addOption('remote-wins', 'Remote wins')
-          .setValue(config.conflictResolution)
-          .onChange(async (value) => {
-            config.conflictResolution = value as ConflictResolutionMode;
-            conflictSetting.setDesc(CONFLICT_MODE_DESCRIPTIONS[config.conflictResolution]);
-            await this.plugin.saveSettings();
-          }));
+    // Pull judges conflicts too, so the mode applies to pull-only configs.
+    const conflictSetting = new Setting(containerEl)
+      .setName("Conflict resolution")
+      .setDesc(conflictModeDescription(config))
+      .addDropdown(dropdown => dropdown
+        .addOption('manual', 'Manual (queue for review)')
+        .addOption('obsidian-wins', 'Obsidian wins')
+        .addOption('remote-wins', 'Remote wins')
+        .setValue(config.conflictResolution)
+        .onChange(async (value) => {
+          config.conflictResolution = value as ConflictResolutionMode;
+          conflictSetting.setDesc(conflictModeDescription(config));
+          await this.plugin.saveSettings();
+        }));
 
+    if (config.bidirectionalSync) {
       new Setting(containerEl)
         .setName("Watch for file changes")
         .setDesc("Automatically detect and sync changes made to notes in Obsidian.")
