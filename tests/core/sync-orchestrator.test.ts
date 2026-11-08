@@ -859,6 +859,30 @@ describe('SyncOrchestrator', () => {
       expect(mockProvider.fetchNotes).not.toHaveBeenCalled();
     });
 
+    it('flushes the sync state exactly once per bidirectional request', async () => {
+      settings.autoSyncComputedFields = true;
+      settings.formulaSyncDelay = 0;
+      settings.conflictResolution = 'obsidian-wins';
+      orchestrator.updateSettings(settings);
+      setupPushFile({ Name: 'test' }, { Name: 'old' });
+      mockProvider.fetchNotes.mockResolvedValue([]);
+      const flushSpy = vi.spyOn(syncStore, 'flush');
+
+      await orchestrator.processSyncRequest('bidirectional', 'all');
+
+      expect(flushSpy).toHaveBeenCalledTimes(1);
+      expect(mockApp.vault.adapter.write.mock.calls.filter(([p]) => p === 'sync-state.json')).toHaveLength(1);
+    });
+
+    it('flushes once even when the request fails', async () => {
+      mockProvider.fetchNotes.mockRejectedValue(new Error('Network error'));
+      const flushSpy = vi.spyOn(syncStore, 'flush');
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(flushSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('returns the push phase conflicts', async () => {
       settings.autoSyncComputedFields = false;
       settings.conflictResolution = 'manual';

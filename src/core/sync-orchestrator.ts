@@ -161,6 +161,8 @@ export class SyncOrchestrator {
       new Notice(`Auto Note Importer: Sync failed: ${message}`);
     } finally {
       statusBarItem.remove();
+      // One write per request, whichever phases ran.
+      await this.syncState.flush();
     }
     return { newConflicts };
   }
@@ -470,104 +472,100 @@ export class SyncOrchestrator {
     const overwrote: string[] = [];
     let syncedCount = 0;
     let errorCount = 0;
+    const toSend: JudgedPush[] = [];
 
-    try {
-      const toSend: JudgedPush[] = [];
 
-      for (const file of files) {
-        const recordId = this.frontmatterParser.getRecordId(file);
-        if (!recordId) {
-          if (this.settings.debugMode) {
-            new Notice(`Auto Note Importer: Skipping ${file.name} (no primaryField)`);
-          }
-          continue;
+    for (const file of files) {
+      const recordId = this.frontmatterParser.getRecordId(file);
+      if (!recordId) {
+        if (this.settings.debugMode) {
+          new Notice(`Auto Note Importer: Skipping ${file.name} (no primaryField)`);
         }
-
-        const local = this.frontmatterParser.readComparableFields(file);
-        if (!local) continue;
-
-        let remote: RemoteNote | null;
-        try {
-          remote = await this.provider.fetchRecord(recordId);
-        } catch (error) {
-          errorCount++;
-          if (this.settings.debugMode) {
-            const message = error instanceof Error ? error.message : 'Unknown error';
-            new Notice(`Auto Note Importer: Remote fetch failed for ${file.name}: ${message}`);
-          }
-          continue;
-        }
-        if (!remote) {
-          errorCount++;
-          if (this.settings.debugMode) {
-            new Notice(`Auto Note Importer: Skipping ${file.name} (record not found in ${label})`);
-          }
-          continue;
-        }
-
-        const fieldNames = this.judgedFieldNames(local, remote.fields, metadata);
-        const snapshot = this.syncState.getRecord(recordId)?.fields;
-        const verdicts = threeWayMerge(snapshot, local, remote.fields, fieldNames);
-        const plan = planPush(mode, verdicts, local, writable);
-        const judged: JudgedPush = {
-          recordId, filePath: file.path, local, remote: remote.fields, snapshot, verdicts, plan,
-        };
-
-        if (Object.keys(plan.send).length > 0) {
-          toSend.push(judged);
-        } else {
-          // Nothing to write: the judgement itself is the successful outcome.
-          this.recordPushOutcome(judged, writable, newConflicts, overwrote);
-        }
+        continue;
       }
 
-      // Guard against a misimplemented provider reporting 0 — would otherwise infinite-loop below.
-      const batchSize = Math.max(1, this.provider.capabilities.batchUpdateMaxSize);
+      const local = this.frontmatterParser.readComparableFields(file);
+      if (!local) continue;
 
-      for (let i = 0; i < toSend.length; i += batchSize) {
-        const batch = toSend.slice(i, i + batchSize);
-        const updates: BatchUpdate[] = batch.map(j => ({ recordId: j.recordId, fields: j.plan.send }));
-
-        try {
-          const results = await this.provider.batchUpdate(updates);
-          const unmatched = [...batch];
-          const failures: string[] = [];
-          for (const result of results) {
-            const idx = unmatched.findIndex(j => j.recordId === result.recordId);
-            const judged = idx >= 0 ? unmatched.splice(idx, 1)[0] : undefined;
-            if (result.success) {
-              syncedCount++;
-              if (judged) this.recordPushOutcome(judged, writable, newConflicts, overwrote, result.updatedFields);
-            } else {
-              errorCount++;
-              failures.push(result.error);
-            }
-          }
-          if (failures.length > 0) {
-            new Notice(`Auto Note Importer: Batch errors: ${failures.join('; ')}`);
-          }
-        } catch (error) {
-          errorCount += batch.length;
+      let remote: RemoteNote | null;
+      try {
+        remote = await this.provider.fetchRecord(recordId);
+      } catch (error) {
+        errorCount++;
+        if (this.settings.debugMode) {
           const message = error instanceof Error ? error.message : 'Unknown error';
-          new Notice(`Auto Note Importer: Batch update failed: ${message}`);
+          new Notice(`Auto Note Importer: Remote fetch failed for ${file.name}: ${message}`);
         }
+        continue;
+      }
+      if (!remote) {
+        errorCount++;
+        if (this.settings.debugMode) {
+          new Notice(`Auto Note Importer: Skipping ${file.name} (record not found in ${label})`);
+        }
+        continue;
       }
 
-      if (errorCount > 0) {
-        new Notice(`Auto Note Importer: ${syncedCount} synced, ${errorCount} errors`);
-      }
-      if (overwrote.length > 0) {
-        const names = [...new Set(overwrote)].join(', ');
-        new Notice(`Auto Note Importer: Overwrote remote changes: ${names} (${label})`);
-      }
-      if (newConflicts.length > 0) {
-        new Notice(`Auto Note Importer: ${newConflicts.length} sync conflict(s) need resolving (${label})`);
-      }
+      const fieldNames = this.judgedFieldNames(local, remote.fields, metadata);
+      const snapshot = this.syncState.getRecord(recordId)?.fields;
+      const verdicts = threeWayMerge(snapshot, local, remote.fields, fieldNames);
+      const plan = planPush(mode, verdicts, local, writable);
+      const judged: JudgedPush = {
+        recordId, filePath: file.path, local, remote: remote.fields, snapshot, verdicts, plan,
+      };
 
-      this.fileWatcher.clearPending();
-    } finally {
-      await this.syncState.flush();
+      if (Object.keys(plan.send).length > 0) {
+        toSend.push(judged);
+      } else {
+        // Nothing to write: the judgement itself is the successful outcome.
+        this.recordPushOutcome(judged, writable, newConflicts, overwrote);
+      }
     }
+
+    // Guard against a misimplemented provider reporting 0 — would otherwise infinite-loop below.
+    const batchSize = Math.max(1, this.provider.capabilities.batchUpdateMaxSize);
+
+    for (let i = 0; i < toSend.length; i += batchSize) {
+      const batch = toSend.slice(i, i + batchSize);
+      const updates: BatchUpdate[] = batch.map(j => ({ recordId: j.recordId, fields: j.plan.send }));
+
+      try {
+        const results = await this.provider.batchUpdate(updates);
+        const unmatched = [...batch];
+        const failures: string[] = [];
+        for (const result of results) {
+          const idx = unmatched.findIndex(j => j.recordId === result.recordId);
+          const judged = idx >= 0 ? unmatched.splice(idx, 1)[0] : undefined;
+          if (result.success) {
+            syncedCount++;
+            if (judged) this.recordPushOutcome(judged, writable, newConflicts, overwrote, result.updatedFields);
+          } else {
+            errorCount++;
+            failures.push(result.error);
+          }
+        }
+        if (failures.length > 0) {
+          new Notice(`Auto Note Importer: Batch errors: ${failures.join('; ')}`);
+        }
+      } catch (error) {
+        errorCount += batch.length;
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        new Notice(`Auto Note Importer: Batch update failed: ${message}`);
+      }
+    }
+
+    if (errorCount > 0) {
+      new Notice(`Auto Note Importer: ${syncedCount} synced, ${errorCount} errors`);
+    }
+    if (overwrote.length > 0) {
+      const names = [...new Set(overwrote)].join(', ');
+      new Notice(`Auto Note Importer: Overwrote remote changes: ${names} (${label})`);
+    }
+    if (newConflicts.length > 0) {
+      new Notice(`Auto Note Importer: ${newConflicts.length} sync conflict(s) need resolving (${label})`);
+    }
+
+    this.fileWatcher.clearPending();
 
     return newConflicts;
   }
