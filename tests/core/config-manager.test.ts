@@ -128,13 +128,6 @@ describe('ConfigManager', () => {
       expect(manager.getInstance('cfg-1')).toBeUndefined();
     });
 
-    it('should drop persisted sync state for the config', () => {
-      const spy = vi.spyOn(shared.syncState, 'removeConfig');
-      manager.addConfig(createConfig({ id: 'cfg-1' }), createCredential());
-      manager.removeConfig('cfg-1');
-      expect(spy).toHaveBeenCalledWith('cfg-1');
-    });
-
     it('should do nothing for non-existent config', () => {
       // Should not throw
       manager.removeConfig('non-existent');

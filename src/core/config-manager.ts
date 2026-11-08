@@ -55,19 +55,9 @@ export class ConfigManager {
   }
 
   /**
-   * Destroys and removes a ConfigInstance, and drops its persisted sync state.
+   * Destroys and removes a ConfigInstance.
    */
   removeConfig(configId: string): void {
-    this.destroyInstance(configId);
-    this.shared.syncState.removeConfig(configId);
-    void this.shared.syncState.flush();
-  }
-
-  /**
-   * Tears down the instance only; sync snapshots and pending conflicts are
-   * kept so a disable / provider-type switch does not lose them.
-   */
-  private destroyInstance(configId: string): void {
     const instance = this.instances.get(configId);
     if (instance) {
       instance.destroy();
@@ -119,13 +109,13 @@ export class ConfigManager {
       // The truthy guard tolerates mocked instances in unit tests where
       // providerType isn't stubbed — production instances always expose it.
       if (instance.providerType && instance.providerType !== credential.type) {
-        this.destroyInstance(configId);
+        this.removeConfig(configId);
         this.addConfig(config, credential);
         return;
       }
       instance.updateSettings(config, credential);
     } else if (instance && !config.enabled) {
-      this.destroyInstance(configId);
+      this.removeConfig(configId);
     } else if (!instance && config.enabled) {
       this.addConfig(config, credential);
     }

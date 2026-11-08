@@ -113,6 +113,23 @@ describe('SyncStateStore', () => {
     expect(store.allPending()).toEqual([]);
   });
 
+  it('retainConfigs drops absent configs and keeps present ones', async () => {
+    store.forConfig('cfgA').setFields('r', { f: { local: 'A', remote: 'A' } });
+    store.forConfig('cfgB').setFields('r', { f: { local: 'B', remote: 'B' } });
+    store.retainConfigs(new Set(['cfgB']));
+    expect(store.forConfig('cfgA').getRecord('r')).toBeUndefined();
+    expect(store.forConfig('cfgB').getRecord('r')?.fields.f.local).toBe('B');
+  });
+
+  it('flush after a no-op retainConfigs writes nothing', async () => {
+    store.forConfig('a').setFields('r', { f: { local: 1, remote: 1 } });
+    await store.flush();
+    expect(adapter.write).toHaveBeenCalledTimes(1);
+    store.retainConfigs(new Set(['a']));
+    await store.flush();
+    expect(adapter.write).toHaveBeenCalledTimes(1);
+  });
+
   it('allPending spans configs', () => {
     store.forConfig('a').upsertConflict(conflict('r1', 'f'));
     store.forConfig('b').upsertConflict(conflict('r2', 'f'));

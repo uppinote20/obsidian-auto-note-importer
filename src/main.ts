@@ -32,6 +32,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
   seatableMetadataCache!: SeaTableMetadataCache;
   supabaseMetadataCache!: SupabaseMetadataCache;
   notionSchemaCache!: NotionSchemaCache;
+  private syncState!: SyncStateStore;
   private commandFingerprint = '';
 
   async onload() {
@@ -56,7 +57,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
     // per-credential budget (PR #125 Codex P2 / Claude Medium).
     this.notionSchemaCache = new NotionSchemaCache();
 
-    const syncState = new SyncStateStore(this.app.vault.adapter, `${this.manifest.dir}/sync-state.json`);
+    const syncState = this.syncState = new SyncStateStore(this.app.vault.adapter, `${this.manifest.dir}/sync-state.json`);
     await syncState.load();
 
     const shared: SharedServices = {
@@ -70,6 +71,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
       statusBarFactory: () => this.addStatusBarItem(),
       getDebugMode: () => this.settings.debugMode,
     };
+
+    syncState.retainConfigs(new Set(this.settings.configs.map(c => c.id)));
+    await syncState.flush();
 
     this.configManager = new ConfigManager(this.app, shared);
     this.configManager.initialize(this.settings.configs, this.settings.credentials);
@@ -278,6 +282,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
         this.configManager.removeConfig(instance.configId);
       }
     }
+
+    this.syncState.retainConfigs(new Set(this.settings.configs.map(c => c.id)));
+    await this.syncState.flush();
 
     const credIndex = buildCredentialIndex(this.settings);
     for (const config of this.settings.configs) {

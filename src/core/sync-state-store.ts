@@ -78,6 +78,16 @@ export class SyncStateStore {
     }
   }
 
+  /** Drops every config entry whose id is not in `ids` (settings membership). */
+  retainConfigs(ids: Set<string>): void {
+    for (const configId of Object.keys(this.state.configs)) {
+      if (!ids.has(configId)) {
+        delete this.state.configs[configId];
+        this.dirty = true;
+      }
+    }
+  }
+
   allPending(): Array<{ configId: string; conflict: PendingConflict }> {
     const out: Array<{ configId: string; conflict: PendingConflict }> = [];
     for (const [configId, cfg] of Object.entries(this.state.configs)) {
