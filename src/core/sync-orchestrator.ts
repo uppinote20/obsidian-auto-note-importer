@@ -537,7 +537,7 @@ export class SyncOrchestrator {
             const judged = idx >= 0 ? unmatched.splice(idx, 1)[0] : undefined;
             if (result.success) {
               syncedCount++;
-              if (judged) this.recordPushOutcome(judged, writable, newConflicts, overwrote);
+              if (judged) this.recordPushOutcome(judged, writable, newConflicts, overwrote, result.updatedFields);
             } else {
               errorCount++;
               failures.push(result.error);
@@ -603,12 +603,16 @@ export class SyncOrchestrator {
     writable: (field: string) => boolean,
     newConflicts: PendingConflict[],
     overwrote: string[],
+    echoed?: Record<string, unknown>,
   ): void {
     const { recordId, filePath, local, remote, snapshot, verdicts, plan } = judged;
     const fields: Record<string, FieldSnapshot> = {};
 
+    // Remote baseline = the provider's echo when it returns one (it may
+    // normalise, e.g. timestamptz), else the value sent.
     for (const [field, sent] of Object.entries(plan.send)) {
-      fields[field] = { local: local[field], remote: sent };
+      const echo = echoed && field in echoed && echoed[field] !== undefined ? echoed[field] : sent;
+      fields[field] = { local: local[field], remote: echo };
     }
     for (const [field, verdict] of Object.entries(verdicts)) {
       if (field in fields) continue;

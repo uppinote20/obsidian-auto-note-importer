@@ -665,6 +665,43 @@ describe('SyncOrchestrator', () => {
       expect(noticeTexts().some(t => t.includes('Overwrote remote changes'))).toBe(false);
     });
 
+    it('records the provider echo as the remote baseline for sent fields', async () => {
+      setMode('remote-wins');
+      syncState.setFields('rec1', { Due: { local: '2026-11-01', remote: '2026-11-01T00:00:00+00:00' } });
+      setupPushFile({ Due: '2026-11-08' }, { Due: '2026-11-01T00:00:00+00:00' });
+      mockProvider.batchUpdate.mockResolvedValue([
+        { success: true, recordId: 'rec1', updatedFields: { Due: '2026-11-08T00:00:00+00:00' } },
+      ]);
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(syncState.getRecord('rec1')?.fields.Due).toEqual({ local: '2026-11-08', remote: '2026-11-08T00:00:00+00:00' });
+
+      // Second push, no edits: the remote now returns the normalised value.
+      mockProvider.batchUpdate.mockClear();
+      mockProvider.fetchRecord.mockResolvedValue({ id: 'rec1', primaryField: 'rec1', fields: { Due: '2026-11-08T00:00:00+00:00' } });
+      await orchestrator.processSyncRequest('push', 'all');
+      expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+
+      setMode('obsidian-wins');
+      vi.mocked(Notice).mockClear();
+      await orchestrator.processSyncRequest('push', 'all');
+      expect(noticeTexts().some(t => t.includes('Overwrote remote changes'))).toBe(false);
+    });
+
+    it('keeps a falsy provider echo as the remote baseline', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 1, remote: 1 } });
+      setupPushFile({ Count: 0 }, { Count: 1 });
+      mockProvider.batchUpdate.mockResolvedValue([
+        { success: true, recordId: 'rec1', updatedFields: { Count: false } },
+      ]);
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 0, remote: false });
+    });
+
     it('Review Focus 1: format asymmetry between sides (block-scalar newline) is not a change', async () => {
       for (const mode of ['manual', 'remote-wins'] as const) {
         mockProvider.batchUpdate.mockClear();
