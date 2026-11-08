@@ -16,7 +16,8 @@ export type SyncMode = 'push' | 'pull' | 'bidirectional';
 
 /**
  * Who started a sync run: a user command or background sync (watcher,
- * interval). Behaviour keyed on it arrives with the conflict modal.
+ * interval). New conflicts from a user run open the resolution modal;
+ * an auto run shows a clickable Notice.
  */
 export type SyncTrigger = 'user' | 'auto';
 

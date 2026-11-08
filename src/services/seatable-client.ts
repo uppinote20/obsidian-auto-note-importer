@@ -202,9 +202,9 @@ export class SeaTableClient implements DatabaseProvider {
    * active tableId's column-name → column-type map, so batchUpdate can
    * filter out read-only / object-shaped columns via
    * `seatableFieldMapper.isPushable` before writing (#121). This backs
-   * `fetchFieldMetadata()` (#124), which the orchestrator/parser use to
-   * gate `extractSyncableFields`; this client-side filter is defense-in-depth
-   * on top of that parser-level gate.
+   * `fetchFieldMetadata()` (#124), which the orchestrator uses to decide
+   * which fields are writable on push; this client-side filter is
+   * defense-in-depth on top of that gate.
    *
    * Tables are matched by `_id` — `config.tableId` always stores the
    * table's `_id`, never its display name (see settings-tab.ts table

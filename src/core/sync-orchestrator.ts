@@ -106,9 +106,10 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Runs one sync. `trigger` is accepted for the conflict-modal flow and not
-   * acted on yet. `newConflicts` holds the conflicts queued (new or changed)
-   * by every phase that ran — push phase first for bidirectional.
+   * Runs one sync. `trigger` is not used here — the caller routes the result
+   * by it (user runs open the conflict modal). `newConflicts` holds the
+   * conflicts queued (new or changed) by every phase that ran and still
+   * pending at the end — push phase first for bidirectional.
    */
   async processSyncRequest(
     mode: SyncMode,

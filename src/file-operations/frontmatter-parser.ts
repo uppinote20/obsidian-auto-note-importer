@@ -9,7 +9,6 @@ import type { App } from "obsidian";
 import { TFile, TFolder, parseYaml } from "obsidian";
 import { MAX_FOLDER_DEPTH, isSystemField } from '../constants';
 import { formatYamlValue } from '../utils';
-import type { RemoteFieldInfo, FieldTypeMapper } from '../types';
 
 /**
  * Handles frontmatter parsing, extraction, and injection.
@@ -30,58 +29,6 @@ export class FrontmatterParser {
       return String(frontmatter.primaryField);
     }
     return null;
-  }
-
-  /**
-   * Extracts syncable fields from a file's frontmatter.
-   * Filters out system fields and fields that are unsafe to push.
-   *
-   * The `isPushable` gate only runs when `remoteFields` is provided. When it is
-   * `undefined` (a provider that returned no field metadata, #124), every
-   * non-system, non-null frontmatter value passes through — so object-shaped
-   * values could reach the API on a metadata miss. Callers that need the guard
-   * must supply metadata, which arrives via `DatabaseProvider.fetchFieldMetadata()`.
-   */
-  extractSyncableFields(
-    file: TFile,
-    fieldTypeMapper: FieldTypeMapper,
-    remoteFields?: RemoteFieldInfo[]
-  ): Record<string, unknown> | null {
-    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-
-    if (!frontmatter || !frontmatter.primaryField) {
-      return null;
-    }
-
-    const fieldsToSync: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(frontmatter)) {
-      // Skip system fields
-      if (isSystemField(key)) {
-        continue;
-      }
-
-      if (value == null) {
-        continue;
-      }
-
-      // When field metadata is available, only sync fields that exist remotely
-      // and can safely round-trip through the provider API.
-      if (remoteFields) {
-        const fieldInfo = remoteFields.find(f => f.name === key);
-        if (!fieldInfo || !fieldTypeMapper.isPushable(fieldInfo.type)) {
-          continue;
-        }
-      }
-
-      fieldsToSync[key] = value;
-    }
-
-    if (Object.keys(fieldsToSync).length === 0) {
-      return null;
-    }
-
-    return fieldsToSync;
   }
 
   /**
