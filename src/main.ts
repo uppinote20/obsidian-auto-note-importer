@@ -10,13 +10,14 @@
  * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
-import { Plugin, normalizePath } from "obsidian";
-import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
+import { Plugin, Notice, normalizePath } from "obsidian";
+import type { AutoNoteImporterSettings, ConfigEntry, PendingConflict, SharedServices, SyncRunResult, SyncTrigger } from './types';
 import { DEFAULT_SETTINGS, CREDENTIAL_TYPE_LABELS } from './types';
 import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache, NotionSchemaCache, defaultRateLimiters } from './services';
-import { ConfigManager } from './core';
+import { ConfigManager, SyncStateStore } from './core';
 import { FrontmatterParser } from './file-operations';
-import { AutoNoteImporterSettingTab } from './ui';
+import { AutoNoteImporterSettingTab, ConflictResolutionModal } from './ui';
+import type { ConflictGroup, ConflictModalHost } from './ui';
 import { migrateSettings, hydrateConfigDefaults } from './utils/migration';
 import { findCredentialForConfig, findConfigById, buildCredentialIndex } from './utils';
 
@@ -32,18 +33,31 @@ export default class AutoNoteImporterPlugin extends Plugin {
   seatableMetadataCache!: SeaTableMetadataCache;
   supabaseMetadataCache!: SupabaseMetadataCache;
   notionSchemaCache!: NotionSchemaCache;
+  private syncState!: SyncStateStore;
   private commandFingerprint = '';
+  private conflictModal: ConflictResolutionModal | null = null;
 
   async onload() {
     await this.loadSettings();
-    this.initializeServices();
+    await this.initializeServices();
     this.registerCommands();
+    this.registerVaultEvents();
+  }
+
+  /** Keeps queued conflicts pointing at existing notes. */
+  private registerVaultEvents(): void {
+    this.registerEvent(this.app.vault.on('delete', (file) => {
+      if (this.syncState.removeConflictsForPath(file.path)) void this.syncState.flush();
+    }));
+    this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+      if (this.syncState.renameConflictPath(oldPath, file.path)) void this.syncState.flush();
+    }));
   }
 
   /**
    * Initializes ConfigManager and shared services.
    */
-  private initializeServices(): void {
+  private async initializeServices(): Promise<void> {
     this.fieldCache = new FieldCache();
     this.seatableMetadataCache = new SeaTableMetadataCache();
     this.supabaseMetadataCache = new SupabaseMetadataCache();
@@ -56,6 +70,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
     // per-credential budget (PR #125 Codex P2 / Claude Medium).
     this.notionSchemaCache = new NotionSchemaCache();
 
+    const syncState = this.syncState = new SyncStateStore(this.app.vault.adapter, `${this.manifest.dir}/sync-state.json`);
+    await syncState.load();
+
     const shared: SharedServices = {
       rateLimiters: defaultRateLimiters,
       fieldCache: this.fieldCache,
@@ -63,9 +80,14 @@ export default class AutoNoteImporterPlugin extends Plugin {
       supabaseMetadataCache: this.supabaseMetadataCache,
       notionSchemaCache: this.notionSchemaCache,
       frontmatterParser: new FrontmatterParser(this.app),
+      syncState,
       statusBarFactory: () => this.addStatusBarItem(),
       getDebugMode: () => this.settings.debugMode,
+      onRunComplete: (configId, trigger, result) => this.notifyRunComplete(configId, trigger, result),
     };
+
+    syncState.retainConfigs(new Set(this.settings.configs.map(c => c.id)));
+    await syncState.flush();
 
     this.configManager = new ConfigManager(this.app, shared);
     this.configManager.initialize(this.settings.configs, this.settings.credentials);
@@ -85,10 +107,23 @@ export default class AutoNoteImporterPlugin extends Plugin {
    * Registers per-config commands for all configurations.
    */
   private registerCommands(): void {
+    this.registerResolveCommand();
     for (const config of this.settings.configs) {
       this.registerCommandsForConfig(config);
     }
     this.commandFingerprint = this.getCommandFingerprint();
+  }
+
+  private registerResolveCommand(): void {
+    this.addCommand({
+      id: 'resolve-sync-conflicts',
+      name: 'Resolve sync conflicts',
+      checkCallback: (checking) => {
+        if (!this.conflictGroups().some(g => g.conflicts.length > 0)) return false;
+        if (!checking) this.openConflictModal();
+        return true;
+      },
+    });
   }
 
   private getCommandFingerprint(credIndex?: Map<string, { type: string }>): string {
@@ -124,7 +159,8 @@ export default class AutoNoteImporterPlugin extends Plugin {
       }
     }
 
-    // Re-register for all current configs
+    // Re-register for all current configs (the sweep above also removed the global command)
+    this.registerResolveCommand();
     for (const config of this.settings.configs) {
       this.registerCommandsForConfig(config);
     }
@@ -141,6 +177,79 @@ export default class AutoNoteImporterPlugin extends Plugin {
     const folderPath = normalizePath(cfg.folderPath);
     if (folderPath && !activeFile.path.startsWith(folderPath + '/')) return false;
     return true;
+  }
+
+  /**
+   * Surfaces a finished sync run's new conflicts: a user-triggered run opens
+   * the resolution modal with them; an automatic run shows a clickable Notice.
+   */
+  private notifyRunComplete(configId: string, trigger: SyncTrigger, result: SyncRunResult): void {
+    const n = result.newConflicts.length;
+    if (n === 0) return;
+    if (trigger === 'user') {
+      this.openConflictModal(result.newConflicts.map(conflict => ({ configId, conflict })));
+      return;
+    }
+    const config = findConfigById(this.settings, configId);
+    const label = this.providerLabelFor(config);
+    const notice = new Notice(`Auto Note Importer: ${n} sync conflict${n === 1 ? '' : 's'} with ${label} \u2014 click to resolve`, 10000);
+    notice.noticeEl.addEventListener('click', () => {
+      notice.hide();
+      this.openConflictModal();
+    });
+  }
+
+  private providerLabelFor(config: ConfigEntry | undefined): string {
+    const credential = config && findCredentialForConfig(this.settings, config);
+    return credential ? CREDENTIAL_TYPE_LABELS[credential.type] : 'remote';
+  }
+
+  /** Pending conflicts of configs that have a running instance, in settings order. */
+  private conflictGroups(): ConflictGroup[] {
+    const groups: ConflictGroup[] = [];
+    for (const config of this.settings.configs) {
+      if (!this.configManager.getInstance(config.id)) continue;
+      const conflicts = this.syncState.forConfig(config.id).pendingConflicts();
+      if (conflicts.length === 0) continue;
+      groups.push({
+        configId: config.id,
+        configName: config.name,
+        providerLabel: this.providerLabelFor(config),
+        bidirectional: config.bidirectionalSync,
+        conflicts,
+      });
+    }
+    return groups;
+  }
+
+  private readonly conflictHost: ConflictModalHost = {
+    getGroups: () => this.conflictGroups(),
+    apply: async (configId, choices) => {
+      const instance = this.configManager.getInstance(configId);
+      if (!instance) {
+        return {
+          applied: 0, stale: [], removed: [],
+          failed: choices.map(({ conflict }) => ({ conflict, error: 'This config is disabled or has no credential' })),
+        };
+      }
+      return instance.applyConflicts(choices);
+    },
+  };
+
+  /**
+   * Opens the resolution modal (all pending conflicts, or just `only`). An
+   * already-open modal takes the new entries instead of stacking a second one.
+   */
+  private openConflictModal(only?: Array<{ configId: string; conflict: PendingConflict }>): void {
+    if (this.conflictModal) {
+      this.conflictModal.show(only);
+      return;
+    }
+    const modal = new ConflictResolutionModal(this.app, this.conflictHost, only, () => {
+      if (this.conflictModal === modal) this.conflictModal = null;
+    });
+    this.conflictModal = modal;
+    modal.open();
   }
 
   /**
@@ -162,7 +271,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'current', undefined, 'user');
         return true;
       },
     });
@@ -173,7 +282,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'all', undefined, 'user');
         return true;
       },
     });
@@ -185,7 +294,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'current', undefined, 'user');
         return true;
       },
     });
@@ -196,7 +305,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'modified');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'modified', undefined, 'user');
         return true;
       },
     });
@@ -207,7 +316,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'all', undefined, 'user');
         return true;
       },
     });
@@ -219,7 +328,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current', undefined, 'user');
         return true;
       },
     });
@@ -230,7 +339,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'modified');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'modified', undefined, 'user');
         return true;
       },
     });
@@ -241,7 +350,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'all', undefined, 'user');
         return true;
       },
     });
@@ -274,6 +383,9 @@ export default class AutoNoteImporterPlugin extends Plugin {
         this.configManager.removeConfig(instance.configId);
       }
     }
+
+    this.syncState.retainConfigs(new Set(this.settings.configs.map(c => c.id)));
+    await this.syncState.flush();
 
     const credIndex = buildCredentialIndex(this.settings);
     for (const config of this.settings.configs) {

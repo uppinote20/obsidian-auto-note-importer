@@ -1,141 +1,102 @@
 /**
- * Conflict detection and resolution for bidirectional sync.
+ * Maps three-way field verdicts to per-mode push / pull plans.
  *
  * @handbook 9.5-conflict-resolution-modes
  * @tested tests/core/conflict-resolver.test.ts
  * @tested e2e:tests/e2e/run-e2e.mjs
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
-import { Notice } from "obsidian";
-import { areValuesEqual, assertNever } from '../utils';
-import type { LegacySettings, ConflictInfo, SyncResult, DatabaseProvider } from '../types';
+import { assertNever } from '../utils';
+import type { ConflictResolutionMode } from '../types';
+import type { FieldVerdict } from './three-way-merge';
+
+/** Fields to push and bookkeeping for a push, derived from three-way verdicts. */
+export interface PushPlan {
+  send: Record<string, unknown>;
+  overwroteRemote: string[];
+  enqueue: string[];
+}
+
+/** How to treat each field when pulling remote values into a note. */
+export interface PullPlan {
+  keepLocal: string[];
+  restoredRemote: string[];
+  enqueue: string[];
+}
 
 /**
- * Handles conflict detection and resolution between Obsidian and the remote database.
+ * Maps verdicts to a push plan for the given conflict mode.
+ * Non-writable fields are never sent. A cleared (`null` / `undefined`) local
+ * value is sent only when the field changed locally (`local-only` /
+ * `conflict`), so obsidian-wins' whole-set send never wipes a remote value
+ * the user did not touch. `pinned` fields (kept local) are never sent.
  */
-export class ConflictResolver {
-  private settings: LegacySettings;
-  private provider: DatabaseProvider;
+export function planPush(
+  mode: ConflictResolutionMode,
+  verdicts: Record<string, FieldVerdict>,
+  local: Record<string, unknown>,
+  writable: (field: string) => boolean
+): PushPlan {
+  const plan: PushPlan = { send: {}, overwroteRemote: [], enqueue: [] };
 
-  constructor(settings: LegacySettings, provider: DatabaseProvider) {
-    this.settings = settings;
-    this.provider = provider;
-  }
+  for (const [field, verdict] of Object.entries(verdicts)) {
+    if (verdict === 'pinned' || !writable(field) || !(field in local)) continue;
+    const changedLocally = verdict === 'local-only' || verdict === 'conflict';
+    if (local[field] == null && !changedLocally) continue;
 
-  /**
-   * Updates the settings reference.
-   */
-  updateSettings(settings: LegacySettings): void {
-    this.settings = settings;
-  }
-
-  /**
-   * Detects conflicts between Obsidian and the remote database field values.
-   */
-  async detectConflicts(
-    recordId: string,
-    obsidianFields: Record<string, unknown>,
-    filePath: string
-  ): Promise<ConflictInfo[]> {
-    const record = await this.provider.fetchRecord(recordId);
-
-    if (!record) {
-      return [];
-    }
-
-    const conflicts: ConflictInfo[] = [];
-
-    for (const [field, obsidianValue] of Object.entries(obsidianFields)) {
-      const remoteValue = record.fields[field];
-
-      if (remoteValue !== undefined && !areValuesEqual(obsidianValue, remoteValue)) {
-        conflicts.push({
-          field,
-          obsidianValue,
-          remoteValue,
-          recordId,
-          filePath
-        });
+    if (mode === 'obsidian-wins') {
+      plan.send[field] = local[field];
+      if (verdict === 'conflict' || verdict === 'remote-only') {
+        plan.overwroteRemote.push(field);
       }
+    } else if (verdict === 'local-only') {
+      plan.send[field] = local[field];
+    } else if (verdict === 'conflict' && mode === 'manual') {
+      plan.enqueue.push(field);
     }
-
-    return conflicts;
   }
 
-  /**
-   * Handles detected conflicts based on the resolution strategy.
-   */
-  async resolve(
-    conflicts: ConflictInfo[],
-    fieldsToSync: Record<string, unknown>,
-    recordId: string
-  ): Promise<SyncResult> {
-    switch (this.settings.conflictResolution) {
+  return plan;
+}
+
+/**
+ * Maps verdicts to a pull plan for the given conflict mode. `pinned` fields
+ * keep their local value in every mode and are not queued.
+ */
+export function planPull(
+  mode: ConflictResolutionMode,
+  verdicts: Record<string, FieldVerdict>,
+  writable: (field: string) => boolean
+): PullPlan {
+  const plan: PullPlan = { keepLocal: [], restoredRemote: [], enqueue: [] };
+
+  for (const [field, verdict] of Object.entries(verdicts)) {
+    if (verdict === 'pinned') {
+      plan.keepLocal.push(field);
+      continue;
+    }
+    const localOnly = verdict === 'local-only';
+    const conflict = verdict === 'conflict';
+    if (!localOnly && !conflict) continue;
+    const canPush = writable(field);
+
+    switch (mode) {
       case 'obsidian-wins':
-        return this.provider.updateRecord(recordId, fieldsToSync);
-
+        plan.keepLocal.push(field);
+        break;
       case 'remote-wins':
-        return this.resolveRemoteWins(conflicts, fieldsToSync, recordId);
-
+        if (localOnly && canPush) plan.keepLocal.push(field);
+        else plan.restoredRemote.push(field);
+        break;
       case 'manual':
-        return this.resolveManual(conflicts, recordId);
-
+        plan.keepLocal.push(field);
+        if (conflict || !canPush) plan.enqueue.push(field);
+        break;
       default:
-        return assertNever(this.settings.conflictResolution, 'Unknown conflict resolution mode');
+        assertNever(mode);
     }
   }
 
-  /**
-   * Resolves conflicts by letting the remote win.
-   */
-  private async resolveRemoteWins(
-    conflicts: ConflictInfo[],
-    fieldsToSync: Record<string, unknown>,
-    recordId: string
-  ): Promise<SyncResult> {
-    const conflictedFieldNames = new Set(conflicts.map(c => c.field));
-    const nonConflictedFields: Record<string, unknown> = {};
-
-    for (const [field, value] of Object.entries(fieldsToSync)) {
-      if (!conflictedFieldNames.has(field)) {
-        nonConflictedFields[field] = value;
-      }
-    }
-
-    if (conflicts.length > 0) {
-      const conflictFields = conflicts.map(c => c.field).join(', ');
-      new Notice(`Auto Note Importer: Conflicted fields ignored (remote wins): ${conflictFields}`);
-    }
-
-    if (Object.keys(nonConflictedFields).length > 0) {
-      return this.provider.updateRecord(recordId, nonConflictedFields);
-    }
-
-    return {
-      success: true,
-      recordId,
-      updatedFields: {},
-    };
-  }
-
-  /**
-   * Resolves conflicts with manual mode (show notification, don't sync).
-   */
-  private resolveManual(conflicts: ConflictInfo[], recordId: string): SyncResult {
-    const conflictFields = conflicts.map(c => c.field).join(', ');
-    new Notice(`Auto Note Importer: Conflicts detected in fields: ${conflictFields}. Please resolve manually.`);
-
-    return {
-      success: false,
-      recordId,
-      error: `Conflicts detected in fields: ${conflictFields}`
-    };
-  }
-
-  /**
-   * Checks if conflict detection should be skipped.
-   */
-  shouldSkipConflictDetection(): boolean {
-    return this.settings.conflictResolution === 'obsidian-wins';
-  }
+  return plan;
 }

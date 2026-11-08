@@ -6,10 +6,9 @@
  */
 
 import type { App } from "obsidian";
-import { TFile, TFolder } from "obsidian";
+import { TFile, TFolder, parseYaml } from "obsidian";
 import { MAX_FOLDER_DEPTH, isSystemField } from '../constants';
 import { formatYamlValue } from '../utils';
-import type { RemoteFieldInfo, FieldTypeMapper } from '../types';
 
 /**
  * Handles frontmatter parsing, extraction, and injection.
@@ -33,55 +32,49 @@ export class FrontmatterParser {
   }
 
   /**
-   * Extracts syncable fields from a file's frontmatter.
-   * Filters out system fields and fields that are unsafe to push.
-   *
-   * The `isPushable` gate only runs when `remoteFields` is provided. When it is
-   * `undefined` (a provider that returned no field metadata, #124), every
-   * non-system, non-null frontmatter value passes through — so object-shaped
-   * values could reach the API on a metadata miss. Callers that need the guard
-   * must supply metadata, which arrives via `DatabaseProvider.fetchFieldMetadata()`.
+   * Parses the frontmatter of a markdown string with Obsidian's YAML parser,
+   * dropping system fields. Returns `{}` when there is no (or empty) frontmatter
+   * and `null` when the frontmatter cannot be parsed — callers must leave the
+   * snapshot untouched on `null`.
    */
-  extractSyncableFields(
-    file: TFile,
-    fieldTypeMapper: FieldTypeMapper,
-    remoteFields?: RemoteFieldInfo[]
-  ): Record<string, unknown> | null {
-    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+  parseFieldsFromContent(content: string): Record<string, unknown> | null {
+    return this.parseNoteContent(content)?.fields ?? null;
+  }
 
-    if (!frontmatter || !frontmatter.primaryField) {
-      return null;
+  /**
+   * Like `parseFieldsFromContent`, plus the note's `primaryField` (record id,
+   * `null` when absent). Returns `null` when the frontmatter cannot be parsed.
+   * Reads the file's own text, so it never sees a stale `metadataCache`.
+   */
+  parseNoteContent(content: string): { recordId: string | null; fields: Record<string, unknown> } | null {
+    // Closing fence must start a line (so a block scalar keeps its trailing
+    // newline) and end the line; the body group is optional for `---\n---`.
+    const match = content.match(/^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??---[ \t]*(?:\r?\n|$)/);
+    // No frontmatter, or empty frontmatter (`---\n---`), is a valid empty document.
+    if (!match || !match[1]?.trim()) {
+      return { recordId: null, fields: {} };
     }
 
-    const fieldsToSync: Record<string, unknown> = {};
+    let parsed: unknown;
+    try {
+      parsed = parseYaml(match[1]);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { recordId: null, fields: {} };
+    }
 
-    for (const [key, value] of Object.entries(frontmatter)) {
-      // Skip system fields
+    const raw = parsed as Record<string, unknown>;
+    const fields: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(raw)) {
       if (isSystemField(key)) {
         continue;
       }
-
-      if (value == null) {
-        continue;
-      }
-
-      // When field metadata is available, only sync fields that exist remotely
-      // and can safely round-trip through the provider API.
-      if (remoteFields) {
-        const fieldInfo = remoteFields.find(f => f.name === key);
-        if (!fieldInfo || !fieldTypeMapper.isPushable(fieldInfo.type)) {
-          continue;
-        }
-      }
-
-      fieldsToSync[key] = value;
+      fields[key] = value;
     }
-
-    if (Object.keys(fieldsToSync).length === 0) {
-      return null;
-    }
-
-    return fieldsToSync;
+    const recordId = raw.primaryField != null && raw.primaryField !== '' ? String(raw.primaryField) : null;
+    return { recordId, fields };
   }
 
   /**

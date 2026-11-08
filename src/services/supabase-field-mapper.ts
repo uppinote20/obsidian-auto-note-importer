@@ -27,8 +27,8 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   // {type: 'string', format: 'jsonb'/'json'}, but the runtime VALUE is a
   // parsed JS object/array (NOT a string) — see OBJECT_SHAPED_TYPES below.
   // Map as 'text' here so the fail-closed default doesn't reject them at
-  // the standard-type lookup; push consumers (extractSyncableFields +
-  // SupabaseClient.batchUpdate) exclude them via isPushable() / OBJECT_SHAPED_TYPES
+  // the standard-type lookup; push consumers (the orchestrator's writable
+  // gate + SupabaseClient.batchUpdate) exclude them via isPushable() / OBJECT_SHAPED_TYPES
   // before they reach the upsert body, and the subfolder dropdown filters them
   // out via OBJECT_SHAPED_TYPES because String(value) → '[object …]'.
   'string:jsonb': 'text',

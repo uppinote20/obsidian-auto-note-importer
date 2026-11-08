@@ -117,6 +117,63 @@ describe('SyncQueue', () => {
       expect(mergedRequest.filePaths).toContain('file3.md');
     });
 
+    it('tags requests with the given trigger and defaults to user', async () => {
+      const queue = new SyncQueue(mockProcessor);
+
+      await queue.enqueue('push', 'current');
+      await queue.enqueue('pull', 'all', undefined, 'auto');
+
+      expect(processedRequests[0].trigger).toBe('user');
+      expect(processedRequests[1].trigger).toBe('auto');
+    });
+
+    it('merges auto and user requests into one run with trigger user', async () => {
+      let resolveFirst: () => void;
+      const firstPromise = new Promise<void>(resolve => {
+        resolveFirst = resolve;
+      });
+      const slowProcessor: SyncProcessor = vi.fn(async (request: SyncRequest) => {
+        processedRequests.push(request);
+        if (processedRequests.length === 1) await firstPromise;
+      });
+      const queue = new SyncQueue(slowProcessor);
+
+      const firstEnqueue = queue.enqueue('push', 'current');
+      queue.enqueue('push', 'modified', ['a.md'], 'auto');
+      queue.enqueue('push', 'modified', ['b.md'], 'user');
+      queue.enqueue('push', 'modified', ['c.md'], 'auto');
+
+      resolveFirst!();
+      await firstEnqueue;
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(processedRequests).toHaveLength(2);
+      expect(processedRequests[1].trigger).toBe('user');
+      expect(processedRequests[1].filePaths).toEqual(['a.md', 'b.md', 'c.md']);
+    });
+
+    it('keeps trigger auto when every merged request is auto', async () => {
+      let resolveFirst: () => void;
+      const firstPromise = new Promise<void>(resolve => {
+        resolveFirst = resolve;
+      });
+      const slowProcessor: SyncProcessor = vi.fn(async (request: SyncRequest) => {
+        processedRequests.push(request);
+        if (processedRequests.length === 1) await firstPromise;
+      });
+      const queue = new SyncQueue(slowProcessor);
+
+      const firstEnqueue = queue.enqueue('push', 'current');
+      queue.enqueue('push', 'modified', ['a.md'], 'auto');
+      queue.enqueue('push', 'modified', ['b.md'], 'auto');
+
+      resolveFirst!();
+      await firstEnqueue;
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(processedRequests[1].trigger).toBe('auto');
+    });
+
     it('should process requests sequentially for rapid calls (SQ-1.4)', async () => {
       const executionOrder: number[] = [];
       let callCount = 0;
@@ -171,6 +228,58 @@ describe('SyncQueue', () => {
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
       expect((onError.mock.calls[0][0] as Error).message).toBe('Test error');
+    });
+  });
+  describe('runExclusive', () => {
+    function deferred(): { promise: Promise<void>; resolve: () => void } {
+      let resolve!: () => void;
+      const promise = new Promise<void>(r => { resolve = r; });
+      return { promise, resolve };
+    }
+
+    it('runs only after the in-flight request resolves', async () => {
+      const gate = deferred();
+      const events: string[] = [];
+      const queue = new SyncQueue(async (request) => {
+        events.push(`start ${request.mode}`);
+        await gate.promise;
+        events.push(`end ${request.mode}`);
+      });
+
+      const sync = queue.enqueue('pull', 'all');
+      const exclusive = queue.runExclusive(async () => { events.push('apply'); return 7; });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(events).toEqual(['start pull']);
+
+      gate.resolve();
+      await expect(exclusive).resolves.toBe(7);
+      await sync;
+      expect(events).toEqual(['start pull', 'end pull', 'apply']);
+    });
+
+    it('runs before requests enqueued after it, which never merge into earlier ones', async () => {
+      const gate = deferred();
+      const events: string[] = [];
+      const queue = new SyncQueue(async (request) => {
+        events.push(`${request.mode}:${(request.filePaths ?? []).join(',')}`);
+        if (events.length === 1) await gate.promise;
+      });
+
+      void queue.enqueue('pull', 'all');
+      void queue.enqueue('push', 'modified', ['a.md']);
+      const exclusive = queue.runExclusive(async () => { events.push('apply'); });
+      void queue.enqueue('push', 'modified', ['b.md']);
+      gate.resolve();
+      await exclusive;
+      await vi.waitFor(() => expect(events).toHaveLength(4));
+      expect(events).toEqual(['pull:', 'push:a.md', 'apply', 'push:b.md']);
+    });
+
+    it('rejects with the task error and keeps processing later requests', async () => {
+      const queue = new SyncQueue(mockProcessor);
+      await expect(queue.runExclusive(async () => { throw new Error('nope'); })).rejects.toThrow('nope');
+      await queue.enqueue('pull', 'all');
+      expect(mockProcessor).toHaveBeenCalledTimes(1);
     });
   });
 });

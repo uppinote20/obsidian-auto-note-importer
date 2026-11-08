@@ -27,6 +27,8 @@ export type {
 export type {
   SyncMode,
   SyncRequest,
+  SyncTrigger,
+  SyncRunResult,
   NoteCreationResult,
 } from './sync.types';
 
@@ -34,7 +36,6 @@ export type {
   RemoteNote,
   RemoteFieldInfo,
   SyncResult,
-  ConflictInfo,
   BatchUpdate,
   ProviderCapabilities,
   DatabaseProvider,
@@ -79,3 +80,12 @@ export type {
   SupabaseOpenApiDefinition,
   SupabaseOpenApiSpec,
 } from './supabase.types';
+
+export type {
+  FieldSnapshot,
+  RecordSnapshot,
+  PendingConflict,
+  ConfigSyncState,
+  SyncStateFile,
+} from './sync-state.types';
+export { conflictKey } from './sync-state.types';

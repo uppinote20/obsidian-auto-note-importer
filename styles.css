@@ -305,3 +305,114 @@
   font-weight: var(--h4-weight);
   color: var(--h4-color);
 }
+
+/* ─── Sync Conflict Resolution Modal ─────────────────────────────── */
+
+.ani-conflict-modal .ani-conflict-desc,
+.ani-conflict-modal .ani-conflict-empty {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.ani-conflict-group {
+  margin-bottom: 16px;
+}
+
+.ani-conflict-config {
+  font-size: var(--h4-size);
+  font-weight: var(--h4-weight);
+  color: var(--h4-color);
+  margin: 12px 0 8px;
+}
+
+.ani-conflict-set-all {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-2);
+}
+
+.ani-conflict-set-all-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.ani-conflict-note {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.ani-conflict-note-path {
+  font-size: var(--font-ui-small);
+  color: var(--text-accent);
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+
+.ani-conflict-field {
+  padding: 8px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.ani-conflict-note-path + .ani-conflict-field {
+  border-top: none;
+}
+
+.ani-conflict-field-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ani-conflict-field-name {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ani-conflict-badge {
+  font-size: var(--font-smallest);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.ani-conflict-badge-warn {
+  color: var(--text-error);
+}
+
+.ani-conflict-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ani-conflict-value-label {
+  font-size: var(--font-smallest);
+  color: var(--text-faint);
+}
+
+.ani-conflict-value-text {
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ani-conflict-error {
+  font-size: var(--font-ui-small);
+  color: var(--text-error);
+  margin-top: 4px;
+}
+
+.ani-conflict-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}

@@ -6,16 +6,17 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { load } from 'js-yaml';
 
 // Mock obsidian before importing
 vi.mock('obsidian', () => ({
   App: vi.fn(),
   TFile: vi.fn(),
-  TFolder: vi.fn()
+  TFolder: vi.fn(),
+  parseYaml: (text: string) => load(text)
 }));
 
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
-import { airtableFieldMapper } from '../../src/services/airtable-field-mapper';
 
 describe('FrontmatterParser.ensurePrimaryField', () => {
   // Create a minimal parser with mocked app
@@ -142,171 +143,6 @@ Content here`;
     });
   });
 
-  describe('extractSyncableFields', () => {
-    it('should exclude fields not present in Airtable when cachedFields is provided', () => {
-      const mockApp = {
-        metadataCache: {
-          getFileCache: vi.fn().mockReturnValue({
-            frontmatter: {
-              primaryField: 'rec123',
-              Name: 'Test',
-              Count: 100,
-              Status: 'Todo',
-              created: '2026-02-25',
-              status: 'imported',
-              position: { start: { line: 0 }, end: { line: 5 } }
-            }
-          })
-        },
-        vault: { getAbstractFileByPath: vi.fn() }
-      };
-      const parser = new FrontmatterParser(mockApp as any);
-      const mockFile = { path: 'test.md' } as any;
-
-      const cachedFields = [
-        { id: 'fld1', name: 'Name', type: 'singleLineText' },
-        { id: 'fld2', name: 'Count', type: 'number' },
-        { id: 'fld3', name: 'Status', type: 'singleSelect' },
-        { id: 'fld4', name: 'Cal', type: 'formula' }
-      ];
-
-      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, cachedFields);
-
-      expect(result).toEqual({ Name: 'Test', Count: 100, Status: 'Todo' });
-      expect(result).not.toHaveProperty('created');
-      expect(result).not.toHaveProperty('status');
-      expect(result).not.toHaveProperty('Cal');
-      expect(result).not.toHaveProperty('primaryField');
-    });
-
-    it('should exclude object-shaped fields even when the provider does not mark them read-only', () => {
-      const mockApp = {
-        metadataCache: {
-          getFileCache: vi.fn().mockReturnValue({
-            frontmatter: {
-              primaryField: 'rec123',
-              Name: 'Test',
-              Barcode: 'user-edited barcode',
-              Collaborator: 'Ada',
-              position: { start: { line: 0 }, end: { line: 5 } }
-            }
-          })
-        },
-        vault: { getAbstractFileByPath: vi.fn() }
-      };
-      const parser = new FrontmatterParser(mockApp as any);
-      const mockFile = { path: 'test.md' } as any;
-
-      const cachedFields = [
-        { id: 'fld1', name: 'Name', type: 'singleLineText' },
-        { id: 'fld2', name: 'Barcode', type: 'barcode' },
-        { id: 'fld3', name: 'Collaborator', type: 'singleCollaborator' }
-      ];
-
-      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, cachedFields);
-
-      expect(result).toEqual({ Name: 'Test' });
-      expect(airtableFieldMapper.isReadOnly('barcode')).toBe(false);
-      expect(airtableFieldMapper.isPushable('barcode')).toBe(false);
-    });
-
-    it('should include all non-system fields when no cachedFields provided', () => {
-      const mockApp = {
-        metadataCache: {
-          getFileCache: vi.fn().mockReturnValue({
-            frontmatter: {
-              primaryField: 'rec123',
-              Name: 'Test',
-              Count: 100,
-              created: '2026-02-25',
-              status: 'imported',
-              position: { start: { line: 0 }, end: { line: 5 } }
-            }
-          })
-        },
-        vault: { getAbstractFileByPath: vi.fn() }
-      };
-      const parser = new FrontmatterParser(mockApp as any);
-      const mockFile = { path: 'test.md' } as any;
-
-      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, undefined);
-
-      expect(result).toHaveProperty('Name');
-      expect(result).toHaveProperty('Count');
-      expect(result).toHaveProperty('created');
-      expect(result).toHaveProperty('status');
-      expect(result).not.toHaveProperty('primaryField');
-    });
-
-    it('should return null when no primaryField exists', () => {
-      const mockApp = {
-        metadataCache: {
-          getFileCache: vi.fn().mockReturnValue({
-            frontmatter: { Name: 'Test', Count: 100 }
-          })
-        },
-        vault: { getAbstractFileByPath: vi.fn() }
-      };
-      const parser = new FrontmatterParser(mockApp as any);
-      const mockFile = { path: 'test.md' } as any;
-
-      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, []);
-      expect(result).toBeNull();
-    });
-
-    it('should return null when all fields are filtered out', () => {
-      const mockApp = {
-        metadataCache: {
-          getFileCache: vi.fn().mockReturnValue({
-            frontmatter: {
-              primaryField: 'rec123',
-              Cal: 200,
-              position: { start: { line: 0 }, end: { line: 3 } }
-            }
-          })
-        },
-        vault: { getAbstractFileByPath: vi.fn() }
-      };
-      const parser = new FrontmatterParser(mockApp as any);
-      const mockFile = { path: 'test.md' } as any;
-
-      const cachedFields = [
-        { id: 'fld1', name: 'Cal', type: 'formula' }
-      ];
-
-      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, cachedFields);
-      expect(result).toBeNull();
-    });
-
-    it('should skip null and undefined values', () => {
-      const mockApp = {
-        metadataCache: {
-          getFileCache: vi.fn().mockReturnValue({
-            frontmatter: {
-              primaryField: 'rec123',
-              Name: 'Test',
-              Empty: null,
-              Missing: undefined,
-              position: { start: { line: 0 }, end: { line: 4 } }
-            }
-          })
-        },
-        vault: { getAbstractFileByPath: vi.fn() }
-      };
-      const parser = new FrontmatterParser(mockApp as any);
-      const mockFile = { path: 'test.md' } as any;
-
-      const cachedFields = [
-        { id: 'fld1', name: 'Name', type: 'singleLineText' },
-        { id: 'fld2', name: 'Empty', type: 'singleLineText' },
-        { id: 'fld3', name: 'Missing', type: 'singleLineText' }
-      ];
-
-      const result = parser.extractSyncableFields(mockFile, airtableFieldMapper, cachedFields);
-      expect(result).toEqual({ Name: 'Test' });
-    });
-  });
-
   describe('edge cases', () => {
     it('should handle frontmatter with only dashes', () => {
       const parser = createParser();
@@ -351,6 +187,77 @@ More dashes
       // Body content should be preserved
       expect(result).toContain('Some content');
       expect(result).toContain('More dashes');
+    });
+  });
+});
+
+describe('FrontmatterParser snapshot readers', () => {
+  const createParser = (frontmatter?: Record<string, unknown>) => {
+    const mockApp = {
+      metadataCache: { getFileCache: vi.fn().mockReturnValue(frontmatter ? { frontmatter } : null) },
+      vault: { getAbstractFileByPath: vi.fn() }
+    };
+    return new FrontmatterParser(mockApp as any);
+  };
+
+  describe('parseNoteContent', () => {
+    const parser = createParser();
+
+    it('returns the primaryField as record id alongside the non-system fields', () => {
+      expect(parser.parseNoteContent('---\nprimaryField: rec1\nName: a\nEmpty: null\n---\nbody')).toEqual({
+        recordId: 'rec1',
+        fields: { Name: 'a', Empty: null },
+      });
+    });
+
+    it('has a null record id when primaryField is absent', () => {
+      expect(parser.parseNoteContent('---\nName: a\n---\n')).toEqual({ recordId: null, fields: { Name: 'a' } });
+      expect(parser.parseNoteContent('no frontmatter')).toEqual({ recordId: null, fields: {} });
+    });
+
+    it('returns null when the frontmatter cannot be parsed', () => {
+      expect(parser.parseNoteContent('---\nbad: [unclosed\n---\n')).toBeNull();
+    });
+  });
+
+  describe('parseFieldsFromContent', () => {
+    const parser = createParser();
+
+    it('parses block scalars and drops system fields', () => {
+      const content = '---\nprimaryField: "r"\nNotes: |\n  a\n---\nbody';
+      expect(parser.parseFieldsFromContent(content)).toEqual({ Notes: 'a\n' });
+    });
+
+    it('decodes escaped values', () => {
+      expect(parser.parseFieldsFromContent('---\nowner: "Kim\\nX"\n---\n')).toEqual({ owner: 'Kim\nX' });
+    });
+
+    it('returns {} without frontmatter', () => {
+      expect(parser.parseFieldsFromContent('just body')).toEqual({});
+    });
+
+    it('returns null when the frontmatter YAML is malformed', () => {
+      expect(parser.parseFieldsFromContent('---\nkey: [unclosed\n---\n')).toBeNull();
+    });
+
+    it('returns {} for empty frontmatter', () => {
+      expect(parser.parseFieldsFromContent('---\n---\nbody')).toEqual({});
+    });
+
+    it('does not read fields from a later fence in the body', () => {
+      expect(parser.parseFieldsFromContent('---\n---\nbody\n\n---\nx: 1\n---')).toEqual({});
+    });
+
+    it('does not capture a mapping-shaped body after empty frontmatter', () => {
+      expect(parser.parseFieldsFromContent('---\n---\na: 1\n\n---\nx: 1\n---')).toEqual({});
+    });
+
+    it('does not accept a closing fence with trailing characters', () => {
+      expect(parser.parseFieldsFromContent('---\nA: 1\n---x\n')).toEqual({});
+    });
+
+    it('handles CRLF line endings', () => {
+      expect(parser.parseFieldsFromContent('---\r\nA: 1\r\n---\r\nbody')).toEqual({ A: 1 });
     });
   });
 });

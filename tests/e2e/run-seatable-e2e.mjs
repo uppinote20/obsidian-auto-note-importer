@@ -11,6 +11,9 @@
  * @covers src/core/sync-orchestrator.ts
  * @covers src/core/config-instance.ts
  * @covers src/core/config-manager.ts
+ * @covers src/core/three-way-merge.ts
+ * @covers src/core/sync-state-store.ts
+ * @covers src/core/conflict-resolver.ts
  *
  * Prerequisites:
  *   1. Obsidian running with --remote-debugging-port=9222
@@ -186,6 +189,29 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_CFG
       headers: { 'Authorization': 'Bearer ' + tok.access_token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ table_id: cfg.tableId, row_ids: rowIds }),
     });
+  }
+
+  async function updateRemoteRow(rowId, row) {
+    const cfg = getConfig();
+    const tok = await exchangeBaseToken();
+    const r = await fetch(buildBaseUrl(tok, 'rows/'), {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + tok.access_token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table_id: cfg.tableId, updates: [{ row_id: rowId, row }] }),
+    });
+    if (!r.ok) throw new Error('updateRemoteRow failed: HTTP ' + r.status);
+  }
+
+  // Pending conflicts for one record, read from the plugin's snapshot store
+  // (private field, visible at runtime).
+  function pendingFor(recordId) {
+    return getPlugin().syncState.forConfig('${E2E_CFG_ID}').pendingConflicts()
+      .filter(c => c.recordId === recordId);
+  }
+
+  function clearPendingFor(recordId) {
+    const h = getPlugin().syncState.forConfig('${E2E_CFG_ID}');
+    for (const c of pendingFor(recordId)) h.removeConflict(c.recordId, c.field);
   }
 
   async function resetRowsToInitial(rowIds, initial) {
@@ -494,37 +520,42 @@ async function cleanup() {
 
     // ── Push: conflict-resolution modes (using number column) ──────
 
-    await test('push / all / remote-wins keeps remote value', async () => {
+    await test('push / all / remote-wins keeps remote value on a true conflict', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('remote-wins');
         const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Pull.md');
+        // Both sides edit Count: only a true conflict is decided by the mode
+        // (a local-only edit is pushed in every mode since #82).
         await modifyField(file, 'Count', 9999);
+        await updateRemoteRow(${JSON.stringify(testRowIds[0])}, { Count: 150 });
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
         const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[0])});
         setMode('manual');
         return JSON.stringify({ remoteCount: row?.Count });
       })()`, 25000);
-      return { pass: r.remoteCount === 100, detail: `Count=${r.remoteCount} (expected 100)` };
+      return { pass: r.remoteCount === 150, detail: `Count=${r.remoteCount} (expected 150)` };
     });
 
-    await test('push / all / manual blocks conflicting field', async () => {
+    await test('push / all / manual blocks a true conflict', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
         setMode('manual');
         const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+        // Both sides edit Count (a local-only edit would be pushed since #82).
         await modifyField(file, 'Count', 7777);
+        await updateRemoteRow(${JSON.stringify(testRowIds[1])}, { Count: 250 });
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
         const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
         return JSON.stringify({ remoteCount: row?.Count });
       })()`, 25000);
-      return { pass: r.remoteCount === 200, detail: `Count=${r.remoteCount} (expected 200)` };
+      return { pass: r.remoteCount === 250, detail: `Count=${r.remoteCount} (expected 250)` };
     });
 
     // ── Bidirectional with formula ──────────────────────────────────
@@ -597,6 +628,92 @@ async function cleanup() {
         return JSON.stringify({ remoteCal: row?.Cal, remoteCount: row?.Count });
       })()`, 25000);
       return { pass: r.remoteCal === 200, detail: `Cal=${r.remoteCal} Count=${r.remoteCount}` };
+    });
+
+    // ── Snapshot-based conflict handling (#82) ─────────────────────
+
+    await test('snapshot / manual: local-only edit pushes to remote', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('manual');
+        const cfg = getConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+        await modifyField(file, 'Count', 611);
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
+        return JSON.stringify({ remoteCount: row?.Count, pending: pendingFor(${JSON.stringify(testRowIds[1])}).length });
+      })()`, 25000);
+      return { pass: r.remoteCount === 611 && r.pending === 0, detail: `Count=${r.remoteCount} pending=${r.pending} (expected 611, 0)` };
+    });
+
+    await test('snapshot / pull keeps a local-only edit while applying a remote-only edit', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('manual');
+        const cfg = getConfig();
+        const rid = ${JSON.stringify(testRowIds[0])};
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Pull.md');
+        clearPendingFor(rid);
+        await modifyField(file, 'Description', 'local-only edit');
+        await updateRemoteRow(rid, { Count: 123 });
+        await enqueueSync('pull', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        const row = await fetchRowFromSeaTable(rid);
+        return JSON.stringify({
+          localCount: fm.Count, localDesc: fm.Description,
+          remoteCount: row?.Count, remoteDesc: row?.Description,
+          pendingFields: pendingFor(rid).map(c => c.field),
+        });
+      })()`, 25000);
+      const pass = r.localCount === 123 && r.localDesc === 'local-only edit'
+        && r.remoteCount === 123 && r.remoteDesc === 'pull row'
+        // Cal may still be queued: the earlier read-only test left a local-only
+        // edit on a non-writable field, which manual mode queues by design.
+        && !r.pendingFields.includes('Count') && !r.pendingFields.includes('Description');
+      return { pass, detail: JSON.stringify(r) };
+    });
+
+    // Both sides edit Count (local 7001, remote 8001); outcome depends on mode.
+    const BOTH_EDIT = (mode, action) => `(async () => {
+      ${HELPERS}
+      const cfg = getConfig();
+      const rid = ${JSON.stringify(testRowIds[1])};
+      clearPendingFor(rid);
+      setMode('${mode}');
+      const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+      await modifyField(file, 'Count', 7001);
+      await updateRemoteRow(rid, { Count: 8001 });
+      ${action}
+      await new Promise(r => setTimeout(r, 6000));
+      const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+      const row = await fetchRowFromSeaTable(rid);
+      const pending = pendingFor(rid).filter(c => c.field === 'Count');
+      const out = { localCount: fm.Count, remoteCount: row?.Count, pending: pending.length };
+      setMode('manual');
+      clearPendingFor(rid);
+      return JSON.stringify(out);
+    })()`;
+
+    await test('snapshot / both edit Count / obsidian-wins: push sends local', async () => {
+      await doReset();
+      const r = await run(BOTH_EDIT('obsidian-wins', "await enqueueSync('push', 'all');"), 30000);
+      return { pass: r.remoteCount === 7001 && r.localCount === 7001, detail: JSON.stringify(r) };
+    });
+
+    await test('snapshot / both edit Count / remote-wins: pull writes remote', async () => {
+      await doReset();
+      const r = await run(BOTH_EDIT('remote-wins', "await enqueueSync('pull', 'all');"), 30000);
+      return { pass: r.localCount === 8001 && r.remoteCount === 8001, detail: JSON.stringify(r) };
+    });
+
+    await test('snapshot / both edit Count / manual: one queued entry, neither side changes', async () => {
+      await doReset();
+      const r = await run(BOTH_EDIT('manual', "await enqueueSync('push', 'all'); await enqueueSync('pull', 'all');"), 40000);
+      return { pass: r.localCount === 7001 && r.remoteCount === 8001 && r.pending === 1, detail: JSON.stringify(r) };
     });
 
     // ── Bases file generation ───────────────────────────────────────

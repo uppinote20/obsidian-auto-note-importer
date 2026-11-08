@@ -8,8 +8,6 @@
  * check should move into the provider's real e2e suite and leave this file.
  *
  * Checks:
- *   #82  manual mode refuses the push with a Notice and opens no resolution UI
- *        (also: a local-only edit counts as a "conflict" — no base snapshot)
  *   #26  conflict detection issues one fetchRecord() per pushed file
  *   #89  every pull re-fetches the full table (no lastSyncedAt / delta)
  *   #83  fetchNotes() ignores any filter option; config has no filter field
@@ -256,29 +254,6 @@ async function cleanup() {
 
 async function checks() {
   const [rowA] = rowIds;
-
-  await test('#82 manual mode: local-only edit is rejected, Notice only, no modal', async () => {
-    const r = await run(`(async () => {
-      ${HELPERS}
-      setMode('manual', false);
-      clearNotices();
-      const file = fileForRow('${rowA}');
-      if (!file) throw new Error('no local file for row A');
-      await modifyField(file, 'Count', 11);          // remote stays 10 — no remote-side edit
-      const spy = instrument(['batchUpdate', 'updateRecord']);
-      try { await sync('push', 'all'); } finally { spy.restore(); }
-      const remote = await getRow('${rowA}');
-      const notices = visibleNotices();
-      return JSON.stringify({
-        remoteCount: remote.Count,
-        writes: spy.counts.batchUpdate + spy.counts.updateRecord,
-        conflictNotice: notices.some(t => t.includes('Conflicts detected')),
-        modalOpen: document.querySelectorAll('.modal-container').length > 0,
-      });
-    })()`, 60000);
-    const reproduced = r.remoteCount === 10 && r.conflictNotice && !r.modalOpen;
-    return { pass: reproduced, detail: JSON.stringify(r) };
-  });
 
   await test('#26 conflict detection: one fetchRecord() per pushed file', async () => {
     const r = await run(`(async () => {

@@ -274,7 +274,10 @@ async function cleanup() {
 
     // ── Read-only / object-shaped protection ─────────────────────────
 
-    await test('push / local edit to Doubled (formula) is not pushed — recomputes from Score, not the forged value', async () => {
+    // A local edit to a formula field can't be pushed. Under obsidian-wins the
+    // next pull keeps it locally (three-way: a local-only change wins), so the
+    // remote formula is checked directly; a remote-wins pull then restores it.
+    await test('push / local edit to Doubled (formula) is not pushed — remote recomputes from Score; obsidian-wins keeps it locally, remote-wins restores it', async () => {
       if (!targetNotePath) throw new Error('No target note discovered by the pull test — cannot continue.');
       const r = await run(`(async () => {
         ${HELPERS}
@@ -288,14 +291,26 @@ async function cleanup() {
         await new Promise(r => setTimeout(r, 6000));
         await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 6000));
+        const keptFm = app.metadataCache.getFileCache(file)?.frontmatter || {};
+        setMode('remote-wins');
+        await enqueueSync('pull', 'all');
+        await new Promise(r => setTimeout(r, 6000));
         setMode('manual');
         const afterFm = app.metadataCache.getFileCache(file)?.frontmatter || {};
-        return JSON.stringify({ score, doubledAfter: afterFm.Doubled });
-      })()`, 35000);
+        return JSON.stringify({ score, pageId: beforeFm.primaryField, doubledKept: keptFm.Doubled, doubledAfter: afterFm.Doubled });
+      })()`, 45000);
       if (r.noFile) return { pass: false, detail: 'target note not found' };
+      const page = await notionApi(`/pages/${r.pageId}`);
+      const remoteDoubled = page?.properties?.Doubled?.formula?.number;
       const expectedDoubled = r.score * 2;
-      const pass = r.doubledAfter === expectedDoubled && r.doubledAfter !== 999999;
-      return { pass, detail: `score=${r.score} doubledAfter=${r.doubledAfter} (expected ${expectedDoubled}, not 999999)` };
+      const pass = remoteDoubled === expectedDoubled
+        && r.doubledKept === 999999
+        && r.doubledAfter === expectedDoubled;
+      return {
+        pass,
+        detail: `score=${r.score} remoteDoubled=${remoteDoubled} (expected ${expectedDoubled}) `
+          + `obsidian-wins local=${r.doubledKept} (expected 999999) remote-wins local=${r.doubledAfter} (expected ${expectedDoubled})`,
+      };
     });
 
     // ── Body sync ────────────────────────────────────────────────────

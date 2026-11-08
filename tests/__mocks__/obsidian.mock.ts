@@ -3,6 +3,7 @@
  */
 
 import { vi } from 'vitest';
+import { load, dump } from 'js-yaml';
 
 export const Notice = vi.fn();
 
@@ -17,6 +18,22 @@ export const MarkdownView = vi.fn();
 export const requestUrl = vi.fn();
 
 export const setIcon = vi.fn();
+
+export class Modal {
+  app: unknown;
+  contentEl: unknown = {};
+  titleEl: unknown = {};
+  modalEl: unknown = {};
+
+  constructor(app: unknown) {
+    this.app = app;
+  }
+
+  open(): void {}
+  close(): void {}
+  onOpen(): void {}
+  onClose(): void {}
+}
 
 export class PluginSettingTab {
   app: unknown;
@@ -184,6 +201,14 @@ export function createMockApp() {
       }),
       adapter: {
         exists: vi.fn(async (path: string) => files.has(path) || folders.has(path)),
+        read: vi.fn(async (path: string) => {
+          const content = files.get(path);
+          if (content === undefined) throw new Error(`ENOENT: ${path}`);
+          return content;
+        }),
+        write: vi.fn(async (path: string, content: string) => {
+          files.set(path, content);
+        }),
       },
       on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
         const handlers = eventHandlers.get(event) || [];
@@ -197,9 +222,25 @@ export function createMockApp() {
     workspace: {
       getActiveViewOfType: vi.fn(() => null),
     },
+    fileManager: {
+      // Mirrors Obsidian: parse the note's frontmatter, let the callback
+      // mutate it, write it back (body preserved).
+      processFrontMatter: vi.fn(async (file: { path: string }, fn: (fm: Record<string, unknown>) => void) => {
+        const content = files.get(file.path) ?? '';
+        const match = content.match(/^---\r?\n([\s\S]*?)\r?\n?---\r?\n?/);
+        const fm = ((match ? load(match[1]) : null) ?? {}) as Record<string, unknown>;
+        fn(fm);
+        const body = match ? content.slice(match[0].length) : content;
+        files.set(file.path, `---\n${dump(fm)}---\n${body}`);
+      }),
+    },
     // Test helpers (not part of Obsidian API)
     _files: files,
     _folders: folders,
     _eventHandlers: eventHandlers,
   };
+}
+
+export function parseYaml(text: string): unknown {
+  return load(text);
 }

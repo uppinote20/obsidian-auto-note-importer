@@ -43,7 +43,8 @@ src/
 │   ├── field-types.types.ts             # StandardFieldType + FieldTypeMapper
 │   ├── provider-settings.types.ts       # CredentialFormRenderer (settings-tab plugin point)
 │   ├── airtable.types.ts                # Airtable-specific (AirtableField, AirtableBase, AirtableTable, AirtableView)
-│   └── sync.types.ts                    # SyncMode, SyncScope, SyncRequest
+│   ├── sync.types.ts                    # SyncMode, SyncScope, SyncTrigger, SyncRequest, SyncRunResult
+│   └── sync-state.types.ts              # FieldSnapshot (per-side baselines), PendingConflict, SyncStateFile
 ├── constants/                       # Constants
 │   ├── api.ts                           # AIRTABLE_* / SEATABLE_* / RATE_LIMIT_INTERVAL_MS / retry knobs
 │   └── system-fields.ts                 # SYSTEM_FIELDS, isSystemField (frontmatter-reserved)
@@ -69,8 +70,11 @@ src/
 │   └── field-cache.ts                   # Airtable field metadata cache (Meta API)
 ├── core/                            # Business logic
 │   ├── sync-orchestrator.ts             # processSyncRequest (pull / push / bidirectional)
-│   ├── conflict-resolver.ts             # detectConflicts + resolve by mode
-│   ├── sync-queue.ts                    # Queue-based sync (dedup + merge)
+│   ├── three-way-merge.ts               # threeWayMerge: per-field verdicts (snapshot vs local vs remote)
+│   ├── conflict-resolver.ts             # planPush / planPull: verdicts → per-mode actions
+│   ├── sync-state-store.ts              # SyncStateStore: sync snapshots + pending conflicts (sync-state.json)
+│   ├── conflict-applier.ts              # ConflictApplier: apply Use Obsidian / Use remote / Keep local
+│   ├── sync-queue.ts                    # Queue-based sync (dedup + merge, trigger, runExclusive)
 │   ├── config-instance.ts               # Per-config service stack
 │   └── config-manager.ts                # ConfigInstance lifecycle
 ├── builders/                        # Content generation
@@ -81,6 +85,8 @@ src/
 │   └── frontmatter-parser.ts            # YAML frontmatter (read/inject + read-only filter)
 ├── ui/                              # UI components
 │   ├── settings-tab.ts                  # Settings panel (multi-config, provider-aware cards)
+│   ├── modals/
+│   │   └── conflict-resolution-modal.ts # Per-field resolution modal for queued conflicts
 │   └── suggest/                         # Folder/file autocomplete
 └── utils/                           # Utilities
     ├── sanitizers.ts                    # File/folder name sanitization
@@ -102,20 +108,26 @@ src/
 - **`SyncQueue`** — Dedup + merge sequential sync requests; `enqueueSyncRequest` returns the queue's promise so e2e can await completion
 - **`FileWatcher`** — Detects file changes with debounce
 - **`FrontmatterParser`** — Read-only field filter via the active provider's `FieldTypeMapper`
-- **`ConflictResolver`** — Detect/resolve based on `obsidian-wins` / `remote-wins` / `manual`
+- **`threeWayMerge`** — Pure per-field verdict (`unchanged` / `local-only` / `remote-only` / `both-same` / `conflict` / `pinned`) from sync snapshot vs local vs remote
+- **`planPush` / `planPull`** (`conflict-resolver.ts`) — Map verdicts to what is sent / kept / restored / queued for `obsidian-wins` / `remote-wins` / `manual`
+- **`SyncStateStore`** — Persists per-side field snapshots and the pending conflict queue in `<pluginDir>/sync-state.json`; one store shared via `SharedServices.syncState`, per-config handles via `forConfig()`
+- **`ConflictApplier`** / **`ConflictResolutionModal`** — Apply the user's per-field choices (stale re-checks, run via `SyncQueue.runExclusive`) / the modal that collects them
 
 ### Sync Flow
 
 1. **From remote**: `DatabaseProvider.fetchNotes()` → builder writes `.md` with `primaryField` (the remote record id)
-2. **To remote**: `FileWatcher` detects change → `SyncQueue.enqueue()` → `SyncOrchestrator.pushFiles()` → `DatabaseProvider.batchUpdate()`
+2. **To remote**: `FileWatcher` detects change → `SyncQueue.enqueue()` → `SyncOrchestrator.pushFiles()` (fetch record → `threeWayMerge` → `planPush`) → `DatabaseProvider.batchUpdate()`
 3. **Bidirectional**: push to remote → wait `formulaSyncDelay` (server-side computation) → pull back computed values
+4. **Conflicts**: pull and push both judge each field against the sync snapshot; queued conflicts surface after the run (user-triggered → modal, automatic → clickable Notice) and via `Resolve sync conflicts`
 
 ### Key Design Decisions
 
 - `primaryField` in frontmatter is always the **remote record id** (provider-agnostic immutable identifier)
 - Read-only fields (formula / rollup / lookup / `_ctime` / etc.) are filtered out via `FieldTypeMapper.isReadOnly()` — fail-closed for unknown types; push filtering is gated uniformly through `DatabaseProvider.fetchFieldMetadata()` (null = fail-open, handbook §4.4)
 - Page body sync (Notion) is **pull-only** and opt-in per config (`syncPageBody`, default off): `fetchBody()` + `capabilities.bodySync`, body rendered via `{{body}}` or default placement — local body edits are overwritten on pull (follows `allowOverwrite`)
-- Conflict resolution modes: `obsidian-wins`, `remote-wins`, `manual` (renamed from `airtable-wins` in #64)
+- Conflict handling is **three-way** (#82): per-side snapshots in `sync-state.json` (loaded before `ConfigManager`) separate local-only / remote-only edits from true conflicts; only fields changed on both sides are conflicts
+- Conflict resolution modes (`obsidian-wins`, `remote-wins`, `manual`; renamed from `airtable-wins` in #64) decide only the winner of *conflicting* fields, on push and on pull
+- **Pull writes only the vault; push writes only the remote** — a pull never changes the remote and vice versa, regardless of `bidirectionalSync`
 - Services receive settings updates via `updateSettings()` — `ConfigInstance.updateSettings()` propagates to all owned services
 - `FileWatcher` is reconfigured on settings change (no reload needed for `watchForChanges`)
 - Commands use `checkCallback` pattern to hide push/bidirectional commands when `bidirectionalSync` is disabled
@@ -131,6 +143,7 @@ Command titles include the provider label (e.g. `Sync current note from Airtable
 | Sync all notes from {provider} | ✅ |
 | Sync current/modified/all to {provider} | ❌ (requires `bidirectionalSync`) |
 | Bidirectional sync current/modified/all | ❌ (requires `bidirectionalSync`) |
+| Resolve sync conflicts | ❌ (visible only while conflicts are pending) |
 
 ## Documentation
 
@@ -170,7 +183,7 @@ Code ↔ Docs 양방향 링크 시스템:
 | Sync flow | 9.1 |
 | Service init order | 9.2 |
 | Settings update pattern | 9.3 |
-| Conflict resolution | 9.5 |
+| Conflict resolution (sync snapshot, three-way, modal) | 9.5 |
 | API patterns | 9.6 |
 | Multi-config architecture | 9.8 |
 | Settings migration (v1 → v3) | 9.9 |

@@ -2,7 +2,8 @@
  * ConfigInstance owns the full service stack for one config entry.
  *
  * Creates and manages: DatabaseProvider, FileWatcher, SyncOrchestrator,
- * SyncQueue, ConflictResolver, and a per-config sync scheduler.
+ * SyncQueue, and a per-config sync scheduler. Sync snapshots come from the
+ * shared SyncStateStore (scoped to this config id).
  *
  * @handbook 9.2-service-initialization-order
  * @tested tests/core/config-instance.test.ts
@@ -17,14 +18,18 @@ import type {
   LegacySettings,
   SyncMode,
   SyncScope,
+  SyncTrigger,
   ConfigEntry,
   Credential,
   SharedServices,
   DatabaseProvider,
+  PendingConflict,
 } from '../types';
 import { RateLimiter, createProvider, getOrCreateRateLimiter as getOrCreateSharedRateLimiter } from '../services';
-import { SyncQueue, ConflictResolver, SyncOrchestrator } from '../core';
+import { SyncQueue, SyncOrchestrator } from '../core';
 import type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
+import { ConflictApplier } from './conflict-applier';
+import type { ApplyResult, ConflictChoice } from './conflict-applier';
 import { FileWatcher } from '../file-operations';
 import { buildLegacySettings } from '../utils';
 
@@ -51,7 +56,6 @@ export class ConfigInstance {
 
   private rateLimiter: RateLimiter;
   private databaseProvider: DatabaseProvider;
-  private conflictResolver: ConflictResolver;
   private fileWatcher: FileWatcher;
   private syncOrchestrator: SyncOrchestrator;
   private syncQueue: SyncQueue;
@@ -78,21 +82,18 @@ export class ConfigInstance {
     );
     this.providerType = this.databaseProvider.providerType;
 
-    // 3. Create ConflictResolver
-    this.conflictResolver = new ConflictResolver(this.settings, this.databaseProvider);
-
-    // 4. Create FileWatcher (callback captures syncQueue via closure — safe because
+    // 3. Create FileWatcher (callback captures syncQueue via closure — safe because
     //    setup() is called after syncQueue is assigned, and callbacks fire asynchronously)
     this.fileWatcher = new FileWatcher(
       this.app,
       this.settings,
       async (files) => {
         const mode: SyncMode = this.settings.autoSyncComputedFields ? 'bidirectional' : 'push';
-        await this.syncQueue.enqueue(mode, 'modified', files.map(f => f.path));
+        await this.syncQueue.enqueue(mode, 'modified', files.map(f => f.path), 'auto');
       }
     );
 
-    // 5. Create SyncOrchestrator
+    // 4. Create SyncOrchestrator
     const statusBar: StatusBarController = {
       createItem: (): StatusBarHandle => {
         const el = this.shared.statusBarFactory();
@@ -110,20 +111,24 @@ export class ConfigInstance {
       this.shared.fieldCache,
       this.shared.frontmatterParser,
       this.fileWatcher,
-      this.conflictResolver,
+      this.shared.syncState.forConfig(config.id),
       statusBar,
     );
 
-    // 6. Create SyncQueue
+    // 5. Create SyncQueue
     this.syncQueue = new SyncQueue(
-      ({ mode, scope, filePaths }) => this.syncOrchestrator.processSyncRequest(mode, scope, filePaths),
+      // A throw skips onRunComplete and reaches the queue's onError instead.
+      async ({ mode, scope, filePaths, trigger }) => {
+        const result = await this.syncOrchestrator.processSyncRequest(mode, scope, filePaths, trigger);
+        this.shared.onRunComplete(this.configId, trigger, result);
+      },
       (error) => {
         const message = error instanceof Error ? error.message : 'Unknown error';
         new Notice(`Auto Note Importer: Sync failed: ${message}`);
       }
     );
 
-    // 7. Setup file watcher and scheduler if enabled
+    // 6. Setup file watcher and scheduler if enabled
     if (config.enabled) {
       this.fileWatcher.setup();
       this.startScheduler(config);
@@ -143,8 +148,35 @@ export class ConfigInstance {
    * so callers (e.g. e2e harnesses) can await completion. UI callers
    * that want fire-and-forget behavior can simply ignore the return.
    */
-  enqueueSyncRequest(mode: SyncMode, scope: SyncScope, filePaths?: string[]): Promise<void> {
-    return this.syncQueue.enqueue(mode, scope, filePaths);
+  enqueueSyncRequest(
+    mode: SyncMode,
+    scope: SyncScope,
+    filePaths?: string[],
+    trigger: SyncTrigger = 'user',
+  ): Promise<void> {
+    return this.syncQueue.enqueue(mode, scope, filePaths, trigger);
+  }
+
+  /**
+   * Applier for this config's queued conflicts. Built per use so it sees the
+   * current `bidirectionalSync` setting and provider.
+   */
+  createConflictApplier(): ConflictApplier {
+    return new ConflictApplier(
+      this.app,
+      this.shared.syncState.forConfig(this.configId),
+      this.databaseProvider,
+      this.shared.frontmatterParser,
+      this.settings.bidirectionalSync && this.databaseProvider.capabilities.bidirectional,
+    );
+  }
+
+  /**
+   * Applies conflict choices on this config's sync queue, so an Apply never
+   * interleaves with a running sync (it waits for in-flight and queued runs).
+   */
+  applyConflicts(choices: Array<{ conflict: PendingConflict; choice: ConflictChoice }>): Promise<ApplyResult> {
+    return this.syncQueue.runExclusive(() => this.createConflictApplier().apply(choices));
   }
 
   /**
@@ -163,7 +195,6 @@ export class ConfigInstance {
 
     // Propagate settings to all services
     this.databaseProvider.reconfigure(credential, config, this.rateLimiter, this.shared.getDebugMode());
-    this.conflictResolver.updateSettings(this.settings);
     this.syncOrchestrator.updateSettings(this.settings);
 
     // Reconfigure file watcher
@@ -203,7 +234,7 @@ export class ConfigInstance {
   private startScheduler(config: ConfigEntry): void {
     if (config.syncInterval > 0) {
       this.schedulerIntervalId = window.setInterval(
-        () => { void this.syncQueue.enqueue('pull', 'all'); },
+        () => { void this.syncQueue.enqueue('pull', 'all', undefined, 'auto'); },
         config.syncInterval * 60 * 1000,
       );
     }

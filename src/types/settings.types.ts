@@ -24,7 +24,7 @@ export type SyncScope = 'current' | 'modified' | 'all';
 
 /**
  * Per-config resolved settings — the flat shape consumed by the service
- * layer (SyncOrchestrator, FileWatcher, providers, ConflictResolver).
+ * layer (SyncOrchestrator, FileWatcher, providers).
  * Built from a ConfigEntry + Credential via `buildLegacySettings()`;
  * see handbook §9.8.
  *

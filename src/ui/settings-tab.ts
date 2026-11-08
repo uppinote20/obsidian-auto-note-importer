@@ -14,6 +14,7 @@
  * @tested e2e:tests/e2e/run-seatable-settings-e2e.mjs
  * @tested e2e:tests/e2e/run-supabase-settings-e2e.mjs
  * @tested tests/ui/settings-tab-notion-autofill.test.ts
+ * @tested tests/ui/settings-tab-sync-card.test.ts
  * @tested e2e:tests/e2e/run-notion-settings-e2e.mjs
  */
 
@@ -40,6 +41,18 @@ import { generateId } from '../utils/object-utils';
 import { validateFolderPath } from '../utils/validation';
 import { debounce } from '../utils/debounce';
 import { assertNever } from '../utils/assert';
+
+/** What each conflict mode does with a field changed on both sides since the last sync (spec §3). */
+const CONFLICT_MODE_DESCRIPTIONS: Record<ConflictResolutionMode, string> = {
+  'manual': 'Fields changed on both sides since the last sync are left as they are on both sides and queued. Run "Resolve sync conflicts" to choose a value.',
+  'obsidian-wins': 'Push sends the Obsidian value, overwriting remote changes (with a notice). Pull keeps the Obsidian value.',
+  'remote-wins': 'Push skips fields changed on both sides. Pull replaces them with the remote value (with a notice).',
+};
+
+function conflictModeDescription(config: ConfigEntry): string {
+  const base = CONFLICT_MODE_DESCRIPTIONS[config.conflictResolution];
+  return config.bidirectionalSync ? base : `${base} Push applies only when bidirectional sync is on.`;
+}
 
 /**
  * Interface for the plugin that the settings tab needs.
@@ -1041,10 +1054,8 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
   }
 
   private getSyncSummary(config: ConfigEntry): string {
-    if (!config.bidirectionalSync) return '';
-    const parts: string[] = [];
-    parts.push(config.conflictResolution);
-    if (config.watchForChanges) parts.push('watching');
+    const parts: string[] = [config.conflictResolution];
+    if (config.bidirectionalSync && config.watchForChanges) parts.push('watching');
     return parts.join(' \u00B7 ');
   }
 
@@ -2624,20 +2635,22 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
           this.debounceDisplay();
         }));
 
-    if (config.bidirectionalSync) {
-      new Setting(containerEl)
-        .setName("Conflict resolution")
-        .setDesc("How to handle conflicts when the same field is modified in both places.")
-        .addDropdown(dropdown => dropdown
-          .addOption('manual', 'Manual resolution (show conflicts)')
-          .addOption('obsidian-wins', 'Obsidian wins (overwrite remote)')
-          .addOption('remote-wins', 'Remote wins (overwrite Obsidian)')
-          .setValue(config.conflictResolution)
-          .onChange(async (value) => {
-            config.conflictResolution = value as ConflictResolutionMode;
-            await this.plugin.saveSettings();
-          }));
+    // Pull judges conflicts too, so the mode applies to pull-only configs.
+    const conflictSetting = new Setting(containerEl)
+      .setName("Conflict resolution")
+      .setDesc(conflictModeDescription(config))
+      .addDropdown(dropdown => dropdown
+        .addOption('manual', 'Manual (queue for review)')
+        .addOption('obsidian-wins', 'Obsidian wins')
+        .addOption('remote-wins', 'Remote wins')
+        .setValue(config.conflictResolution)
+        .onChange(async (value) => {
+          config.conflictResolution = value as ConflictResolutionMode;
+          conflictSetting.setDesc(conflictModeDescription(config));
+          await this.plugin.saveSettings();
+        }));
 
+    if (config.bidirectionalSync) {
       new Setting(containerEl)
         .setName("Watch for file changes")
         .setDesc("Automatically detect and sync changes made to notes in Obsidian.")

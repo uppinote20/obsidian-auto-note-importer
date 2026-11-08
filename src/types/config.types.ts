@@ -5,11 +5,13 @@
  */
 
 import type { ConflictResolutionMode, BasesFileLocation } from './settings.types';
+import type { SyncRunResult, SyncTrigger } from './sync.types';
 import type { RateLimiter } from '../services/rate-limiter';
 import type { FieldCache } from '../services/field-cache';
 import type { SeaTableMetadataCache } from '../services/seatable-metadata-cache';
 import type { SupabaseMetadataCache } from '../services/supabase-metadata-cache';
 import type { NotionSchemaCache } from '../services/notion-schema-cache';
+import type { SyncStateStore } from '../core/sync-state-store';
 import type { FrontmatterParser } from '../file-operations/frontmatter-parser';
 
 export interface SharedServices {
@@ -19,8 +21,11 @@ export interface SharedServices {
   supabaseMetadataCache: SupabaseMetadataCache;
   notionSchemaCache: NotionSchemaCache;
   frontmatterParser: FrontmatterParser;
+  syncState: SyncStateStore;
   statusBarFactory: () => HTMLElement;
   getDebugMode: () => boolean;
+  /** Called once per successfully processed sync request. */
+  onRunComplete: (configId: string, trigger: SyncTrigger, result: SyncRunResult) => void;
 }
 
 export interface ConfigEntry {

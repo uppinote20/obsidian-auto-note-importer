@@ -6,6 +6,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { App } from 'obsidian';
 import { createMockApp } from 'obsidian';
+import type { DataAdapter } from 'obsidian';
+import { SyncStateStore } from '../../src/core/sync-state-store';
 import type { ConfigEntry, Credential, SharedServices } from '../../src/types';
 import { DEFAULT_CONFIG_ENTRY } from '../../src/types';
 import { ConfigInstance } from '../../src/core/config-instance';
@@ -14,16 +16,16 @@ import { RateLimiter } from '../../src/services/rate-limiter';
 import { FileWatcher } from '../../src/file-operations/file-watcher';
 import { SyncOrchestrator } from '../../src/core/sync-orchestrator';
 import { SyncQueue } from '../../src/core/sync-queue';
-import { ConflictResolver } from '../../src/core/conflict-resolver';
 import { FieldCache } from '../../src/services/field-cache';
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
+import { ConflictApplier } from '../../src/core/conflict-applier';
 
 // Mock all service constructors
 vi.mock('../../src/services/airtable-client');
 vi.mock('../../src/file-operations/file-watcher');
 vi.mock('../../src/core/sync-orchestrator');
 vi.mock('../../src/core/sync-queue');
-vi.mock('../../src/core/conflict-resolver');
+vi.mock('../../src/core/conflict-applier');
 
 function createConfig(overrides: Partial<ConfigEntry> = {}): ConfigEntry {
   return {
@@ -50,12 +52,14 @@ function createSharedServices(overrides: Partial<SharedServices> = {}): SharedSe
     rateLimiters: new Map(),
     fieldCache: new FieldCache(),
     frontmatterParser: new FrontmatterParser({} as App),
+    syncState: new SyncStateStore(createMockApp().vault.adapter as unknown as DataAdapter, 'sync-state.json'),
     statusBarFactory: vi.fn(() => {
       const el = document.createElement('div');
       el.textContent = '';
       return el;
     }),
     getDebugMode: vi.fn(() => false),
+    onRunComplete: vi.fn(),
     ...overrides,
   };
 }
@@ -84,10 +88,20 @@ describe('ConfigInstance', () => {
 
       expect(instance.configId).toBe('cfg-1');
       expect(AirtableClient).toHaveBeenCalledTimes(1);
-      expect(ConflictResolver).toHaveBeenCalledTimes(1);
       expect(FileWatcher).toHaveBeenCalledTimes(1);
       expect(SyncOrchestrator).toHaveBeenCalledTimes(1);
       expect(SyncQueue).toHaveBeenCalledTimes(1);
+
+      instance.destroy();
+    });
+
+    it('should hand the orchestrator a sync-state handle scoped to the config id', () => {
+      const forConfigSpy = vi.spyOn(shared.syncState, 'forConfig');
+
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig(), createCredential(), shared);
+
+      expect(forConfigSpy).toHaveBeenCalledWith('cfg-1');
+      expect(vi.mocked(SyncOrchestrator).mock.calls[0][6]).toBe(forConfigSpy.mock.results[0].value);
 
       instance.destroy();
     });
@@ -128,6 +142,45 @@ describe('ConfigInstance', () => {
       expect(settingsArg.baseId).toBe('appXYZ');
       expect(settingsArg.tableId).toBe('tblABC');
 
+      instance.destroy();
+    });
+  });
+
+  describe('createConflictApplier', () => {
+    it.each([
+      [true, true, true],
+      [false, true, false],
+      [true, false, false],
+    ])('bidirectionalSync=%s, provider bidirectional=%s → applier may write remote: %s', (setting, capable, expected) => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ bidirectionalSync: setting }), createCredential(), shared);
+      const provider = vi.mocked(AirtableClient).mock.instances[0] as unknown as { capabilities: { bidirectional: boolean } };
+      provider.capabilities = { bidirectional: capable } as never;
+      const forConfigSpy = vi.spyOn(shared.syncState, 'forConfig');
+
+      instance.createConflictApplier();
+
+      const args = vi.mocked(ConflictApplier).mock.calls[0];
+      expect(args[1]).toBe(forConfigSpy.mock.results[0].value);
+      expect(args[2]).toBe(provider);
+      expect(args[3]).toBe(shared.frontmatterParser);
+      expect(args[4]).toBe(expected);
+      instance.destroy();
+    });
+  });
+
+  describe('applyConflicts', () => {
+    it('runs the applier on the sync queue chain', async () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig(), createCredential(), shared);
+      const syncQueueInstance = vi.mocked(SyncQueue).mock.instances[0];
+      vi.mocked(syncQueueInstance.runExclusive).mockImplementation(async (fn) => fn());
+      const result = { applied: 1, stale: [], failed: [], removed: [] };
+      vi.mocked(ConflictApplier.prototype.apply).mockResolvedValue(result);
+      const choices = [{ conflict: { recordId: 'r1', field: 'f' } as never, choice: 'remote' as const }];
+
+      await expect(instance.applyConflicts(choices)).resolves.toBe(result);
+
+      expect(syncQueueInstance.runExclusive).toHaveBeenCalledTimes(1);
+      expect(ConflictApplier.prototype.apply).toHaveBeenCalledWith(choices);
       instance.destroy();
     });
   });
@@ -175,7 +228,7 @@ describe('ConfigInstance', () => {
 
       vi.advanceTimersByTime(60_000);
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all');
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined, 'auto');
 
       instance.destroy();
     });
@@ -266,7 +319,6 @@ describe('ConfigInstance', () => {
       const instance = new ConfigInstance(mockApp as unknown as App, config, credential, shared);
 
       const airtableInstance = vi.mocked(AirtableClient).mock.instances[0];
-      const conflictInstance = vi.mocked(ConflictResolver).mock.instances[0];
       const orchestratorInstance = vi.mocked(SyncOrchestrator).mock.instances[0];
       const fileWatcherInstance = vi.mocked(FileWatcher).mock.instances[0];
 
@@ -276,7 +328,6 @@ describe('ConfigInstance', () => {
       instance.updateSettings(updatedConfig, updatedCredential);
 
       expect(airtableInstance.reconfigure).toHaveBeenCalled();
-      expect(conflictInstance.updateSettings).toHaveBeenCalled();
       expect(orchestratorInstance.updateSettings).toHaveBeenCalled();
       expect(fileWatcherInstance.teardown).toHaveBeenCalled();
       expect(fileWatcherInstance.updateSettings).toHaveBeenCalled();
@@ -314,7 +365,7 @@ describe('ConfigInstance', () => {
 
       instance.enqueueSyncRequest('pull', 'all');
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined);
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined, 'user');
 
       instance.destroy();
     });
@@ -328,8 +379,57 @@ describe('ConfigInstance', () => {
 
       instance.enqueueSyncRequest('push', 'modified', ['file1.md', 'file2.md']);
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('push', 'modified', ['file1.md', 'file2.md']);
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('push', 'modified', ['file1.md', 'file2.md'], 'user');
 
+      instance.destroy();
+    });
+  });
+
+  describe('sync triggers and run completion', () => {
+    it('file watcher callback enqueues an auto request', async () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ enabled: true }), createCredential(), shared);
+      const syncQueueInstance = vi.mocked(SyncQueue).mock.instances[0];
+      const onChange = vi.mocked(FileWatcher).mock.calls[0][2] as (files: { path: string }[]) => Promise<void>;
+
+      await onChange([{ path: 'a.md' }]);
+
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('push', 'modified', ['a.md'], 'auto');
+      instance.destroy();
+    });
+
+    it('scheduler enqueues an auto pull', () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ enabled: true, syncInterval: 1 }), createCredential(), shared);
+      const syncQueueInstance = vi.mocked(SyncQueue).mock.instances[0];
+
+      vi.advanceTimersByTime(60 * 1000);
+
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined, 'auto');
+      instance.destroy();
+    });
+
+    it('reports the orchestrator result to onRunComplete with the request trigger', async () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ enabled: true }), createCredential(), shared);
+      const processor = vi.mocked(SyncQueue).mock.calls[0][0];
+      const orchestrator = vi.mocked(SyncOrchestrator).mock.instances[0];
+      const result = { newConflicts: [{ recordId: 'rec1' }] };
+      vi.mocked(orchestrator.processSyncRequest).mockResolvedValue(result as never);
+
+      await processor({ id: 'r1', mode: 'push', scope: 'all', timestamp: 0, trigger: 'auto' });
+
+      expect(orchestrator.processSyncRequest).toHaveBeenCalledWith('push', 'all', undefined, 'auto');
+      expect(shared.onRunComplete).toHaveBeenCalledWith('cfg-1', 'auto', result);
+      instance.destroy();
+    });
+
+    it('does not call onRunComplete when the processor throws', async () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ enabled: true }), createCredential(), shared);
+      const processor = vi.mocked(SyncQueue).mock.calls[0][0];
+      const orchestrator = vi.mocked(SyncOrchestrator).mock.instances[0];
+      vi.mocked(orchestrator.processSyncRequest).mockRejectedValue(new Error('boom'));
+
+      await expect(processor({ id: 'r1', mode: 'pull', scope: 'all', timestamp: 0, trigger: 'user' })).rejects.toThrow('boom');
+
+      expect(shared.onRunComplete).not.toHaveBeenCalled();
       instance.destroy();
     });
   });
