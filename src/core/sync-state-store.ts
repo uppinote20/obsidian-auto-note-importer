@@ -2,7 +2,9 @@
  * Persists per-config, per-record sync snapshots and pending conflicts
  * in a single JSON file (`<pluginDir>/sync-state.json`).
  *
+ * @handbook 9.5-conflict-resolution-modes
  * @tested tests/core/sync-state-store.test.ts
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
 import { Notice } from 'obsidian';

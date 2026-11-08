@@ -4,6 +4,7 @@
  * @handbook 9.5-conflict-resolution-modes
  * @tested tests/core/conflict-resolver.test.ts
  * @tested e2e:tests/e2e/run-e2e.mjs
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
 import { assertNever } from '../utils';

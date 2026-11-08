@@ -4,6 +4,9 @@
  *
  * Remote values are untrusted: they are only ever rendered as text
  * (`createEl` / `setText`), never as HTML.
+ *
+ * @handbook 9.5-conflict-resolution-modes
+ * @tested tests/ui/modals/conflict-resolution-modal.test.ts
  */
 
 import { Modal, Notice } from 'obsidian';

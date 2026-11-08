@@ -1,7 +1,9 @@
 /**
  * Pure three-way per-field judgement (snapshot vs local vs remote).
  *
+ * @handbook 9.5-conflict-resolution-modes
  * @tested tests/core/three-way-merge.test.ts
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
  */
 
 import { areValuesEqual } from '../utils';

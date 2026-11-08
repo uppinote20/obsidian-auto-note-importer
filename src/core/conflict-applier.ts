@@ -4,6 +4,7 @@
  * Every choice re-reads both sides first; a side that moved since the
  * conflict was queued makes the entry stale (refreshed, nothing written).
  *
+ * @handbook 9.5-conflict-resolution-modes
  * @tested tests/core/conflict-applier.test.ts
  */
 
