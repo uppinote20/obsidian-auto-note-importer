@@ -6,7 +6,7 @@
  */
 
 import type { App } from "obsidian";
-import { TFile, TFolder } from "obsidian";
+import { TFile, TFolder, parseYaml } from "obsidian";
 import { MAX_FOLDER_DEPTH, isSystemField } from '../constants';
 import { formatYamlValue } from '../utils';
 import type { RemoteFieldInfo, FieldTypeMapper } from '../types';
@@ -82,6 +82,56 @@ export class FrontmatterParser {
     }
 
     return fieldsToSync;
+  }
+
+  /**
+   * Reads every non-system frontmatter key for snapshot comparison.
+   * Unlike `extractSyncableFields`, null values and read-only / object-shaped
+   * keys are kept so they can be judged against a sync snapshot.
+   */
+  readComparableFields(file: TFile): Record<string, unknown> | null {
+    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+
+    if (!frontmatter) {
+      return null;
+    }
+
+    const fields: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(frontmatter)) {
+      if (isSystemField(key)) {
+        continue;
+      }
+      fields[key] = value;
+    }
+
+    return fields;
+  }
+
+  /**
+   * Parses the frontmatter of a markdown string with Obsidian's YAML parser,
+   * dropping system fields. Returns `{}` when there is no frontmatter.
+   */
+  parseFieldsFromContent(content: string): Record<string, unknown> {
+    // Closing fence must start a line so a block scalar keeps its trailing newline.
+    const match = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---/);
+    if (!match) {
+      return {};
+    }
+
+    const parsed = parseYaml(match[1]);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const fields: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (isSystemField(key)) {
+        continue;
+      }
+      fields[key] = value;
+    }
+    return fields;
   }
 
   /**

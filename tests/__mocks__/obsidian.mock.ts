@@ -3,6 +3,7 @@
  */
 
 import { vi } from 'vitest';
+import { load } from 'js-yaml';
 
 export const Notice = vi.fn();
 
@@ -210,4 +211,8 @@ export function createMockApp() {
     _folders: folders,
     _eventHandlers: eventHandlers,
   };
+}
+
+export function parseYaml(text: string): unknown {
+  return load(text);
 }

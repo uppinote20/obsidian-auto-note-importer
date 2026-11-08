@@ -6,12 +6,14 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { load } from 'js-yaml';
 
 // Mock obsidian before importing
 vi.mock('obsidian', () => ({
   App: vi.fn(),
   TFile: vi.fn(),
-  TFolder: vi.fn()
+  TFolder: vi.fn(),
+  parseYaml: (text: string) => load(text)
 }));
 
 import { FrontmatterParser } from '../../src/file-operations/frontmatter-parser';
@@ -351,6 +353,56 @@ More dashes
       // Body content should be preserved
       expect(result).toContain('Some content');
       expect(result).toContain('More dashes');
+    });
+  });
+});
+
+describe('FrontmatterParser snapshot readers', () => {
+  const createParser = (frontmatter?: Record<string, unknown>) => {
+    const mockApp = {
+      metadataCache: { getFileCache: vi.fn().mockReturnValue(frontmatter ? { frontmatter } : null) },
+      vault: { getAbstractFileByPath: vi.fn() }
+    };
+    return new FrontmatterParser(mockApp as any);
+  };
+
+  describe('readComparableFields', () => {
+    it('keeps null, object and read-only keys but drops system fields', () => {
+      const parser = createParser({
+        primaryField: 'rec1',
+        position: { line: 1 },
+        Name: 'a',
+        Empty: null,
+        Total: 5,
+        Obj: { x: 1 }
+      });
+      expect(parser.readComparableFields({} as any)).toEqual({
+        Name: 'a',
+        Empty: null,
+        Total: 5,
+        Obj: { x: 1 }
+      });
+    });
+
+    it('returns null when there is no frontmatter', () => {
+      expect(createParser().readComparableFields({} as any)).toBeNull();
+    });
+  });
+
+  describe('parseFieldsFromContent', () => {
+    const parser = createParser();
+
+    it('parses block scalars and drops system fields', () => {
+      const content = '---\nprimaryField: "r"\nNotes: |\n  a\n---\nbody';
+      expect(parser.parseFieldsFromContent(content)).toEqual({ Notes: 'a\n' });
+    });
+
+    it('decodes escaped values', () => {
+      expect(parser.parseFieldsFromContent('---\nowner: "Kim\\nX"\n---\n')).toEqual({ owner: 'Kim\nX' });
+    });
+
+    it('returns {} without frontmatter', () => {
+      expect(parser.parseFieldsFromContent('just body')).toEqual({});
     });
   });
 });
