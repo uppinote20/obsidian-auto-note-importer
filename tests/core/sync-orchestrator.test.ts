@@ -830,7 +830,223 @@ describe('SyncOrchestrator', () => {
     });
   });
 
+  /**
+   * Pull fixtures: the vault holds `Sync/<id>.md` for every id in `local`
+   * (frontmatter served through metadataCache), and the remote returns one
+   * record per entry of `remote`. Overwrite is on so existing notes are pulled.
+   */
+  function setupPull(
+    local: Record<string, Record<string, unknown>>,
+    remote: Record<string, Record<string, unknown>>,
+  ): void {
+    settings = { ...settings, allowOverwrite: true };
+    orchestrator.updateSettings(settings);
+    mockApp._folders.add('Sync');
+    for (const id of Object.keys(local)) {
+      mockApp._files.set(`Sync/${id}.md`, `---\nprimaryField: "${id}"\n---\nold body\n`);
+    }
+    (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
+      getFileCache: vi.fn((f: { path: string }) => {
+        const id = f.path.replace(/^Sync\//, '').replace(/\.md$/, '');
+        return id in local ? { frontmatter: { primaryField: id, ...local[id] } } : null;
+      }),
+    };
+    const notes = () => Object.entries(remote).map(([id, fields]) => ({ id, primaryField: id, fields: { ...fields } }));
+    mockProvider.fetchNotes.mockImplementation(async () => notes());
+    mockProvider.fetchRecord.mockImplementation(async (id: string) => notes().find(n => n.id === id) ?? null);
+  }
+
+  function writtenFields(id = 'rec1'): Record<string, unknown> | null {
+    return frontmatterParser.parseFieldsFromContent(mockApp._files.get(`Sync/${id}.md`) ?? '');
+  }
+
+  function expectNoRemoteWrites(): void {
+    expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+    expect(mockProvider.updateRecord).not.toHaveBeenCalled();
+  }
+
+  describe('processSyncRequest — pull: three-way snapshot (#82)', () => {
+    it('keeps a local-only edit and takes a remote-only change in the same note', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { A: { local: 'a', remote: 'a' }, B: { local: 'b', remote: 'b' } });
+      setupPull({ rec1: { A: 'a', B: 'b2' } }, { rec1: { A: 'a2', B: 'b' } });
+
+      const result = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(writtenFields()).toMatchObject({ A: 'a2', B: 'b2' });
+      expect(result.newConflicts).toEqual([]);
+      expect(syncState.getRecord('rec1')?.fields.A).toEqual({ local: 'a2', remote: 'a2' });
+      // Kept local edit keeps its baseline so the next push still sends it.
+      expect(syncState.getRecord('rec1')?.fields.B).toEqual({ local: 'b', remote: 'b' });
+      expectNoRemoteWrites();
+    });
+
+    it('manual: a conflict keeps the local value and is queued once', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPull({ rec1: { Count: 11 } }, { rec1: { Count: 12 } });
+
+      const result = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(writtenFields()).toMatchObject({ Count: 11 });
+      expect(result.newConflicts).toHaveLength(1);
+      expect(result.newConflicts[0]).toMatchObject({
+        recordId: 'rec1', filePath: 'Sync/rec1.md', field: 'Count',
+        local: 11, remote: 12, snapshot: { local: 10, remote: 10 }, writable: true,
+      });
+      expect(syncState.pendingConflicts()).toHaveLength(1);
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 10, remote: 10 });
+      expectNoRemoteWrites();
+    });
+
+    it('remote-wins: a conflict takes the remote value with a Restored notice', async () => {
+      setMode('remote-wins');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPull({ rec1: { Count: 11 } }, { rec1: { Count: 12 } });
+
+      const result = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(writtenFields()).toMatchObject({ Count: 12 });
+      expect(result.newConflicts).toEqual([]);
+      expect(noticeTexts()).toContain('Auto Note Importer: Restored Airtable values: Count');
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 12, remote: 12 });
+    });
+
+    it('obsidian-wins: a conflict keeps the local value without queuing', async () => {
+      setMode('obsidian-wins');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPull({ rec1: { Count: 11 } }, { rec1: { Count: 12 } });
+
+      const result = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(writtenFields()).toMatchObject({ Count: 11 });
+      expect(result.newConflicts).toEqual([]);
+      expect(syncState.pendingConflicts()).toEqual([]);
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 10, remote: 10 });
+    });
+
+    it('manual: a local edit to a non-writable field is kept and queued with writable false', async () => {
+      rebuildOrchestrator(createMockDatabaseProvider({ fieldTypeMapper: pushableMapper }));
+      setMode('manual');
+      mockProvider.fetchFieldMetadata.mockResolvedValue([
+        { name: 'Title', type: 'singleLineText' },
+        { name: 'Calc', type: 'formula' },
+      ] satisfies RemoteFieldInfo[]);
+      syncState.setFields('rec1', { Title: { local: 't', remote: 't' }, Calc: { local: 1, remote: 1 } });
+      setupPull({ rec1: { Title: 't', Calc: 5 } }, { rec1: { Title: 't', Calc: 1 } });
+
+      const result = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockProvider.fetchFieldMetadata).toHaveBeenCalledTimes(1);
+      expect(writtenFields()).toMatchObject({ Calc: 5 });
+      expect(result.newConflicts).toHaveLength(1);
+      expect(result.newConflicts[0]).toMatchObject({ field: 'Calc', local: 5, remote: 1, writable: false });
+    });
+
+    it('renders a kept local value through the template', async () => {
+      settings = { ...settings, conflictResolution: 'manual', templatePath: 'tpl.md' };
+      orchestrator.updateSettings(settings);
+      mockApp._files.set('tpl.md', '---\nCount: {{Count}}\nTitle: {{Title}}\n---\nCount is {{Count}}\n');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 }, Title: { local: 't', remote: 't' } });
+      setupPull({ rec1: { Count: 11, Title: 't' } }, { rec1: { Count: 10, Title: 't2' } });
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(writtenFields()).toMatchObject({ Count: 11, Title: 't2' });
+      expect(mockApp._files.get('Sync/rec1.md')).toContain('Count is 11');
+    });
+
+    it('records a new note snapshot with local values read back from the written content', async () => {
+      setupPull({}, { rec1: { Notes: 'a\n', Multi: 'x\ny' } });
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp.vault.create).toHaveBeenCalledWith('Sync/rec1.md', expect.any(String));
+      expect(syncState.getRecord('rec1')?.fields).toEqual({
+        Notes: { local: 'a\n', remote: 'a\n' },
+        Multi: { local: 'x\ny\n', remote: 'x\ny' },
+      });
+    });
+
+    it('leaves the snapshot untouched when the written content cannot be parsed back', async () => {
+      settings = { ...settings, templatePath: 'tpl.md' };
+      orchestrator.updateSettings(settings);
+      mockApp._files.set('tpl.md', '---\nCount: {{Count}}\nbad: [unclosed\n---\n');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPull({ rec1: { Count: 10 } }, { rec1: { Count: 12 } });
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(mockApp._files.get('Sync/rec1.md')).toContain('Count: 12');
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 10, remote: 10 });
+    });
+
+    it('pullAll drops snapshots of records the remote no longer returns', async () => {
+      syncState.setFields('gone', { Title: { local: 'x', remote: 'x' } });
+      setupPull({}, { rec1: { Title: 'kept' } });
+
+      await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(syncState.getRecord('gone')).toBeUndefined();
+      expect(syncState.getRecord('rec1')).toBeDefined();
+    });
+
+    it('removes a queued conflict whose values the user made equal', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      syncState.upsertConflict({
+        recordId: 'rec1', filePath: 'Sync/rec1.md', field: 'Count', local: 11, remote: 12,
+        snapshot: { local: 10, remote: 10 }, writable: true, detectedAt: '2026-01-01T00:00:00.000Z',
+      });
+      setupPull({ rec1: { Count: 12 } }, { rec1: { Count: 12 } });
+
+      const result = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(result.newConflicts).toEqual([]);
+      expect(syncState.pendingConflicts()).toEqual([]);
+      expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 12, remote: 12 });
+    });
+
+    it('re-detecting a queued pull conflict is not reported as new', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPull({ rec1: { Count: 11 } }, { rec1: { Count: 12 } });
+
+      await orchestrator.processSyncRequest('pull', 'all');
+      const second = await orchestrator.processSyncRequest('pull', 'all');
+
+      expect(second.newConflicts).toEqual([]);
+      expect(syncState.pendingConflicts()).toHaveLength(1);
+    });
+
+    it('pullCurrent judges its record the same way (manual conflict kept and queued)', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPull({ rec1: { Count: 11 } }, { rec1: { Count: 12 } });
+      mockApp.workspace.getActiveViewOfType.mockReturnValue({ file: createMockTFile('Sync/rec1.md') });
+
+      const result = await orchestrator.processSyncRequest('pull', 'current');
+
+      expect(writtenFields()).toMatchObject({ Count: 11 });
+      expect(result.newConflicts.map(c => c.field)).toEqual(['Count']);
+      expectNoRemoteWrites();
+    });
+  });
+
   describe('processSyncRequest — bidirectional', () => {
+    it('reports conflicts found in both the push and the pull phase', async () => {
+      settings = { ...settings, autoSyncComputedFields: true, formulaSyncDelay: 0, conflictResolution: 'manual' };
+      orchestrator.updateSettings(settings);
+      syncState.setFields('recA', { X: { local: 1, remote: 1 } });
+      syncState.setFields('recB', { Y: { local: 1, remote: 1 } });
+      setupPull({ recA: { X: 2 }, recB: { Y: 2 } }, { recA: { X: 3 }, recB: { Y: 3 } });
+
+      const result = await orchestrator.processSyncRequest('bidirectional', 'all', ['Sync/recA.md']);
+
+      // recA: found by push (re-detected unchanged by pull, so not repeated); recB: found by pull.
+      expect(result.newConflicts.map(c => `${c.recordId}.${c.field}`)).toEqual(['recA.X', 'recB.Y']);
+    });
+
     it('should execute two phases when autoSyncComputedFields is true', async () => {
       settings.autoSyncComputedFields = true;
       settings.formulaSyncDelay = 0;
@@ -907,10 +1123,19 @@ describe('SyncOrchestrator', () => {
       mockApp.vault.getAbstractFileByPath.mockReturnValue(file);
       mockApp.vault.adapter.exists.mockResolvedValue(true);
       mockApp.vault.read.mockResolvedValue('old content');
+      settings = { ...settings, allowOverwrite: true };
+      orchestrator.updateSettings(settings);
+      // Pull now reads the existing note's frontmatter to judge it three-way.
+      (mockApp as unknown as { metadataCache: unknown }).metadataCache = {
+        getFileCache: vi.fn().mockReturnValue({ frontmatter: { primaryField: 'rec1', title: 'Old' } }),
+      };
+      // With a baseline the remote edit is remote-only (without one it would be a conflict).
+      syncState.setFields('rec1', { title: { local: 'Old', remote: 'Old' } });
 
       await orchestrator.processSyncRequest('pull', 'current');
 
       expect(mockProvider.fetchRecord).toHaveBeenCalledWith('rec1');
+      expect(mockApp.vault.modify).toHaveBeenCalledWith(file, expect.stringContaining('title: "Updated"'));
     });
   });
 

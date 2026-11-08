@@ -21,8 +21,8 @@ import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, Note
 import { CREDENTIAL_TYPE_LABELS } from '../types';
 import { DEBUG_DELAY_MULTIPLIER, isSystemField } from '../constants';
 import { FieldCache } from '../services';
-import { planPush } from './conflict-resolver';
-import type { PushPlan } from './conflict-resolver';
+import { planPull, planPush } from './conflict-resolver';
+import type { PullPlan, PushPlan } from './conflict-resolver';
 import { threeWayMerge } from './three-way-merge';
 import type { FieldVerdict } from './three-way-merge';
 import type { ConfigSyncStateHandle } from './sync-state-store';
@@ -39,14 +39,30 @@ export interface StatusBarController {
   createItem(): StatusBarHandle;
 }
 
-/** One note judged for push: everything needed to record the outcome. */
-interface JudgedPush {
+/** Field metadata for one run and the writable rule derived from it. */
+interface FieldAccess {
+  metadata: Map<string, RemoteFieldInfo> | null;
+  writable: (field: string) => boolean;
+}
+
+/** One pull run: field access plus the outcomes collected across its notes. */
+interface PullRun extends FieldAccess {
+  newConflicts: PendingConflict[];
+  restored: string[];
+}
+
+/** The judged fields of one record, shared by push and pull bookkeeping. */
+interface JudgedRecord {
   recordId: string;
   filePath: string;
   local: Record<string, unknown>;
   remote: Record<string, unknown>;
   snapshot: Record<string, FieldSnapshot> | undefined;
   verdicts: Record<string, FieldVerdict>;
+}
+
+/** One note judged for push: everything needed to record the outcome. */
+interface JudgedPush extends JudgedRecord {
   plan: PushPlan;
 }
 
@@ -91,7 +107,8 @@ export class SyncOrchestrator {
 
   /**
    * Runs one sync. `trigger` is accepted for the conflict-modal flow and not
-   * acted on yet. Pull phases report no conflicts until pull judgement lands.
+   * acted on yet. `newConflicts` holds the conflicts queued (new or changed)
+   * by every phase that ran — push phase first for bidirectional.
    */
   async processSyncRequest(
     mode: SyncMode,
@@ -108,10 +125,10 @@ export class SyncOrchestrator {
         case 'pull':
           if (scope === 'current') {
             statusBarItem.setText(`Syncing current note from ${label}...`);
-            await this.pullCurrent();
+            newConflicts = await this.pullCurrent();
           } else {
             statusBarItem.setText(`Syncing from ${label}...`);
-            await this.pullAll();
+            newConflicts = await this.pullAll();
           }
           break;
 
@@ -142,7 +159,7 @@ export class SyncOrchestrator {
               await this.sleep(delay);
 
               statusBarItem.setText("Phase 2/2 - Fetching computed results...");
-              await this.pullAll();
+              newConflicts = [...newConflicts, ...await this.pullAll()];
               new Notice("Auto Note Importer: Bidirectional sync complete!");
             } else {
               // Bases file is not generated here because pullAll() is skipped,
@@ -211,24 +228,24 @@ export class SyncOrchestrator {
     return files;
   }
 
-  private async pullCurrent(): Promise<void> {
+  private async pullCurrent(): Promise<PendingConflict[]> {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!activeView?.file) {
       new Notice("Auto Note Importer: No active markdown file");
-      return;
+      return [];
     }
 
     const file = activeView.file;
     const folderPath = normalizePath(this.settings.folderPath);
     if (!file.path.startsWith(folderPath + '/')) {
       new Notice("Auto Note Importer: Current file is not in the sync folder");
-      return;
+      return [];
     }
 
     const recordId = this.frontmatterParser.getRecordId(file);
     if (!recordId) {
       new Notice("Auto Note Importer: No primaryField found in current file");
-      return;
+      return [];
     }
 
     const label = this.providerLabel;
@@ -237,22 +254,25 @@ export class SyncOrchestrator {
       const remoteNote = await this.provider.fetchRecord(recordId);
       if (!remoteNote) {
         new Notice(`Auto Note Importer: Record not found in ${label}`);
-        return;
+        return [];
       }
 
-      const result = await this.createNoteFromRemote(remoteNote);
+      const run = await this.startPullRun();
+      const result = await this.createNoteFromRemote(remoteNote, run);
       if (result === "updated") {
         new Notice(`Auto Note Importer: Current note updated from ${label}`);
       } else if (result === "skipped") {
         new Notice("Auto Note Importer: No changes detected");
       }
+      this.notifyPullOutcome(run);
+      return run.newConflicts;
     } finally {
       this.fileWatcher.clearPending();
       this.fileWatcher.setSyncing(false);
     }
   }
 
-  private async pullAll(): Promise<void> {
+  private async pullAll(): Promise<PendingConflict[]> {
     const folderPath = normalizePath(this.settings.folderPath);
     if (!await this.app.vault.adapter.exists(folderPath)) {
       await this.app.vault.createFolder(folderPath);
@@ -261,6 +281,7 @@ export class SyncOrchestrator {
     this.fileWatcher.setSyncing(true);
     try {
       const remoteNotes = await this.provider.fetchNotes();
+      const run = await this.startPullRun();
 
       let existingPrimaryFields: Set<string> | null = null;
       if (!this.settings.allowOverwrite) {
@@ -277,7 +298,7 @@ export class SyncOrchestrator {
           !existingPrimaryFields?.has(note.primaryField);
 
         if (shouldProcess) {
-          const result = await this.createNoteFromRemote(note);
+          const result = await this.createNoteFromRemote(note, run);
           if (result === "created") createdCount++;
           else if (result === "updated") updatedCount++;
           else if (result === "error") errorCount++;
@@ -286,19 +307,30 @@ export class SyncOrchestrator {
         }
       }
 
+      // Records the remote no longer returns lose their snapshot and queue entries.
+      this.syncState.pruneRecords(new Set(remoteNotes.map(n => n.primaryField)));
+
       let summary = `Auto Note Importer: Sync complete: ${createdCount} created, ${updatedCount} updated.`;
       if (skippedCount > 0) summary += ` (${skippedCount} skipped)`;
       if (errorCount > 0) summary += ` (${errorCount} errors)`;
       new Notice(summary);
+      this.notifyPullOutcome(run);
 
       await this.generateBasesFileIfNeeded(remoteNotes);
+      return run.newConflicts;
     } finally {
       this.fileWatcher.clearPending();
       this.fileWatcher.setSyncing(false);
     }
   }
 
-  private async createNoteFromRemote(note: RemoteNote): Promise<NoteCreationResult> {
+  /**
+   * Writes one remote record into its note. An existing note is judged
+   * three-way first; the fields `planPull` keeps local overlay the remote
+   * fields before building, so templates render them unchanged. Pull writes
+   * only the vault — never the remote.
+   */
+  private async createNoteFromRemote(note: RemoteNote, run: PullRun): Promise<NoteCreationResult> {
     const safeTitle = this.determineFilename(note);
     const finalFolderPath = this.determineFolderPath(note);
     const folderPath = normalizePath(finalFolderPath);
@@ -326,25 +358,114 @@ export class SyncOrchestrator {
       }
     }
 
-    let content = await this.buildNoteContent(note);
+    // A note without readable frontmatter has no local values to keep.
+    const local = existingFile instanceof TFile
+      ? this.frontmatterParser.readComparableFields(existingFile) ?? {}
+      : {};
+    const recordId = note.primaryField;
+    const fieldNames = this.judgedFieldNames(local, note.fields, run.metadata);
+    const snapshot = this.syncState.getRecord(recordId)?.fields;
+    const verdicts = threeWayMerge(snapshot, local, note.fields, fieldNames);
+    const plan = planPull(this.settings.conflictResolution, verdicts, run.writable);
+    const keep: Record<string, unknown> = {};
+    for (const field of plan.keepLocal) keep[field] = local[field];
+
+    // Filename and folder above come from the raw remote values; only the
+    // built content sees the kept local values.
+    let content = await this.buildNoteContent({ ...note, fields: { ...note.fields, ...keep } });
     content = this.frontmatterParser.ensurePrimaryField(content, note.primaryField);
 
+    let result: NoteCreationResult;
     try {
       if (existingFile instanceof TFile) {
         const currentContent = await this.app.vault.read(existingFile);
         if (currentContent !== content) {
           await this.app.vault.modify(existingFile, content);
-          return "updated";
+          result = "updated";
+        } else {
+          result = "skipped";
         }
-        return "skipped";
       } else {
         await this.app.vault.create(filePath, content);
-        return "created";
+        result = "created";
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       new Notice(`Auto Note Importer: Failed to save note: ${safeTitle}${this.settings.debugMode ? ` (${message})` : ''}`);
+      // A failed write keeps the old snapshot and queue entries.
       return "error";
+    }
+
+    this.recordPullOutcome(
+      { recordId, filePath, local, remote: note.fields, snapshot, verdicts },
+      plan, content, run,
+    );
+    return result;
+  }
+
+  /** Fetches field metadata once for a run (fail-open to `null`, handbook §4.4). */
+  private async loadFieldAccess(): Promise<FieldAccess> {
+    // Provider-agnostic: each provider serves its own cached metadata and
+    // fails open with null (#124). The defensive catch is belt-and-suspenders —
+    // the contract already forbids rejection.
+    let remoteFields: RemoteFieldInfo[] | null = null;
+    try {
+      remoteFields = await this.provider.fetchFieldMetadata();
+    } catch {
+      remoteFields = null;
+    }
+    const metadata = remoteFields ? new Map(remoteFields.map(f => [f.name, f])) : null;
+    // Without metadata every judged field is writable (fail-open, handbook §4.4).
+    const writable = (field: string): boolean => {
+      if (!metadata) return true;
+      const info = metadata.get(field);
+      return info !== undefined && this.provider.fieldTypeMapper.isPushable(info.type);
+    };
+    return { metadata, writable };
+  }
+
+  private async startPullRun(): Promise<PullRun> {
+    return { ...await this.loadFieldAccess(), newConflicts: [], restored: [] };
+  }
+
+  /**
+   * Records a written pull: every judged field's snapshot becomes the value
+   * read back from the written content (local) and the raw provider value
+   * (remote) — except kept-local fields, whose snapshot is left as-is so they
+   * stay `local-only` / `conflict`. Unparseable written content leaves the
+   * snapshot untouched. Queue upkeep mirrors push; restored fields are settled.
+   */
+  private recordPullOutcome(
+    judged: JudgedRecord,
+    plan: PullPlan,
+    content: string,
+    run: PullRun,
+  ): void {
+    const written = this.frontmatterParser.parseFieldsFromContent(content);
+    if (written) {
+      const kept = new Set(plan.keepLocal);
+      const fields: Record<string, FieldSnapshot> = {};
+      for (const field of Object.keys(judged.verdicts)) {
+        if (kept.has(field)) continue;
+        fields[field] = { local: written[field], remote: judged.remote[field] };
+      }
+      if (Object.keys(fields).length > 0) {
+        this.syncState.setFields(judged.recordId, fields);
+      }
+    }
+
+    this.reconcileConflicts(judged, plan.enqueue, new Set(plan.restoredRemote), run.writable, run.newConflicts);
+    run.restored.push(...plan.restoredRemote);
+  }
+
+  private notifyPullOutcome(run: PullRun): void {
+    const label = this.providerLabel;
+    if (run.restored.length > 0) {
+      const names = [...new Set(run.restored)].join(', ');
+      new Notice(`Auto Note Importer: Restored ${label} values: ${names}`);
+    }
+    if (run.newConflicts.length > 0) {
+      new Notice(`Auto Note Importer: ${run.newConflicts.length} sync conflict(s) need resolving (${label})`);
     }
   }
 
@@ -449,22 +570,7 @@ export class SyncOrchestrator {
    * queued for manual resolution in this run.
    */
   private async pushFiles(files: TFile[]): Promise<PendingConflict[]> {
-    // Provider-agnostic: each provider serves its own cached metadata and
-    // fails open with null (#124). The defensive catch is belt-and-suspenders —
-    // the contract already forbids rejection.
-    let remoteFields: RemoteFieldInfo[] | null = null;
-    try {
-      remoteFields = await this.provider.fetchFieldMetadata();
-    } catch {
-      remoteFields = null;
-    }
-    const metadata = remoteFields ? new Map(remoteFields.map(f => [f.name, f])) : null;
-    // Without metadata every judged field is writable (fail-open, handbook §4.4).
-    const writable = (field: string): boolean => {
-      if (!metadata) return true;
-      const info = metadata.get(field);
-      return info !== undefined && this.provider.fieldTypeMapper.isPushable(info.type);
-    };
+    const { metadata, writable } = await this.loadFieldAccess();
 
     const label = this.providerLabel;
     const mode = this.settings.conflictResolution;
@@ -473,7 +579,6 @@ export class SyncOrchestrator {
     let syncedCount = 0;
     let errorCount = 0;
     const toSend: JudgedPush[] = [];
-
 
     for (const file of files) {
       const recordId = this.frontmatterParser.getRecordId(file);
@@ -603,7 +708,7 @@ export class SyncOrchestrator {
     overwrote: string[],
     echoed?: Record<string, unknown>,
   ): void {
-    const { recordId, filePath, local, remote, snapshot, verdicts, plan } = judged;
+    const { recordId, local, remote, verdicts, plan } = judged;
     const fields: Record<string, FieldSnapshot> = {};
 
     // Remote baseline = the provider's echo when it returns one (it may
@@ -622,7 +727,24 @@ export class SyncOrchestrator {
       this.syncState.setFields(recordId, fields);
     }
 
-    const enqueue = new Set(plan.enqueue);
+    this.reconcileConflicts(judged, plan.enqueue, new Set(Object.keys(plan.send)), writable, newConflicts);
+    overwrote.push(...plan.overwroteRemote);
+  }
+
+  /**
+   * Queue upkeep for one judged record (push and pull): queues the `enqueue`
+   * fields, reporting only new or changed entries, and drops entries for
+   * fields no longer in conflict or `settled` by this run's write.
+   */
+  private reconcileConflicts(
+    judged: JudgedRecord,
+    enqueueFields: string[],
+    settled: Set<string>,
+    writable: (field: string) => boolean,
+    newConflicts: PendingConflict[],
+  ): void {
+    const { recordId, filePath, local, remote, snapshot, verdicts } = judged;
+    const enqueue = new Set(enqueueFields);
     const detectedAt = new Date().toISOString();
     const pending = enqueue.size > 0
       ? this.syncState.pendingConflicts().filter(p => p.recordId === recordId)
@@ -647,12 +769,10 @@ export class SyncOrchestrator {
           || !areValuesEqual(previous.remote, conflict.remote);
         this.syncState.upsertConflict(conflict);
         if (isNew) newConflicts.push(conflict);
-      } else if (verdict !== 'conflict' || field in plan.send) {
+      } else if (verdict !== 'conflict' || settled.has(field)) {
         this.syncState.removeConflict(recordId, field);
       }
     }
-
-    overwrote.push(...plan.overwroteRemote);
   }
 
   private async resolveTableName(): Promise<string> {
