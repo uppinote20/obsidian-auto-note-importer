@@ -178,6 +178,13 @@ describe('SyncStateStore', () => {
     expect(adapter.write).toHaveBeenCalledTimes(1);
   });
 
+  it('an empty path matches nothing for remove and rename', () => {
+    store.forConfig('a').upsertConflict({ ...conflict('r1', 'f'), filePath: '' });
+    expect(store.removeConflictsForPath('')).toBe(false);
+    expect(store.renameConflictPath('', 'X.md')).toBe(false);
+    expect(store.allPending().map(e => e.conflict.filePath)).toEqual(['']);
+  });
+
   it('keeps state and retries when write fails', async () => {
     store.forConfig('a').setFields('r1', { f: { local: 1, remote: 1 } });
     (adapter.write as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('disk'));

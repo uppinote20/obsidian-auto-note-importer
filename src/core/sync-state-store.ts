@@ -34,6 +34,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function isAtOrUnder(filePath: string, path: string): boolean {
+  if (!path) return false;
   return filePath === path || filePath.startsWith(`${path}/`);
 }
 
@@ -98,7 +99,10 @@ export class SyncStateStore {
 
   private async write(): Promise<void> {
     if (!this.dirty || this.writeBlocked) return;
-    // Cleared before the await so changes made during the write mark the store dirty again.
+    // Cleared before the await (not after): a mutation made while the write is
+    // in flight re-marks the store dirty and is saved by the next flush. A failed
+    // write re-sets it so nothing is lost. Flushes are serialized on `flushChain`,
+    // so two writes never overlap.
     this.dirty = false;
     try {
       await this.adapter.write(this.path, JSON.stringify(this.state));
