@@ -344,8 +344,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--size-4-2);
-  margin-bottom: var(--size-4-2);
-  /* Sticks to the top of the scrolling content while its group is in view. */
+  /* Sticks to the top of the scrolling content while its group is in view.
+     Spacing is padding (not margin) so the background covers it when stuck. */
   position: sticky;
   top: 0;
   z-index: 1;
