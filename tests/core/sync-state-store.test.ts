@@ -166,6 +166,14 @@ describe('SyncStateStore', () => {
     expect(adapter.write).toHaveBeenCalledTimes(1);
   });
 
+  it('renameConflictPath ignores trailing slashes so a folder rename never yields a double slash', () => {
+    store.forConfig('a').upsertConflict({ ...conflict('r1', 'f'), filePath: 'Sync/Sub/B.md' });
+    expect(store.renameConflictPath('Sync/Sub/', 'Sync/New/')).toBe(true);
+    expect(allPending(store).map(e => e.conflict.filePath)).toEqual(['Sync/New/B.md']);
+    expect(store.renameConflictPath('Sync/New', 'Sync/Final/')).toBe(true);
+    expect(allPending(store).map(e => e.conflict.filePath)).toEqual(['Sync/Final/B.md']);
+  });
+
   it('an empty path matches nothing for remove and rename', () => {
     store.forConfig('a').upsertConflict({ ...conflict('r1', 'f'), filePath: '' });
     expect(store.removeConflictsForPath('')).toBe(false);

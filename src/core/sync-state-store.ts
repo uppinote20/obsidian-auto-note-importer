@@ -138,7 +138,9 @@ export class SyncStateStore {
   }
 
   /** Points pending conflicts at a renamed note (or at the notes of a renamed folder). */
-  renameConflictPath(oldPath: string, newPath: string): boolean {
+  renameConflictPath(oldPathRaw: string, newPathRaw: string): boolean {
+    const oldPath = oldPathRaw.replace(/\/+$/, '');
+    const newPath = newPathRaw.replace(/\/+$/, '');
     let changed = false;
     for (const cfg of Object.values(this.state.configs)) {
       for (const p of cfg.pendingConflicts) {
