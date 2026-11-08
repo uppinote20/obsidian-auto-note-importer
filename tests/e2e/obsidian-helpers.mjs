@@ -63,7 +63,9 @@ export function buildSyncHarnessHelpers({ pluginId, e2eCfgId }) {
       const cfg = config || getConfig();
       const inst = getInstance(cfg);
       if (!inst) throw new Error('No ConfigInstance for ' + cfg.id);
-      return inst.enqueueSyncRequest(mode, scope);
+      // 'auto' trigger: user-triggered runs open the conflict modal, which
+      // would cover later harness steps.
+      return inst.enqueueSyncRequest(mode, scope, undefined, 'auto');
     }
 
     // Bumped from 3s → 5s after a flaky case where metadataCache lagged
