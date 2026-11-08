@@ -605,6 +605,33 @@ describe('SyncOrchestrator', () => {
       expect(syncState.getRecord('rec1')?.fields.B).toEqual({ local: 'b', remote: 'b' });
     });
 
+    it('re-detecting the same conflict is not reported as new, but stays queued', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPushFile({ Count: 11 }, { Count: 12 });
+
+      const first = await orchestrator.processSyncRequest('push', 'all');
+      const second = await orchestrator.processSyncRequest('push', 'all');
+
+      expect(first.newConflicts).toHaveLength(1);
+      expect(second.newConflicts).toHaveLength(0);
+      expect(syncState.pendingConflicts()).toHaveLength(1);
+    });
+
+    it('a pending conflict whose values changed is reported as new again', async () => {
+      setMode('manual');
+      syncState.setFields('rec1', { Count: { local: 10, remote: 10 } });
+      setupPushFile({ Count: 11 }, { Count: 12 });
+      await orchestrator.processSyncRequest('push', 'all');
+
+      setupPushFile({ Count: 13 }, { Count: 12 });
+      const second = await orchestrator.processSyncRequest('push', 'all');
+
+      expect(second.newConflicts.map(c => c.local)).toEqual([13]);
+      expect(syncState.pendingConflicts()).toHaveLength(1);
+      expect(syncState.pendingConflicts()[0].local).toBe(13);
+    });
+
     it('Review Focus 1: format asymmetry between sides (block-scalar newline) is not a change', async () => {
       for (const mode of ['manual', 'remote-wins'] as const) {
         mockProvider.batchUpdate.mockClear();

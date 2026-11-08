@@ -35,7 +35,10 @@ export type SyncTrigger = 'user' | 'auto';
  * Outcome of one `SyncOrchestrator.processSyncRequest` run.
  */
 export interface SyncRunResult {
-  /** Conflicts queued for manual resolution during this run. */
+  /**
+   * Conflicts queued for manual resolution during this run that were not
+   * already pending with the same local / remote values.
+   */
   newConflicts: PendingConflict[];
 }
 

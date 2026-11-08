@@ -28,7 +28,7 @@ import type { FieldVerdict } from './three-way-merge';
 import type { ConfigSyncStateHandle } from './sync-state-store';
 import { FrontmatterParser, FileWatcher } from '../file-operations';
 import { parseTemplate, buildMarkdownContent, generateBasesContent, resolveBasesFilePath, collectFieldNames } from '../builders';
-import { sanitizeFileName, sanitizeSubfolderValue, validateAndSanitizeFilename, assertNever } from '../utils';
+import { sanitizeFileName, sanitizeSubfolderValue, validateAndSanitizeFilename, assertNever, areValuesEqual } from '../utils';
 
 export interface StatusBarHandle {
   setText(text: string): void;
@@ -595,7 +595,7 @@ export class SyncOrchestrator {
   /**
    * Records a successful push for one record: advances the snapshot for sent
    * and in-sync (`unchanged` / `both-same`) fields, queues `manual` conflicts,
-   * and drops queue entries the run settled. Fields left for pull
+   * (reporting only new or changed ones), and drops queue entries the run settled. Fields left for pull
    * (`remote-only`, unsent `local-only` / `conflict`) keep their baseline.
    */
   private recordPushOutcome(
@@ -622,6 +622,9 @@ export class SyncOrchestrator {
 
     const enqueue = new Set(plan.enqueue);
     const detectedAt = new Date().toISOString();
+    const pending = enqueue.size > 0
+      ? this.syncState.pendingConflicts().filter(p => p.recordId === recordId)
+      : [];
     for (const [field, verdict] of Object.entries(verdicts)) {
       if (enqueue.has(field)) {
         const conflict: PendingConflict = {
@@ -634,8 +637,14 @@ export class SyncOrchestrator {
           writable: writable(field),
           detectedAt,
         };
+        const previous = pending.find(p => p.field === field);
+        // Always refresh the queue entry; report it only when it is new or
+        // its values moved, so re-detection on every save does not re-notify.
+        const isNew = !previous
+          || !areValuesEqual(previous.local, conflict.local)
+          || !areValuesEqual(previous.remote, conflict.remote);
         this.syncState.upsertConflict(conflict);
-        newConflicts.push(conflict);
+        if (isNew) newConflicts.push(conflict);
       } else if (verdict !== 'conflict' || field in plan.send) {
         this.syncState.removeConflict(recordId, field);
       }
