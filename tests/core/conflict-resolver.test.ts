@@ -95,4 +95,14 @@ describe('planPush / planPull', () => {
       expect(plan.restoredRemote).toEqual([]);
     });
   });
+  describe('pinned fields', () => {
+    it.each(['obsidian-wins', 'remote-wins', 'manual'] as const)('%s: push never sends a pinned field', (mode) => {
+      const plan = planPush(mode, { p: 'pinned' }, { p: 5 }, all);
+      expect(plan).toEqual({ send: {}, overwroteRemote: [], enqueue: [] });
+    });
+    it.each(['obsidian-wins', 'remote-wins', 'manual'] as const)('%s: pull keeps a pinned field without queuing', (mode) => {
+      const plan = planPull(mode, { p: 'pinned' }, () => false);
+      expect(plan).toEqual({ keepLocal: ['p'], restoredRemote: [], enqueue: [] });
+    });
+  });
 });

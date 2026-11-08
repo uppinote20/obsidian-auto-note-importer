@@ -98,4 +98,22 @@ describe('threeWayMerge', () => {
       expect(judgeForm(undefined, { F: ['u'] }, { F: obj('u') }, {})).toBe('conflict');
     });
   });
+  describe('pinned local value (keep local)', () => {
+    const pin = (local: unknown, remote: unknown) => ({ F: { local, remote, pinnedLocal: true as const } });
+    it('remote unchanged: pinned, even after a further local edit', () => {
+      expect(judge(pin(5, 1), { F: 5 }, { F: 1 })).toBe('pinned');
+      expect(judge(pin(5, 1), { F: 6 }, { F: 1 })).toBe('pinned');
+    });
+    it('remote unchanged and local back to the remote value: unchanged', () => {
+      expect(judge(pin(5, 1), { F: 1 }, { F: 1 })).toBe('unchanged');
+    });
+    it('remote moved: the pin no longer holds — a differing local value is a conflict', () => {
+      expect(judge(pin(5, 1), { F: 5 }, { F: 2 })).toBe('conflict');
+      expect(judge(pin(5, 1), { F: 5 }, { F: 5 })).toBe('both-same');
+    });
+    it('a pinned field missing locally is judged without the pin', () => {
+      expect(judge(pin(5, 1), {}, { F: 1 })).toBe('unchanged');
+      expect(judge(pin(5, 1), {}, { F: 2 })).toBe('remote-only');
+    });
+  });
 });

@@ -9,7 +9,7 @@
 
 import { TFile } from 'obsidian';
 import type { App } from 'obsidian';
-import type { DatabaseProvider, PendingConflict, RemoteNote } from '../types';
+import type { DatabaseProvider, FieldSnapshot, PendingConflict, RemoteNote } from '../types';
 import type { ConfigSyncStateHandle } from './sync-state-store';
 import type { FrontmatterParser } from '../file-operations/frontmatter-parser';
 import { areValuesEqual, formatObjectLabel } from '../utils';
@@ -125,7 +125,8 @@ export class ConflictApplier {
         break;
       }
       case 'keep-local':
-        this.settle(conflict, { local: currentLocal, remote: currentRemote });
+        // Pinned: later pulls keep this value until the remote moves.
+        this.settle(conflict, { local: currentLocal, remote: currentRemote, pinnedLocal: true });
         break;
     }
     result.applied++;
@@ -138,7 +139,7 @@ export class ConflictApplier {
     return parsed;
   }
 
-  private settle(conflict: PendingConflict, baseline: { local: unknown; remote: unknown }): void {
+  private settle(conflict: PendingConflict, baseline: FieldSnapshot): void {
     this.syncState.setFields(conflict.recordId, { [conflict.field]: baseline });
     this.syncState.removeConflict(conflict.recordId, conflict.field);
   }

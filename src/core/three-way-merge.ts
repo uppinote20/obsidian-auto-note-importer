@@ -7,7 +7,8 @@
 import { areValuesEqual } from '../utils';
 import type { FieldSnapshot } from '../types';
 
-export type FieldVerdict = 'unchanged' | 'local-only' | 'remote-only' | 'both-same' | 'conflict';
+/** `pinned`: a kept-local value (`FieldSnapshot.pinnedLocal`) whose remote has not moved. */
+export type FieldVerdict = 'unchanged' | 'local-only' | 'remote-only' | 'both-same' | 'conflict' | 'pinned';
 
 /**
  * Judge each field. Local is compared to `snapshot.local` and remote to
@@ -21,6 +22,11 @@ export type FieldVerdict = 'unchanged' | 'local-only' | 'remote-only' | 'both-sa
  * cross-side comparisons — local vs remote without a snapshot, and the
  * `both-same` check — use it (falling back to the raw value for fields it
  * lacks). Remote-change detection always compares the raw remote value.
+ *
+ * A pinned snapshot (`pinnedLocal`, the user chose "keep local") holds while
+ * the remote is unchanged: `pinned`, or `unchanged` once local matches the
+ * remote again. When the remote moves, the local value counts as changed
+ * (`conflict` / `both-same`). A pinned field missing locally is judged as usual.
  */
 export function threeWayMerge(
   snapshot: Record<string, FieldSnapshot> | undefined,
@@ -49,8 +55,16 @@ export function threeWayMerge(
       continue;
     }
 
-    const localChanged = name in local && !areValuesEqual(localValue, base.local);
     const remoteChanged = !areValuesEqual(remoteValue, base.remote);
+
+    if (base.pinnedLocal && name in local) {
+      const matchesRemote = areValuesEqual(localValue, remoteAsLocal);
+      if (remoteChanged) result[name] = matchesRemote ? 'both-same' : 'conflict';
+      else result[name] = matchesRemote ? 'unchanged' : 'pinned';
+      continue;
+    }
+
+    const localChanged = name in local && !areValuesEqual(localValue, base.local);
 
     if (!localChanged && !remoteChanged) result[name] = 'unchanged';
     else if (localChanged && !remoteChanged) result[name] = 'local-only';

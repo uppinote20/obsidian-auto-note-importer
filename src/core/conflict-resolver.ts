@@ -29,7 +29,7 @@ export interface PullPlan {
  * Non-writable fields are never sent. A cleared (`null` / `undefined`) local
  * value is sent only when the field changed locally (`local-only` /
  * `conflict`), so obsidian-wins' whole-set send never wipes a remote value
- * the user did not touch.
+ * the user did not touch. `pinned` fields (kept local) are never sent.
  */
 export function planPush(
   mode: ConflictResolutionMode,
@@ -40,7 +40,7 @@ export function planPush(
   const plan: PushPlan = { send: {}, overwroteRemote: [], enqueue: [] };
 
   for (const [field, verdict] of Object.entries(verdicts)) {
-    if (!writable(field) || !(field in local)) continue;
+    if (verdict === 'pinned' || !writable(field) || !(field in local)) continue;
     const changedLocally = verdict === 'local-only' || verdict === 'conflict';
     if (local[field] == null && !changedLocally) continue;
 
@@ -60,7 +60,8 @@ export function planPush(
 }
 
 /**
- * Maps verdicts to a pull plan for the given conflict mode.
+ * Maps verdicts to a pull plan for the given conflict mode. `pinned` fields
+ * keep their local value in every mode and are not queued.
  */
 export function planPull(
   mode: ConflictResolutionMode,
@@ -70,6 +71,10 @@ export function planPull(
   const plan: PullPlan = { keepLocal: [], restoredRemote: [], enqueue: [] };
 
   for (const [field, verdict] of Object.entries(verdicts)) {
+    if (verdict === 'pinned') {
+      plan.keepLocal.push(field);
+      continue;
+    }
     const localOnly = verdict === 'local-only';
     const conflict = verdict === 'conflict';
     if (!localOnly && !conflict) continue;

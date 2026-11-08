@@ -977,6 +977,67 @@ describe('SyncOrchestrator', () => {
       expect(result.newConflicts[0]).toMatchObject({ field: 'Calc', local: 5, remote: 1, writable: false });
     });
 
+    describe('kept local value (pinnedLocal)', () => {
+      const pinned = { local: 5, remote: 1, pinnedLocal: true as const };
+      function setupPinned(remoteCalc: number): void {
+        rebuildOrchestrator(createMockDatabaseProvider({ fieldTypeMapper: pushableMapper }));
+        mockProvider.fetchFieldMetadata.mockResolvedValue([
+          { name: 'Title', type: 'singleLineText' },
+          { name: 'Calc', type: 'formula' },
+        ] satisfies RemoteFieldInfo[]);
+        syncState.setFields('rec1', { Title: { local: 't', remote: 't' }, Calc: pinned });
+        setupPull({ rec1: { Title: 't', Calc: 5 } }, { rec1: { Title: 't', Calc: remoteCalc } });
+      }
+
+      it.each(['manual', 'remote-wins', 'obsidian-wins'] as const)('%s: an unchanged remote keeps the pinned value, nothing queued', async (mode) => {
+        setupPinned(1);
+        setMode(mode);
+
+        const result = await orchestrator.processSyncRequest('pull', 'all');
+
+        expect(writtenFields()).toMatchObject({ Calc: 5 });
+        expect(result.newConflicts).toEqual([]);
+        expect(syncState.pendingConflicts()).toEqual([]);
+        expect(syncState.getRecord('rec1')?.fields.Calc).toEqual(pinned);
+        expect(noticeTexts().some(t => t.includes('Restored'))).toBe(false);
+        expectNoRemoteWrites();
+      });
+
+      it('manual: a changed remote is judged again and queued', async () => {
+        setupPinned(2);
+        setMode('manual');
+
+        const result = await orchestrator.processSyncRequest('pull', 'all');
+
+        expect(writtenFields()).toMatchObject({ Calc: 5 });
+        expect(result.newConflicts).toHaveLength(1);
+        expect(result.newConflicts[0]).toMatchObject({ field: 'Calc', local: 5, remote: 2, writable: false });
+      });
+
+      it('remote-wins: a changed remote restores the remote value and drops the pin', async () => {
+        setupPinned(2);
+        setMode('remote-wins');
+
+        const result = await orchestrator.processSyncRequest('pull', 'all');
+
+        expect(writtenFields()).toMatchObject({ Calc: 2 });
+        expect(result.newConflicts).toEqual([]);
+        expect(noticeTexts()).toContain('Auto Note Importer: Restored Airtable values: Calc');
+        expect(syncState.getRecord('rec1')?.fields.Calc).toEqual({ local: 2, remote: 2 });
+      });
+
+      it('push never sends a pinned field and keeps its snapshot', async () => {
+        setMode('obsidian-wins');
+        syncState.setFields('rec1', { Title: { local: 't', remote: 't' }, Calc: pinned });
+        setupPushFile({ Title: 't2', Calc: 5 }, { Title: 't', Calc: 1 });
+
+        await orchestrator.processSyncRequest('push', 'all');
+
+        expect(sentFields()).toEqual([{ Title: 't2' }]);
+        expect(syncState.getRecord('rec1')?.fields.Calc).toEqual(pinned);
+      });
+    });
+
     it('renders a kept local value through the template', async () => {
       settings = { ...settings, conflictResolution: 'manual', templatePath: 'tpl.md' };
       orchestrator.updateSettings(settings);

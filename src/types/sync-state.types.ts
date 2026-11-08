@@ -9,6 +9,12 @@
 export interface FieldSnapshot {
   local: unknown;
   remote: unknown;
+  /**
+   * Set by "Keep local (not synced)": the local value is kept on pulls (and
+   * never pushed) while the remote stays at `remote`. Once the remote moves
+   * the pin no longer holds and the field is judged as a local change again.
+   */
+  pinnedLocal?: true;
 }
 
 /** Snapshot of one record (keyed by remote record id). */

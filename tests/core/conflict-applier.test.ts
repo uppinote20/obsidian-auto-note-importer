@@ -126,7 +126,7 @@ describe('ConflictApplier', () => {
     expect(provider.updateRecord).not.toHaveBeenCalled();
     expect(app.fileManager.processFrontMatter).not.toHaveBeenCalled();
     expect(app._files.get(PATH)).toBe(before);
-    expect(state.getRecord('rec1')?.fields.Status).toEqual({ local: 'Local', remote: 'Remote' });
+    expect(state.getRecord('rec1')?.fields.Status).toEqual({ local: 'Local', remote: 'Remote', pinnedLocal: true });
     expect(state.pendingConflicts()).toHaveLength(0);
   });
 
