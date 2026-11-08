@@ -27,6 +27,17 @@ export interface ConfigSyncStateHandle {
   pendingConflicts(): PendingConflict[];
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function isValidStateFile(v: unknown): v is SyncStateFile {
+  if (!isPlainObject(v) || v.version !== 1 || !isPlainObject(v.configs)) return false;
+  return Object.values(v.configs).every(
+    c => isPlainObject(c) && isPlainObject(c.records) && Array.isArray(c.pendingConflicts),
+  );
+}
+
 export class SyncStateStore {
   private state: SyncStateFile = { version: 1, configs: {} };
   private dirty = false;
@@ -48,12 +59,9 @@ export class SyncStateStore {
     }
 
     try {
-      const parsed = JSON.parse(raw) as Partial<SyncStateFile> | null;
-      if (parsed && parsed.version === 1 && parsed.configs && typeof parsed.configs === 'object') {
-        this.state = { version: 1, configs: parsed.configs };
-      } else {
-        throw new Error('unexpected shape');
-      }
+      const parsed: unknown = JSON.parse(raw);
+      if (!isValidStateFile(parsed)) throw new Error('unexpected shape');
+      this.state = { version: 1, configs: parsed.configs };
     } catch (error) {
       console.error('Auto Note Importer: invalid sync-state.json', error);
       new Notice('Auto Note Importer: sync-state.json is invalid. Starting with empty sync state.');

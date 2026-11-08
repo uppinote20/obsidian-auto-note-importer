@@ -46,6 +46,24 @@ describe('SyncStateStore', () => {
     expect(String((Notice as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0])).toContain('sync-state.json');
   });
 
+  it.each([
+    ['wrong version', '{"version":2,"configs":{}}'],
+    ['configs is an array', '{"version":1,"configs":[]}'],
+    ['config entry missing fields', '{"version":1,"configs":{"a":{}}}'],
+    ['records is an array', '{"version":1,"configs":{"a":{"records":[],"pendingConflicts":[]}}}'],
+    ['pendingConflicts not an array', '{"version":1,"configs":{"a":{"records":{},"pendingConflicts":{}}}}'],
+  ])('rejects malformed file (%s): empty state, one Notice, no throws', async (_n, raw) => {
+    app._files.set(PATH, raw);
+    await store.load();
+    expect(Notice).toHaveBeenCalledTimes(1);
+    const h = store.forConfig('a');
+    expect(() => h.getRecord('x')).not.toThrow();
+    expect(h.getRecord('x')).toBeUndefined();
+    expect(h.pendingConflicts()).toEqual([]);
+    expect(store.allPending()).toEqual([]);
+    expect(() => h.upsertConflict(conflict('x', 'f'))).not.toThrow();
+  });
+
   it('loads a previously flushed state', async () => {
     const h = store.forConfig('a');
     h.setFields('r1', { f: { local: 1, remote: 1 } });
