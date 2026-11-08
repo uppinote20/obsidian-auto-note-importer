@@ -18,7 +18,7 @@
 
 import { App, TFile, TFolder, normalizePath, Notice, MarkdownView } from "obsidian";
 import type { LegacySettings, RemoteNote, BatchUpdate, SyncMode, SyncScope, NoteCreationResult, DatabaseProvider, RemoteFieldInfo, SyncRunResult, SyncTrigger, PendingConflict, FieldSnapshot } from '../types';
-import { CREDENTIAL_TYPE_LABELS } from '../types';
+import { CREDENTIAL_TYPE_LABELS, conflictKey } from '../types';
 import { DEBUG_DELAY_MULTIPLIER, isSystemField } from '../constants';
 import { FieldCache } from '../services';
 import { planPull, planPush } from './conflict-resolver';
@@ -179,6 +179,7 @@ export class SyncOrchestrator {
       new Notice(`Auto Note Importer: Sync failed: ${message}`);
     } finally {
       statusBarItem.remove();
+      this.templateText = null;
       // One write per request, whichever phases ran.
       await this.syncState.flush();
     }
@@ -191,7 +192,7 @@ export class SyncOrchestrator {
    */
   private stillPending(conflicts: PendingConflict[]): PendingConflict[] {
     if (conflicts.length === 0) return conflicts;
-    const key = (c: PendingConflict): string => JSON.stringify([c.recordId, c.field]);
+    const key = (c: PendingConflict): string => conflictKey(c.recordId, c.field);
     const pending = new Set(this.syncState.pendingConflicts().map(key));
     const latest = new Map<string, PendingConflict>();
     for (const c of conflicts) {
@@ -591,6 +592,9 @@ export class SyncOrchestrator {
     return this.frontmatterParser.parseFieldsFromContent(remoteContent) ?? undefined;
   }
 
+  /** Template text cached for one `processSyncRequest` (cleared in its `finally`); failures are never cached. */
+  private templateText: string | null = null;
+
   private async buildNoteContent(note: RemoteNote): Promise<string> {
     if (this.settings.templatePath) {
       const templateFile = this.app.vault.getAbstractFileByPath(
@@ -598,8 +602,8 @@ export class SyncOrchestrator {
       );
       if (templateFile instanceof TFile) {
         try {
-          const templateContent = await this.app.vault.read(templateFile);
-          return parseTemplate(templateContent, note);
+          this.templateText ??= await this.app.vault.read(templateFile);
+          return parseTemplate(this.templateText, note);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error';
           new Notice(`Auto Note Importer: Template error: ${message}. Using default format.`);

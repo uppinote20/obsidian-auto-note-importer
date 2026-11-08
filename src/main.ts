@@ -191,13 +191,17 @@ export default class AutoNoteImporterPlugin extends Plugin {
       return;
     }
     const config = findConfigById(this.settings, configId);
-    const credential = config && findCredentialForConfig(this.settings, config);
-    const label = credential ? CREDENTIAL_TYPE_LABELS[credential.type] : 'remote';
+    const label = this.providerLabelFor(config);
     const notice = new Notice(`Auto Note Importer: ${n} sync conflict${n === 1 ? '' : 's'} with ${label} \u2014 click to resolve`, 10000);
     notice.noticeEl.addEventListener('click', () => {
       notice.hide();
       this.openConflictModal();
     });
+  }
+
+  private providerLabelFor(config: ConfigEntry | undefined): string {
+    const credential = config && findCredentialForConfig(this.settings, config);
+    return credential ? CREDENTIAL_TYPE_LABELS[credential.type] : 'remote';
   }
 
   /** Pending conflicts of configs that have a running instance, in settings order. */
@@ -207,11 +211,10 @@ export default class AutoNoteImporterPlugin extends Plugin {
       if (!this.configManager.getInstance(config.id)) continue;
       const conflicts = this.syncState.forConfig(config.id).pendingConflicts();
       if (conflicts.length === 0) continue;
-      const credential = findCredentialForConfig(this.settings, config);
       groups.push({
         configId: config.id,
         configName: config.name,
-        providerLabel: credential ? CREDENTIAL_TYPE_LABELS[credential.type] : 'remote',
+        providerLabel: this.providerLabelFor(config),
         bidirectional: config.bidirectionalSync,
         conflicts,
       });

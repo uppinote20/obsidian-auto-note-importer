@@ -19,7 +19,6 @@ export interface ConfigSyncStateHandle {
   getRecord(recordId: string): RecordSnapshot | undefined;
   /** Merges into existing fields and bumps `syncedAt`. */
   setFields(recordId: string, fields: Record<string, FieldSnapshot>): void;
-  removeRecord(recordId: string): void;
   /** Drops records not in `keep`, along with their pending conflicts. */
   pruneRecords(keep: Set<string>): void;
   upsertConflict(c: PendingConflict): void;
@@ -34,8 +33,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function isAtOrUnder(filePath: string, path: string): boolean {
-  if (!path) return false;
-  return filePath === path || filePath.startsWith(`${path}/`);
+  return !!path && (filePath === path || filePath.startsWith(`${path}/`));
 }
 
 function isValidStateFile(v: unknown): v is SyncStateFile {
@@ -113,13 +111,6 @@ export class SyncStateStore {
     }
   }
 
-  removeConfig(configId: string): void {
-    if (configId in this.state.configs) {
-      delete this.state.configs[configId];
-      this.dirty = true;
-    }
-  }
-
   /** Drops every config entry whose id is not in `ids` (settings membership). */
   retainConfigs(ids: Set<string>): void {
     for (const configId of Object.keys(this.state.configs)) {
@@ -128,14 +119,6 @@ export class SyncStateStore {
         this.dirty = true;
       }
     }
-  }
-
-  allPending(): Array<{ configId: string; conflict: PendingConflict }> {
-    const out: Array<{ configId: string; conflict: PendingConflict }> = [];
-    for (const [configId, cfg] of Object.entries(this.state.configs)) {
-      for (const conflict of cfg.pendingConflicts) out.push({ configId, conflict });
-    }
-    return out;
   }
 
   /** Drops pending conflicts of a deleted note (or of every note under a deleted folder). */
@@ -192,26 +175,22 @@ export class SyncStateStore {
         touch();
       },
 
-      removeRecord: (recordId) => {
-        const c = peek();
-        if (c && recordId in c.records) {
-          delete c.records[recordId];
-          touch();
-        }
-      },
-
       pruneRecords: (keep) => {
         const c = peek();
         if (!c) return;
+        let changed = false;
         for (const id of Object.keys(c.records)) {
           if (!keep.has(id)) {
             delete c.records[id];
-            touch();
+            changed = true;
           }
         }
-        const before = c.pendingConflicts.length;
-        c.pendingConflicts = c.pendingConflicts.filter(p => keep.has(p.recordId));
-        if (c.pendingConflicts.length !== before) touch();
+        const kept = c.pendingConflicts.filter(p => keep.has(p.recordId));
+        if (kept.length !== c.pendingConflicts.length) {
+          c.pendingConflicts = kept;
+          changed = true;
+        }
+        if (changed) touch();
       },
 
       upsertConflict: (conflict) => {

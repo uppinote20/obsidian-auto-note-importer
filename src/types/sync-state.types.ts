@@ -36,6 +36,11 @@ export interface PendingConflict {
   stale?: boolean;
 }
 
+/** Stable map/set key for a conflict (or any tuple of ids), joined by NUL. */
+export function conflictKey(...parts: string[]): string {
+  return parts.join('\u0000');
+}
+
 /** Sync state of a single config. */
 export interface ConfigSyncState {
   records: Record<string, RecordSnapshot>;

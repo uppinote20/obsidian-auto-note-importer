@@ -19,6 +19,11 @@ function conflict(recordId: string, field: string, local: unknown = 'l'): Pendin
   };
 }
 
+/** Pending conflicts across the configs these tests use. */
+function allPending(store: SyncStateStore): Array<{ conflict: PendingConflict }> {
+  return ['a', 'b'].flatMap(id => store.forConfig(id).pendingConflicts().map(conflict => ({ conflict })));
+}
+
 describe('SyncStateStore', () => {
   let app: ReturnType<typeof createMockApp>;
   let adapter: DataAdapter;
@@ -34,14 +39,14 @@ describe('SyncStateStore', () => {
   it('loads empty when no file exists', async () => {
     await store.load();
     expect(store.forConfig('a').getRecord('r1')).toBeUndefined();
-    expect(store.allPending()).toEqual([]);
+    expect(allPending(store)).toEqual([]);
     expect(Notice).not.toHaveBeenCalled();
   });
 
   it('loads empty and warns once on invalid JSON', async () => {
     app._files.set(PATH, '{not json');
     await store.load();
-    expect(store.allPending()).toEqual([]);
+    expect(allPending(store)).toEqual([]);
     expect(Notice).toHaveBeenCalledTimes(1);
     expect(String((Notice as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0])).toContain('sync-state.json');
   });
@@ -60,7 +65,7 @@ describe('SyncStateStore', () => {
     expect(() => h.getRecord('x')).not.toThrow();
     expect(h.getRecord('x')).toBeUndefined();
     expect(h.pendingConflicts()).toEqual([]);
-    expect(store.allPending()).toEqual([]);
+    expect(allPending(store)).toEqual([]);
     expect(() => h.upsertConflict(conflict('x', 'f'))).not.toThrow();
   });
 
@@ -98,13 +103,6 @@ describe('SyncStateStore', () => {
     expect(h.pendingConflicts().map(c => c.field)).toEqual(['g']);
   });
 
-  it('removeRecord drops the record', () => {
-    const h = store.forConfig('a');
-    h.setFields('r1', { f: { local: 1, remote: 1 } });
-    h.removeRecord('r1');
-    expect(h.getRecord('r1')).toBeUndefined();
-  });
-
   it('pruneRecords removes records and their conflicts', () => {
     const h = store.forConfig('a');
     h.setFields('a', { f: { local: 1, remote: 1 } });
@@ -117,7 +115,7 @@ describe('SyncStateStore', () => {
     expect(h.pendingConflicts().map(c => c.recordId)).toEqual(['a']);
   });
 
-  it('isolates configs and removeConfig leaves others intact', () => {
+  it('isolates configs', () => {
     const a = store.forConfig('cfgA');
     const b = store.forConfig('cfgB');
     a.setFields('r', { f: { local: 'A', remote: 'A' } });
@@ -125,10 +123,6 @@ describe('SyncStateStore', () => {
     a.upsertConflict(conflict('r', 'f'));
     expect(b.pendingConflicts()).toEqual([]);
     expect(b.getRecord('r')?.fields.f.local).toBe('B');
-    store.removeConfig('cfgA');
-    expect(store.forConfig('cfgA').getRecord('r')).toBeUndefined();
-    expect(store.forConfig('cfgB').getRecord('r')?.fields.f.local).toBe('B');
-    expect(store.allPending()).toEqual([]);
   });
 
   it('retainConfigs drops absent configs and keeps present ones', async () => {
@@ -148,21 +142,15 @@ describe('SyncStateStore', () => {
     expect(adapter.write).toHaveBeenCalledTimes(1);
   });
 
-  it('allPending spans configs', () => {
-    store.forConfig('a').upsertConflict(conflict('r1', 'f'));
-    store.forConfig('b').upsertConflict(conflict('r2', 'f'));
-    expect(store.allPending().map(e => e.configId).sort()).toEqual(['a', 'b']);
-  });
-
   it('removeConflictsForPath drops entries of that note (or folder) in every config', () => {
     store.forConfig('a').upsertConflict({ ...conflict('r1', 'f'), filePath: 'Sync/A.md' });
     store.forConfig('b').upsertConflict({ ...conflict('r2', 'f'), filePath: 'Sync/A.md' });
     store.forConfig('b').upsertConflict({ ...conflict('r3', 'f'), filePath: 'Sync/Sub/B.md' });
     store.forConfig('b').upsertConflict({ ...conflict('r4', 'f'), filePath: 'Sync/AB.md' });
     expect(store.removeConflictsForPath('Sync/A.md')).toBe(true);
-    expect(store.allPending().map(e => e.conflict.recordId)).toEqual(['r3', 'r4']);
+    expect(allPending(store).map(e => e.conflict.recordId)).toEqual(['r3', 'r4']);
     expect(store.removeConflictsForPath('Sync/Sub')).toBe(true);
-    expect(store.allPending().map(e => e.conflict.recordId)).toEqual(['r4']);
+    expect(allPending(store).map(e => e.conflict.recordId)).toEqual(['r4']);
     expect(store.removeConflictsForPath('Other.md')).toBe(false);
   });
 
@@ -173,7 +161,7 @@ describe('SyncStateStore', () => {
     expect(store.renameConflictPath('Sync/A.md', 'Sync/A2.md')).toBe(true);
     expect(store.renameConflictPath('Sync/Sub', 'Sync/New')).toBe(true);
     expect(store.renameConflictPath('None.md', 'X.md')).toBe(false);
-    expect(store.allPending().map(e => e.conflict.filePath)).toEqual(['Sync/A2.md', 'Sync/New/B.md', 'Sync/SubX.md']);
+    expect(allPending(store).map(e => e.conflict.filePath)).toEqual(['Sync/A2.md', 'Sync/New/B.md', 'Sync/SubX.md']);
     await store.flush();
     expect(adapter.write).toHaveBeenCalledTimes(1);
   });
@@ -182,7 +170,7 @@ describe('SyncStateStore', () => {
     store.forConfig('a').upsertConflict({ ...conflict('r1', 'f'), filePath: '' });
     expect(store.removeConflictsForPath('')).toBe(false);
     expect(store.renameConflictPath('', 'X.md')).toBe(false);
-    expect(store.allPending().map(e => e.conflict.filePath)).toEqual(['']);
+    expect(allPending(store).map(e => e.conflict.filePath)).toEqual(['']);
   });
 
   it('keeps state and retries when write fails', async () => {

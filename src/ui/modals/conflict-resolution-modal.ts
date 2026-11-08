@@ -9,6 +9,7 @@
 import { Modal, Notice } from 'obsidian';
 import type { App } from 'obsidian';
 import type { PendingConflict } from '../../types';
+import { conflictKey } from '../../types';
 import type { ApplyResult, ConflictChoice } from '../../core/conflict-applier';
 import { formatObjectLabel } from '../../utils';
 
@@ -31,7 +32,7 @@ export interface ConflictModalHost {
 type ConflictKey = string;
 
 function keyOf(configId: string, c: PendingConflict): ConflictKey {
-  return JSON.stringify([configId, c.recordId, c.field]);
+  return conflictKey(configId, c.recordId, c.field);
 }
 
 /** A conflict as the modal rendered it (the values the user is choosing between). */

@@ -88,3 +88,4 @@ export type {
   ConfigSyncState,
   SyncStateFile,
 } from './sync-state.types';
+export { conflictKey } from './sync-state.types';

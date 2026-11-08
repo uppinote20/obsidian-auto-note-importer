@@ -99,9 +99,7 @@ export class ConflictApplier {
     const currentLocal = parsed.fields[field];
     const currentRemote = remote.fields[field];
     if (!areValuesEqual(currentLocal, conflict.local) || !areValuesEqual(currentRemote, conflict.remote)) {
-      const refreshed: PendingConflict = { ...conflict, local: currentLocal, remote: currentRemote, stale: true };
-      this.syncState.upsertConflict(refreshed);
-      result.stale.push(refreshed);
+      this.markStale(conflict, currentLocal, currentRemote, result);
       return;
     }
 
@@ -130,9 +128,7 @@ export class ConflictApplier {
           fm[field] = value;
         });
         if (editedMeanwhile) {
-          const refreshed: PendingConflict = { ...conflict, local: liveLocal, remote: currentRemote, stale: true };
-          this.syncState.upsertConflict(refreshed);
-          result.stale.push(refreshed);
+          this.markStale(conflict, liveLocal, currentRemote, result);
           return;
         }
         const written = await this.readNote(file).catch(() => null);
@@ -158,6 +154,13 @@ export class ConflictApplier {
   private settle(conflict: PendingConflict, baseline: FieldSnapshot): void {
     this.syncState.setFields(conflict.recordId, { [conflict.field]: baseline });
     this.syncState.removeConflict(conflict.recordId, conflict.field);
+  }
+
+  /** Re-queues the entry with the values just read, flagged as changed since detected. */
+  private markStale(conflict: PendingConflict, local: unknown, remote: unknown, result: ApplyResult): void {
+    const refreshed: PendingConflict = { ...conflict, local, remote, stale: true };
+    this.syncState.upsertConflict(refreshed);
+    result.stale.push(refreshed);
   }
 
   private drop(conflict: PendingConflict, result: ApplyResult): void {
