@@ -308,6 +308,20 @@
 
 /* ─── Sync Conflict Resolution Modal ─────────────────────────────── */
 
+/* The modal shell is a column: title, scrolling content, fixed footer.
+   Keeps "Set all to" and Apply / Close reachable with many conflicts. */
+.modal.ani-conflict-modal-shell {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ani-conflict-modal-shell > .modal-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .ani-conflict-modal .ani-conflict-desc,
 .ani-conflict-modal .ani-conflict-empty {
   font-size: var(--font-ui-small);
@@ -331,6 +345,12 @@
   flex-wrap: wrap;
   gap: var(--size-4-2);
   margin-bottom: var(--size-4-2);
+  /* Sticks to the top of the scrolling content while its group is in view. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--size-4-2) 0;
+  background-color: var(--modal-background, var(--background-primary));
 }
 
 .ani-conflict-set-all-label {
@@ -414,5 +434,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
+  flex: 0 0 auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
 }

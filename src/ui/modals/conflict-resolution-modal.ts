@@ -114,6 +114,11 @@ export class ConflictResolutionModal extends Modal {
   private selects = new Map<ConflictKey, HTMLSelectElement>();
   private errors = new Map<ConflictKey, string>();
   private applying = false;
+  /**
+   * Apply / Close bar. Lives in `modalEl`, outside the scrolling content,
+   * so it stays visible however many conflicts are listed.
+   */
+  private footerEl: HTMLElement | null = null;
 
   constructor(
     app: App,
@@ -134,11 +139,15 @@ export class ConflictResolutionModal extends Modal {
 
   onOpen(): void {
     this.titleEl.setText('Resolve sync conflicts');
+    // Only the content scrolls; the title and the footer bar stay in place.
+    this.modalEl.addClass('ani-conflict-modal-shell');
     this.render();
   }
 
   onClose(): void {
     this.contentEl.empty();
+    this.footerEl?.remove();
+    this.footerEl = null;
     this.onClosed?.();
   }
 
@@ -259,7 +268,8 @@ export class ConflictResolutionModal extends Modal {
   }
 
   private renderButtons(canApply: boolean): void {
-    const bar = this.contentEl.createDiv({ cls: 'ani-conflict-buttons' });
+    this.footerEl?.remove();
+    const bar = this.footerEl = this.modalEl.createDiv({ cls: 'ani-conflict-buttons' });
     if (canApply) {
       const apply = bar.createEl('button', { cls: 'mod-cta', text: 'Apply' });
       apply.addEventListener('click', () => {
