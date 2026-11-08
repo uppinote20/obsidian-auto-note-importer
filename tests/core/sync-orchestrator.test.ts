@@ -574,7 +574,7 @@ describe('SyncOrchestrator', () => {
       expect(typeof result.newConflicts[0].detectedAt).toBe('string');
       expect(syncState.pendingConflicts()).toHaveLength(1);
       expect(syncState.getRecord('rec1')?.fields.Count).toEqual({ local: 10, remote: 10 });
-      expect(noticeTexts()).toContain('Auto Note Importer: 1 sync conflict(s) need resolving (Airtable)');
+      expect(noticeTexts().some(t => t.includes('need resolving'))).toBe(false);
     });
 
     it('manual: a conflict without a snapshot carries snapshot null', async () => {

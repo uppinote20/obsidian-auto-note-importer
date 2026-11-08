@@ -485,9 +485,6 @@ export class SyncOrchestrator {
       const names = [...new Set(run.restored)].join(', ');
       new Notice(`Auto Note Importer: Restored ${label} values: ${names}`);
     }
-    if (run.newConflicts.length > 0) {
-      new Notice(`Auto Note Importer: ${run.newConflicts.length} sync conflict(s) need resolving (${label})`);
-    }
   }
 
   private determineFilename(note: RemoteNote): string {
@@ -699,9 +696,6 @@ export class SyncOrchestrator {
     if (overwrote.length > 0) {
       const names = [...new Set(overwrote)].join(', ');
       new Notice(`Auto Note Importer: Overwrote remote changes: ${names} (${label})`);
-    }
-    if (newConflicts.length > 0) {
-      new Notice(`Auto Note Importer: ${newConflicts.length} sync conflict(s) need resolving (${label})`);
     }
 
     this.fileWatcher.clearPending();

@@ -117,6 +117,63 @@ describe('SyncQueue', () => {
       expect(mergedRequest.filePaths).toContain('file3.md');
     });
 
+    it('tags requests with the given trigger and defaults to user', async () => {
+      const queue = new SyncQueue(mockProcessor);
+
+      await queue.enqueue('push', 'current');
+      await queue.enqueue('pull', 'all', undefined, 'auto');
+
+      expect(processedRequests[0].trigger).toBe('user');
+      expect(processedRequests[1].trigger).toBe('auto');
+    });
+
+    it('merges auto and user requests into one run with trigger user', async () => {
+      let resolveFirst: () => void;
+      const firstPromise = new Promise<void>(resolve => {
+        resolveFirst = resolve;
+      });
+      const slowProcessor: SyncProcessor = vi.fn(async (request: SyncRequest) => {
+        processedRequests.push(request);
+        if (processedRequests.length === 1) await firstPromise;
+      });
+      const queue = new SyncQueue(slowProcessor);
+
+      const firstEnqueue = queue.enqueue('push', 'current');
+      queue.enqueue('push', 'modified', ['a.md'], 'auto');
+      queue.enqueue('push', 'modified', ['b.md'], 'user');
+      queue.enqueue('push', 'modified', ['c.md'], 'auto');
+
+      resolveFirst!();
+      await firstEnqueue;
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(processedRequests).toHaveLength(2);
+      expect(processedRequests[1].trigger).toBe('user');
+      expect(processedRequests[1].filePaths).toEqual(['a.md', 'b.md', 'c.md']);
+    });
+
+    it('keeps trigger auto when every merged request is auto', async () => {
+      let resolveFirst: () => void;
+      const firstPromise = new Promise<void>(resolve => {
+        resolveFirst = resolve;
+      });
+      const slowProcessor: SyncProcessor = vi.fn(async (request: SyncRequest) => {
+        processedRequests.push(request);
+        if (processedRequests.length === 1) await firstPromise;
+      });
+      const queue = new SyncQueue(slowProcessor);
+
+      const firstEnqueue = queue.enqueue('push', 'current');
+      queue.enqueue('push', 'modified', ['a.md'], 'auto');
+      queue.enqueue('push', 'modified', ['b.md'], 'auto');
+
+      resolveFirst!();
+      await firstEnqueue;
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(processedRequests[1].trigger).toBe('auto');
+    });
+
     it('should process requests sequentially for rapid calls (SQ-1.4)', async () => {
       const executionOrder: number[] = [];
       let callCount = 0;

@@ -8,7 +8,7 @@
  */
 
 import { generateId } from '../utils';
-import type { SyncRequest, SyncMode, SyncScope } from '../types';
+import type { SyncRequest, SyncMode, SyncScope, SyncTrigger } from '../types';
 
 /**
  * Processor function type for handling sync requests.
@@ -41,14 +41,16 @@ export class SyncQueue {
   async enqueue(
     mode: SyncMode,
     scope: SyncScope,
-    filePaths?: string[]
+    filePaths?: string[],
+    trigger: SyncTrigger = 'user'
   ): Promise<void> {
     const request: SyncRequest = {
       id: generateId(),
       mode,
       scope,
       filePaths,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      trigger
     };
 
     // Try to merge with existing request of the same type
@@ -66,7 +68,9 @@ export class SyncQueue {
       this.queue[existingIndex] = {
         ...existing,
         filePaths: Array.from(mergedPaths),
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        // A user request merged with an auto one must still count as user-triggered.
+        trigger: existing.trigger === 'user' || trigger === 'user' ? 'user' : 'auto'
       };
     } else {
       this.queue.push(request);

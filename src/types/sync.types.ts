@@ -15,6 +15,12 @@ import type { PendingConflict } from './sync-state.types';
 export type SyncMode = 'push' | 'pull' | 'bidirectional';
 
 /**
+ * Who started a sync run: a user command or background sync (watcher,
+ * interval). Behaviour keyed on it arrives with the conflict modal.
+ */
+export type SyncTrigger = 'user' | 'auto';
+
+/**
  * Represents a sync request in the queue.
  */
 export interface SyncRequest {
@@ -23,13 +29,8 @@ export interface SyncRequest {
   scope: SyncScope;
   filePaths?: string[];
   timestamp: number;
+  trigger: SyncTrigger;
 }
-
-/**
- * Who started a sync run: a user command or background sync (watcher,
- * interval). Behaviour keyed on it arrives with the conflict modal.
- */
-export type SyncTrigger = 'user' | 'auto';
 
 /**
  * Outcome of one `SyncOrchestrator.processSyncRequest` run.

@@ -10,8 +10,8 @@
  * @tested e2e:tests/e2e/run-e2e.mjs
  */
 
-import { Plugin, normalizePath } from "obsidian";
-import type { AutoNoteImporterSettings, ConfigEntry, SharedServices } from './types';
+import { Plugin, Notice, normalizePath } from "obsidian";
+import type { AutoNoteImporterSettings, ConfigEntry, SharedServices, SyncRunResult } from './types';
 import { DEFAULT_SETTINGS, CREDENTIAL_TYPE_LABELS } from './types';
 import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache, NotionSchemaCache, defaultRateLimiters } from './services';
 import { ConfigManager, SyncStateStore } from './core';
@@ -70,6 +70,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       syncState,
       statusBarFactory: () => this.addStatusBarItem(),
       getDebugMode: () => this.settings.debugMode,
+      onRunComplete: (configId, _trigger, result) => this.notifyRunComplete(configId, result),
     };
 
     syncState.retainConfigs(new Set(this.settings.configs.map(c => c.id)));
@@ -151,6 +152,16 @@ export default class AutoNoteImporterPlugin extends Plugin {
     return true;
   }
 
+  /** Surfaces a finished sync run to the user (conflict notice; replaced by the modal later). */
+  private notifyRunComplete(configId: string, result: SyncRunResult): void {
+    const n = result.newConflicts.length;
+    if (n === 0) return;
+    const config = findConfigById(this.settings, configId);
+    const credential = config && findCredentialForConfig(this.settings, config);
+    const label = credential ? CREDENTIAL_TYPE_LABELS[credential.type] : 'remote';
+    new Notice(`Auto Note Importer: ${n} sync conflict(s) need resolving (${label})`);
+  }
+
   /**
    * Registers sync commands for a single config entry.
    * Configs with an orphaned credentialId register no commands; they recover
@@ -170,7 +181,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'current', undefined, 'user');
         return true;
       },
     });
@@ -181,7 +192,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('pull', 'all', undefined, 'user');
         return true;
       },
     });
@@ -193,7 +204,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'current', undefined, 'user');
         return true;
       },
     });
@@ -204,7 +215,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'modified');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'modified', undefined, 'user');
         return true;
       },
     });
@@ -215,7 +226,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('push', 'all', undefined, 'user');
         return true;
       },
     });
@@ -227,7 +238,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
         if (!this.isActiveFileInConfigFolder(cfg)) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'current', undefined, 'user');
         return true;
       },
     });
@@ -238,7 +249,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'modified');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'modified', undefined, 'user');
         return true;
       },
     });
@@ -249,7 +260,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const cfg = findConfigById(this.settings, configId);
         if (!cfg?.enabled || !cfg.bidirectionalSync) return false;
-        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'all');
+        if (!checking) void this.configManager.getInstance(configId)?.enqueueSyncRequest('bidirectional', 'all', undefined, 'user');
         return true;
       },
     });

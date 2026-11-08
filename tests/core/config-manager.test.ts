@@ -45,6 +45,7 @@ function createSharedServices(): SharedServices {
     syncState: new SyncStateStore(createMockApp().vault.adapter as unknown as DataAdapter, 'sync-state.json'),
     statusBarFactory: vi.fn(() => document.createElement('div')),
     getDebugMode: vi.fn(() => false),
+    onRunComplete: vi.fn(),
   };
 }
 

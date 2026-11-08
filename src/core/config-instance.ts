@@ -18,6 +18,7 @@ import type {
   LegacySettings,
   SyncMode,
   SyncScope,
+  SyncTrigger,
   ConfigEntry,
   Credential,
   SharedServices,
@@ -85,7 +86,7 @@ export class ConfigInstance {
       this.settings,
       async (files) => {
         const mode: SyncMode = this.settings.autoSyncComputedFields ? 'bidirectional' : 'push';
-        await this.syncQueue.enqueue(mode, 'modified', files.map(f => f.path));
+        await this.syncQueue.enqueue(mode, 'modified', files.map(f => f.path), 'auto');
       }
     );
 
@@ -113,9 +114,10 @@ export class ConfigInstance {
 
     // 5. Create SyncQueue
     this.syncQueue = new SyncQueue(
-      // The run result (new conflicts) is not consumed here yet.
-      async ({ mode, scope, filePaths }) => {
-        await this.syncOrchestrator.processSyncRequest(mode, scope, filePaths);
+      // A throw skips onRunComplete and reaches the queue's onError instead.
+      async ({ mode, scope, filePaths, trigger }) => {
+        const result = await this.syncOrchestrator.processSyncRequest(mode, scope, filePaths, trigger);
+        this.shared.onRunComplete(this.configId, trigger, result);
       },
       (error) => {
         const message = error instanceof Error ? error.message : 'Unknown error';
@@ -143,8 +145,13 @@ export class ConfigInstance {
    * so callers (e.g. e2e harnesses) can await completion. UI callers
    * that want fire-and-forget behavior can simply ignore the return.
    */
-  enqueueSyncRequest(mode: SyncMode, scope: SyncScope, filePaths?: string[]): Promise<void> {
-    return this.syncQueue.enqueue(mode, scope, filePaths);
+  enqueueSyncRequest(
+    mode: SyncMode,
+    scope: SyncScope,
+    filePaths?: string[],
+    trigger: SyncTrigger = 'user',
+  ): Promise<void> {
+    return this.syncQueue.enqueue(mode, scope, filePaths, trigger);
   }
 
   /**
@@ -202,7 +209,7 @@ export class ConfigInstance {
   private startScheduler(config: ConfigEntry): void {
     if (config.syncInterval > 0) {
       this.schedulerIntervalId = window.setInterval(
-        () => { void this.syncQueue.enqueue('pull', 'all'); },
+        () => { void this.syncQueue.enqueue('pull', 'all', undefined, 'auto'); },
         config.syncInterval * 60 * 1000,
       );
     }

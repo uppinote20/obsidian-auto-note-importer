@@ -57,6 +57,7 @@ function createSharedServices(overrides: Partial<SharedServices> = {}): SharedSe
       return el;
     }),
     getDebugMode: vi.fn(() => false),
+    onRunComplete: vi.fn(),
     ...overrides,
   };
 }
@@ -186,7 +187,7 @@ describe('ConfigInstance', () => {
 
       vi.advanceTimersByTime(60_000);
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all');
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined, 'auto');
 
       instance.destroy();
     });
@@ -323,7 +324,7 @@ describe('ConfigInstance', () => {
 
       instance.enqueueSyncRequest('pull', 'all');
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined);
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined, 'user');
 
       instance.destroy();
     });
@@ -337,8 +338,57 @@ describe('ConfigInstance', () => {
 
       instance.enqueueSyncRequest('push', 'modified', ['file1.md', 'file2.md']);
 
-      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('push', 'modified', ['file1.md', 'file2.md']);
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('push', 'modified', ['file1.md', 'file2.md'], 'user');
 
+      instance.destroy();
+    });
+  });
+
+  describe('sync triggers and run completion', () => {
+    it('file watcher callback enqueues an auto request', async () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ enabled: true }), createCredential(), shared);
+      const syncQueueInstance = vi.mocked(SyncQueue).mock.instances[0];
+      const onChange = vi.mocked(FileWatcher).mock.calls[0][2] as (files: { path: string }[]) => Promise<void>;
+
+      await onChange([{ path: 'a.md' }]);
+
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('push', 'modified', ['a.md'], 'auto');
+      instance.destroy();
+    });
+
+    it('scheduler enqueues an auto pull', () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ enabled: true, syncInterval: 1 }), createCredential(), shared);
+      const syncQueueInstance = vi.mocked(SyncQueue).mock.instances[0];
+
+      vi.advanceTimersByTime(60 * 1000);
+
+      expect(syncQueueInstance.enqueue).toHaveBeenCalledWith('pull', 'all', undefined, 'auto');
+      instance.destroy();
+    });
+
+    it('reports the orchestrator result to onRunComplete with the request trigger', async () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ enabled: true }), createCredential(), shared);
+      const processor = vi.mocked(SyncQueue).mock.calls[0][0];
+      const orchestrator = vi.mocked(SyncOrchestrator).mock.instances[0];
+      const result = { newConflicts: [{ recordId: 'rec1' }] };
+      vi.mocked(orchestrator.processSyncRequest).mockResolvedValue(result as never);
+
+      await processor({ id: 'r1', mode: 'push', scope: 'all', timestamp: 0, trigger: 'auto' });
+
+      expect(orchestrator.processSyncRequest).toHaveBeenCalledWith('push', 'all', undefined, 'auto');
+      expect(shared.onRunComplete).toHaveBeenCalledWith('cfg-1', 'auto', result);
+      instance.destroy();
+    });
+
+    it('does not call onRunComplete when the processor throws', async () => {
+      const instance = new ConfigInstance(mockApp as unknown as App, createConfig({ enabled: true }), createCredential(), shared);
+      const processor = vi.mocked(SyncQueue).mock.calls[0][0];
+      const orchestrator = vi.mocked(SyncOrchestrator).mock.instances[0];
+      vi.mocked(orchestrator.processSyncRequest).mockRejectedValue(new Error('boom'));
+
+      await expect(processor({ id: 'r1', mode: 'pull', scope: 'all', timestamp: 0, trigger: 'user' })).rejects.toThrow('boom');
+
+      expect(shared.onRunComplete).not.toHaveBeenCalled();
       instance.destroy();
     });
   });

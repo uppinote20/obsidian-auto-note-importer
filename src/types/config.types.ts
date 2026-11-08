@@ -5,6 +5,7 @@
  */
 
 import type { ConflictResolutionMode, BasesFileLocation } from './settings.types';
+import type { SyncRunResult, SyncTrigger } from './sync.types';
 import type { RateLimiter } from '../services/rate-limiter';
 import type { FieldCache } from '../services/field-cache';
 import type { SeaTableMetadataCache } from '../services/seatable-metadata-cache';
@@ -23,6 +24,8 @@ export interface SharedServices {
   syncState: SyncStateStore;
   statusBarFactory: () => HTMLElement;
   getDebugMode: () => boolean;
+  /** Called once per successfully processed sync request. */
+  onRunComplete: (configId: string, trigger: SyncTrigger, result: SyncRunResult) => void;
 }
 
 export interface ConfigEntry {
