@@ -41,6 +41,13 @@ import { validateFolderPath } from '../utils/validation';
 import { debounce } from '../utils/debounce';
 import { assertNever } from '../utils/assert';
 
+/** What each conflict mode does with a field changed on both sides since the last sync (spec §3). */
+const CONFLICT_MODE_DESCRIPTIONS: Record<ConflictResolutionMode, string> = {
+  'manual': 'Fields changed on both sides since the last sync are left as they are on both sides and queued. Run "Resolve sync conflicts" to choose a value.',
+  'obsidian-wins': 'Push sends the Obsidian value, overwriting remote changes (with a notice). Pull keeps the Obsidian value.',
+  'remote-wins': 'Push skips fields changed on both sides. Pull replaces them with the remote value (with a notice).',
+};
+
 /**
  * Interface for the plugin that the settings tab needs.
  */
@@ -2625,16 +2632,17 @@ export class AutoNoteImporterSettingTab extends PluginSettingTab {
         }));
 
     if (config.bidirectionalSync) {
-      new Setting(containerEl)
+      const conflictSetting = new Setting(containerEl)
         .setName("Conflict resolution")
-        .setDesc("How to handle conflicts when the same field is modified in both places.")
+        .setDesc(CONFLICT_MODE_DESCRIPTIONS[config.conflictResolution])
         .addDropdown(dropdown => dropdown
-          .addOption('manual', 'Manual resolution (show conflicts)')
-          .addOption('obsidian-wins', 'Obsidian wins (overwrite remote)')
-          .addOption('remote-wins', 'Remote wins (overwrite Obsidian)')
+          .addOption('manual', 'Manual (queue for review)')
+          .addOption('obsidian-wins', 'Obsidian wins')
+          .addOption('remote-wins', 'Remote wins')
           .setValue(config.conflictResolution)
           .onChange(async (value) => {
             config.conflictResolution = value as ConflictResolutionMode;
+            conflictSetting.setDesc(CONFLICT_MODE_DESCRIPTIONS[config.conflictResolution]);
             await this.plugin.saveSettings();
           }));
 

@@ -11,12 +11,13 @@
  */
 
 import { Plugin, Notice, normalizePath } from "obsidian";
-import type { AutoNoteImporterSettings, ConfigEntry, SharedServices, SyncRunResult } from './types';
+import type { AutoNoteImporterSettings, ConfigEntry, PendingConflict, SharedServices, SyncRunResult, SyncTrigger } from './types';
 import { DEFAULT_SETTINGS, CREDENTIAL_TYPE_LABELS } from './types';
 import { FieldCache, SeaTableMetadataCache, SupabaseMetadataCache, NotionSchemaCache, defaultRateLimiters } from './services';
 import { ConfigManager, SyncStateStore } from './core';
 import { FrontmatterParser } from './file-operations';
-import { AutoNoteImporterSettingTab } from './ui';
+import { AutoNoteImporterSettingTab, ConflictResolutionModal } from './ui';
+import type { ConflictGroup, ConflictModalHost } from './ui';
 import { migrateSettings, hydrateConfigDefaults } from './utils/migration';
 import { findCredentialForConfig, findConfigById, buildCredentialIndex } from './utils';
 
@@ -34,11 +35,23 @@ export default class AutoNoteImporterPlugin extends Plugin {
   notionSchemaCache!: NotionSchemaCache;
   private syncState!: SyncStateStore;
   private commandFingerprint = '';
+  private conflictModal: ConflictResolutionModal | null = null;
 
   async onload() {
     await this.loadSettings();
     await this.initializeServices();
     this.registerCommands();
+    this.registerVaultEvents();
+  }
+
+  /** Keeps queued conflicts pointing at existing notes. */
+  private registerVaultEvents(): void {
+    this.registerEvent(this.app.vault.on('delete', (file) => {
+      if (this.syncState.removeConflictsForPath(file.path)) void this.syncState.flush();
+    }));
+    this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+      if (this.syncState.renameConflictPath(oldPath, file.path)) void this.syncState.flush();
+    }));
   }
 
   /**
@@ -70,7 +83,7 @@ export default class AutoNoteImporterPlugin extends Plugin {
       syncState,
       statusBarFactory: () => this.addStatusBarItem(),
       getDebugMode: () => this.settings.debugMode,
-      onRunComplete: (configId, _trigger, result) => this.notifyRunComplete(configId, result),
+      onRunComplete: (configId, trigger, result) => this.notifyRunComplete(configId, trigger, result),
     };
 
     syncState.retainConfigs(new Set(this.settings.configs.map(c => c.id)));
@@ -94,10 +107,23 @@ export default class AutoNoteImporterPlugin extends Plugin {
    * Registers per-config commands for all configurations.
    */
   private registerCommands(): void {
+    this.registerResolveCommand();
     for (const config of this.settings.configs) {
       this.registerCommandsForConfig(config);
     }
     this.commandFingerprint = this.getCommandFingerprint();
+  }
+
+  private registerResolveCommand(): void {
+    this.addCommand({
+      id: 'resolve-sync-conflicts',
+      name: 'Resolve sync conflicts',
+      checkCallback: (checking) => {
+        if (!this.conflictGroups().some(g => g.conflicts.length > 0)) return false;
+        if (!checking) this.openConflictModal();
+        return true;
+      },
+    });
   }
 
   private getCommandFingerprint(credIndex?: Map<string, { type: string }>): string {
@@ -133,7 +159,8 @@ export default class AutoNoteImporterPlugin extends Plugin {
       }
     }
 
-    // Re-register for all current configs
+    // Re-register for all current configs (the sweep above also removed the global command)
+    this.registerResolveCommand();
     for (const config of this.settings.configs) {
       this.registerCommandsForConfig(config);
     }
@@ -152,14 +179,74 @@ export default class AutoNoteImporterPlugin extends Plugin {
     return true;
   }
 
-  /** Surfaces a finished sync run to the user (conflict notice; replaced by the modal later). */
-  private notifyRunComplete(configId: string, result: SyncRunResult): void {
+  /**
+   * Surfaces a finished sync run's new conflicts: a user-triggered run opens
+   * the resolution modal with them; an automatic run shows a clickable Notice.
+   */
+  private notifyRunComplete(configId: string, trigger: SyncTrigger, result: SyncRunResult): void {
     const n = result.newConflicts.length;
     if (n === 0) return;
+    if (trigger === 'user') {
+      this.openConflictModal(result.newConflicts.map(conflict => ({ configId, conflict })));
+      return;
+    }
     const config = findConfigById(this.settings, configId);
     const credential = config && findCredentialForConfig(this.settings, config);
     const label = credential ? CREDENTIAL_TYPE_LABELS[credential.type] : 'remote';
-    new Notice(`Auto Note Importer: ${n} sync conflict(s) need resolving (${label})`);
+    const notice = new Notice(`Auto Note Importer: ${n} sync conflict${n === 1 ? '' : 's'} with ${label} \u2014 click to resolve`, 10000);
+    notice.noticeEl.addEventListener('click', () => {
+      notice.hide();
+      this.openConflictModal();
+    });
+  }
+
+  /** Pending conflicts of configs that have a running instance, in settings order. */
+  private conflictGroups(): ConflictGroup[] {
+    const groups: ConflictGroup[] = [];
+    for (const config of this.settings.configs) {
+      if (!this.configManager.getInstance(config.id)) continue;
+      const conflicts = this.syncState.forConfig(config.id).pendingConflicts();
+      if (conflicts.length === 0) continue;
+      const credential = findCredentialForConfig(this.settings, config);
+      groups.push({
+        configId: config.id,
+        configName: config.name,
+        providerLabel: credential ? CREDENTIAL_TYPE_LABELS[credential.type] : 'remote',
+        bidirectional: config.bidirectionalSync,
+        conflicts,
+      });
+    }
+    return groups;
+  }
+
+  private readonly conflictHost: ConflictModalHost = {
+    getGroups: () => this.conflictGroups(),
+    apply: async (configId, choices) => {
+      const instance = this.configManager.getInstance(configId);
+      if (!instance) {
+        return {
+          applied: 0, stale: [], removed: [],
+          failed: choices.map(({ conflict }) => ({ conflict, error: 'This config is disabled or has no credential' })),
+        };
+      }
+      return instance.createConflictApplier().apply(choices);
+    },
+  };
+
+  /**
+   * Opens the resolution modal (all pending conflicts, or just `only`). An
+   * already-open modal takes the new entries instead of stacking a second one.
+   */
+  private openConflictModal(only?: Array<{ configId: string; conflict: PendingConflict }>): void {
+    if (this.conflictModal) {
+      this.conflictModal.show(only);
+      return;
+    }
+    const modal = new ConflictResolutionModal(this.app, this.conflictHost, only, () => {
+      if (this.conflictModal === modal) this.conflictModal = null;
+    });
+    this.conflictModal = modal;
+    modal.open();
   }
 
   /**

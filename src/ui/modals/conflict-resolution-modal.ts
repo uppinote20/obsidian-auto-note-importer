@@ -1,0 +1,241 @@
+/**
+ * Modal listing queued sync conflicts (grouped by config → note) and
+ * applying the chosen resolution per field (spec §4).
+ *
+ * Remote values are untrusted: they are only ever rendered as text
+ * (`createEl` / `setText`), never as HTML.
+ */
+
+import { Modal, Notice } from 'obsidian';
+import type { App } from 'obsidian';
+import type { PendingConflict } from '../../types';
+import type { ApplyResult, ConflictChoice } from '../../core/conflict-applier';
+import { formatObjectLabel } from '../../utils';
+
+/** Pending conflicts of one config, as the modal shows them. */
+export interface ConflictGroup {
+  configId: string;
+  configName: string;
+  providerLabel: string;
+  bidirectional: boolean;
+  conflicts: PendingConflict[];
+}
+
+/** What the modal needs from the plugin. */
+export interface ConflictModalHost {
+  /** Current pending conflicts of active configs (read fresh on every render). */
+  getGroups(): ConflictGroup[];
+  apply(configId: string, choices: Array<{ conflict: PendingConflict; choice: ConflictChoice }>): Promise<ApplyResult>;
+}
+
+type ConflictKey = string;
+
+function keyOf(configId: string, c: PendingConflict): ConflictKey {
+  return JSON.stringify([configId, c.recordId, c.field]);
+}
+
+/** Plain-text rendering of a field value. */
+function formatValue(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '(empty)';
+  if (Array.isArray(value)) {
+    return value
+      .map(item => (typeof item === 'object' && item !== null ? formatObjectLabel(item) : String(item)))
+      .join(', ');
+  }
+  if (typeof value === 'object') return formatObjectLabel(value);
+  return String(value);
+}
+
+export class ConflictResolutionModal extends Modal {
+  /** Entries this modal shows; `null` = every pending conflict. */
+  private keys: Set<ConflictKey> | null;
+  private choices = new Map<ConflictKey, ConflictChoice>();
+  private errors = new Map<ConflictKey, string>();
+  private applying = false;
+
+  constructor(
+    app: App,
+    private host: ConflictModalHost,
+    only?: Array<{ configId: string; conflict: PendingConflict }>,
+    private onClosed?: () => void,
+  ) {
+    super(app);
+    this.keys = only ? new Set(only.map(e => keyOf(e.configId, e.conflict))) : null;
+  }
+
+  /** Widens an open modal to more entries (or to all pending), keeping choices made so far. */
+  show(only?: Array<{ configId: string; conflict: PendingConflict }>): void {
+    if (!only) this.keys = null;
+    else if (this.keys) for (const e of only) this.keys.add(keyOf(e.configId, e.conflict));
+    if (!this.applying) this.render();
+  }
+
+  onOpen(): void {
+    this.titleEl.setText('Resolve sync conflicts');
+    this.render();
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    this.onClosed?.();
+  }
+
+  /** Visible groups: fresh store values, restricted to this modal's entries. */
+  private visibleGroups(): ConflictGroup[] {
+    return this.host.getGroups()
+      .map(g => ({
+        ...g,
+        conflicts: g.conflicts.filter(c => this.keys === null || this.keys.has(keyOf(g.configId, c))),
+      }))
+      .filter(g => g.conflicts.length > 0);
+  }
+
+  private render(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('ani-conflict-modal');
+
+    const groups = this.visibleGroups();
+    if (groups.length === 0) {
+      contentEl.createEl('p', { cls: 'ani-conflict-empty', text: 'No sync conflicts to resolve.' });
+      this.renderButtons(false);
+      return;
+    }
+
+    contentEl.createEl('p', {
+      cls: 'ani-conflict-desc',
+      text: 'These fields changed in both places since the last sync. Choose which value to keep; "Later" leaves a field queued.',
+    });
+
+    for (const group of groups) {
+      const groupEl = contentEl.createDiv({ cls: 'ani-conflict-group' });
+      groupEl.createEl('h3', { cls: 'ani-conflict-config', text: `${group.configName} (${group.providerLabel})` });
+
+      const byNote = new Map<string, PendingConflict[]>();
+      for (const c of group.conflicts) {
+        const list = byNote.get(c.filePath) ?? [];
+        list.push(c);
+        byNote.set(c.filePath, list);
+      }
+
+      for (const [filePath, conflicts] of byNote) {
+        const noteEl = groupEl.createDiv({ cls: 'ani-conflict-note' });
+        noteEl.createDiv({ cls: 'ani-conflict-note-path', text: filePath });
+        for (const c of conflicts) this.renderField(noteEl, group, c);
+      }
+    }
+
+    this.renderButtons(true);
+  }
+
+  private renderField(parent: HTMLElement, group: ConflictGroup, c: PendingConflict): void {
+    const key = keyOf(group.configId, c);
+    const row = parent.createDiv({ cls: 'ani-conflict-field' });
+
+    const header = row.createDiv({ cls: 'ani-conflict-field-header' });
+    header.createSpan({ cls: 'ani-conflict-field-name', text: c.field });
+    if (!c.writable) header.createSpan({ cls: 'ani-conflict-badge', text: 'Not synced to remote' });
+    if (c.stale) header.createSpan({ cls: 'ani-conflict-badge ani-conflict-badge-warn', text: 'Changed since detected' });
+
+    const values = row.createDiv({ cls: 'ani-conflict-values' });
+    const addValue = (label: string, value: unknown): void => {
+      const cell = values.createDiv({ cls: 'ani-conflict-value' });
+      cell.createDiv({ cls: 'ani-conflict-value-label', text: label });
+      cell.createDiv({ cls: 'ani-conflict-value-text', text: formatValue(value) });
+    };
+    addValue('Obsidian', c.local);
+    addValue(group.providerLabel, c.remote);
+    addValue('Previous sync', c.snapshot ? c.snapshot.local : undefined);
+
+    const select = row.createEl('select', { cls: 'dropdown ani-conflict-choice' });
+    const addOption = (value: ConflictChoice, text: string): void => {
+      select.createEl('option', { value, text });
+    };
+    addOption('later', 'Later');
+    if (c.writable) {
+      if (group.bidirectional) addOption('obsidian', 'Use Obsidian');
+      addOption('remote', `Use ${group.providerLabel}`);
+    } else {
+      addOption('remote', `Restore ${group.providerLabel} value`);
+      addOption('keep-local', 'Keep local (not synced)');
+    }
+    // Keep a choice made before a re-render if this row still offers it.
+    const offered = Array.from(select.options).map(o => o.value);
+    const previous = this.choices.get(key);
+    const initial: ConflictChoice = previous && offered.includes(previous) ? previous : 'later';
+    select.value = initial;
+    this.choices.set(key, initial);
+    select.addEventListener('change', () => {
+      this.choices.set(key, select.value as ConflictChoice);
+    });
+
+    const error = this.errors.get(key);
+    if (error) row.createDiv({ cls: 'ani-conflict-error', text: error });
+  }
+
+  private renderButtons(canApply: boolean): void {
+    const bar = this.contentEl.createDiv({ cls: 'ani-conflict-buttons' });
+    if (canApply) {
+      const apply = bar.createEl('button', { cls: 'mod-cta', text: 'Apply' });
+      apply.addEventListener('click', () => {
+        void this.applyChoices(apply);
+      });
+    }
+    const close = bar.createEl('button', { text: 'Close' });
+    close.addEventListener('click', () => this.close());
+  }
+
+  private async applyChoices(button: HTMLButtonElement): Promise<void> {
+    if (this.applying) return;
+
+    const byConfig = new Map<string, Array<{ conflict: PendingConflict; choice: ConflictChoice }>>();
+    for (const group of this.visibleGroups()) {
+      for (const conflict of group.conflicts) {
+        const choice = this.choices.get(keyOf(group.configId, conflict)) ?? 'later';
+        if (choice === 'later') continue;
+        const list = byConfig.get(group.configId) ?? [];
+        list.push({ conflict, choice });
+        byConfig.set(group.configId, list);
+      }
+    }
+    if (byConfig.size === 0) {
+      new Notice('Auto Note Importer: No resolution chosen. Pick a value for a field, or close to resolve later.');
+      return;
+    }
+
+    this.applying = true;
+    button.disabled = true;
+    let applied = 0;
+    let stale = 0;
+    let failed = 0;
+    this.errors.clear();
+    // Applied entries leave the queue; stale / failed ones are reviewed afresh.
+    this.choices.clear();
+    try {
+      for (const [configId, choices] of byConfig) {
+        let result: ApplyResult;
+        try {
+          result = await this.host.apply(configId, choices);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          result = { applied: 0, stale: [], removed: [], failed: choices.map(({ conflict }) => ({ conflict, error: message })) };
+        }
+        applied += result.applied;
+        stale += result.stale.length;
+        failed += result.failed.length;
+        for (const f of result.failed) this.errors.set(keyOf(configId, f.conflict), f.error);
+      }
+    } finally {
+      this.applying = false;
+    }
+
+    const parts = [`${applied} applied`];
+    if (stale > 0) parts.push(`${stale} changed since detected (review again)`);
+    if (failed > 0) parts.push(`${failed} failed`);
+    new Notice(`Auto Note Importer: Sync conflicts: ${parts.join(', ')}`);
+
+    // Stay open while anything this modal shows is still pending.
+    if (this.visibleGroups().length === 0) this.close();
+    else this.render();
+  }
+}
