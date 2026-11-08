@@ -181,7 +181,23 @@ export class SyncOrchestrator {
       // One write per request, whichever phases ran.
       await this.syncState.flush();
     }
-    return { newConflicts };
+    return { newConflicts: this.stillPending(newConflicts) };
+  }
+
+  /**
+   * Reported conflicts still queued at the end of the run (a later phase may
+   * have settled a push-phase entry), latest entry per field.
+   */
+  private stillPending(conflicts: PendingConflict[]): PendingConflict[] {
+    if (conflicts.length === 0) return conflicts;
+    const key = (c: PendingConflict): string => JSON.stringify([c.recordId, c.field]);
+    const pending = new Set(this.syncState.pendingConflicts().map(key));
+    const latest = new Map<string, PendingConflict>();
+    for (const c of conflicts) {
+      const k = key(c);
+      if (pending.has(k)) latest.set(k, c);
+    }
+    return [...latest.values()];
   }
 
   private async getFilesToSync(scope: SyncScope): Promise<TFile[]> {
@@ -376,10 +392,8 @@ export class SyncOrchestrator {
       ? this.frontmatterParser.parseFieldsFromContent(currentContent) ?? {}
       : {};
 
-    // The remote values as they read back once written: object fields render
-    // as labels, so local-vs-remote comparisons must use this form.
-    const remoteContent = this.frontmatterParser.ensurePrimaryField(await this.buildNoteContent(note), note.primaryField);
-    const remoteLocalForm = this.frontmatterParser.parseFieldsFromContent(remoteContent) ?? undefined;
+    const remoteContent = await this.buildRemoteContent(note);
+    const remoteLocalForm = this.remoteLocalForm(remoteContent);
 
     const recordId = note.primaryField;
     const fieldNames = this.judgedFieldNames(local, note.fields, run.metadata);
@@ -562,6 +576,20 @@ export class SyncOrchestrator {
     return `${this.settings.folderPath}/${sanitized}`;
   }
 
+  /** Note content built from the raw remote record (primaryField ensured). */
+  private async buildRemoteContent(note: RemoteNote): Promise<string> {
+    return this.frontmatterParser.ensurePrimaryField(await this.buildNoteContent(note), note.primaryField);
+  }
+
+  /**
+   * The remote values as they read back once written into a note: object
+   * fields render as labels and null as an empty value, so local-vs-remote
+   * comparisons (push and pull alike) must use this form.
+   */
+  private remoteLocalForm(remoteContent: string): Record<string, unknown> | undefined {
+    return this.frontmatterParser.parseFieldsFromContent(remoteContent) ?? undefined;
+  }
+
   private async buildNoteContent(note: RemoteNote): Promise<string> {
     if (this.settings.templatePath) {
       const templateFile = this.app.vault.getAbstractFileByPath(
@@ -644,7 +672,8 @@ export class SyncOrchestrator {
 
       const fieldNames = this.judgedFieldNames(local, remote.fields, metadata);
       const snapshot = this.syncState.getRecord(recordId)?.fields;
-      const verdicts = threeWayMerge(snapshot, local, remote.fields, fieldNames);
+      const remoteLocalForm = this.remoteLocalForm(await this.buildRemoteContent(remote));
+      const verdicts = threeWayMerge(snapshot, local, remote.fields, fieldNames, remoteLocalForm);
       const plan = planPush(mode, verdicts, local, writable);
       const judged: JudgedPush = {
         recordId, filePath: file.path, local, remote: remote.fields, snapshot, verdicts, plan,

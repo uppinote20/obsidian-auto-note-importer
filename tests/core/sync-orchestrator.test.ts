@@ -577,6 +577,17 @@ describe('SyncOrchestrator', () => {
       expect(noticeTexts().some(t => t.includes('need resolving'))).toBe(false);
     });
 
+    it('manual: no snapshot, an empty local value matches a null remote (no spurious conflict)', async () => {
+      setMode('manual');
+      setupPushFile({ Notes: '' }, { Notes: null });
+
+      const result = await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+      expect(result.newConflicts).toEqual([]);
+      expect(syncState.pendingConflicts()).toEqual([]);
+    });
+
     it('manual: a conflict without a snapshot carries snapshot null', async () => {
       setMode('manual');
       setupPushFile({ Count: 11 }, { Count: 12 });
@@ -1175,6 +1186,20 @@ describe('SyncOrchestrator', () => {
 
       // recA: found by push (re-detected unchanged by pull, so not repeated); recB: found by pull.
       expect(result.newConflicts.map(c => `${c.recordId}.${c.field}`)).toEqual(['recA.X', 'recB.Y']);
+    });
+
+    it('does not report a push-phase conflict the pull phase settled', async () => {
+      settings = { ...settings, autoSyncComputedFields: true, formulaSyncDelay: 0, conflictResolution: 'manual' };
+      orchestrator.updateSettings(settings);
+      syncState.setFields('recA', { X: { local: 1, remote: 1 } });
+      setupPull({ recA: { X: 2 } }, { recA: { X: 2 } });
+      // The push phase still sees the remote at 3; by the pull phase it reads 2.
+      mockProvider.fetchRecord.mockResolvedValue({ id: 'recA', primaryField: 'recA', fields: { X: 3 } });
+
+      const result = await orchestrator.processSyncRequest('bidirectional', 'all', ['Sync/recA.md']);
+
+      expect(syncState.pendingConflicts()).toEqual([]);
+      expect(result.newConflicts).toEqual([]);
     });
 
     it('should execute two phases when autoSyncComputedFields is true', async () => {
