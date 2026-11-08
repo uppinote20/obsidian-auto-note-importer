@@ -8,3 +8,6 @@ export type { StatusBarController, StatusBarHandle } from './sync-orchestrator';
 
 export { ConfigInstance } from './config-instance';
 export { ConfigManager } from './config-manager';
+
+export { threeWayMerge } from './three-way-merge';
+export type { FieldVerdict } from './three-way-merge';

@@ -79,3 +79,11 @@ export type {
   SupabaseOpenApiDefinition,
   SupabaseOpenApiSpec,
 } from './supabase.types';
+
+export type {
+  FieldSnapshot,
+  RecordSnapshot,
+  PendingConflict,
+  ConfigSyncState,
+  SyncStateFile,
+} from './sync-state.types';
