@@ -108,6 +108,21 @@ export function buildSyncHarnessHelpers({ pluginId, e2eCfgId }) {
       await app.vault.modify(file, content);
       await waitForCache(file, key, value);
     }
+
+    // Structured frontmatter write (arrays / objects span several YAML lines,
+    // which modifyField's single-line regex would corrupt). Waits until the
+    // metadata cache holds the same JSON value.
+    async function setFrontmatterValue(file, key, value, maxWait = 5000) {
+      await app.fileManager.processFrontMatter(file, fm => { fm[key] = value; });
+      const want = JSON.stringify(value);
+      const start = Date.now();
+      while (JSON.stringify(app.metadataCache.getFileCache(file)?.frontmatter?.[key]) !== want) {
+        if (Date.now() - start > maxWait) {
+          throw new Error('setFrontmatterValue timeout: ' + key + ' expected=' + want);
+        }
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
   `;
 }
 
