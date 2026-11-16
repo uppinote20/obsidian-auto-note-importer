@@ -752,26 +752,20 @@ export class SyncOrchestrator {
   /**
    * Fetches the current remote state of `recordIds` (deduplicated) for push
    * judgement. Uses `provider.fetchRecords()` in `batchFetchMaxSize` chunks
-   * when available, else one `fetchRecord()` per id. A failed request marks
-   * only the ids it covered as failed; ids missing from a batch result are
-   * "not found" (`remote: null`).
+   * when available, else one `fetchRecord()` per id. Ids missing from a batch
+   * result are "not found" (`remote: null`).
+   *
+   * A rejected chunk is retried one `fetchRecord()` per id, so a single id the
+   * remote refuses (e.g. a malformed UUID failing a whole Supabase `in.()`
+   * query) fails alone instead of taking up to `batchFetchMaxSize` healthy
+   * records with it — the same blast radius as before batching.
    */
   private async lookupRemoteRecords(recordIds: string[]): Promise<Map<string, RemoteLookup>> {
     const lookups = new Map<string, RemoteLookup>();
     const ids = [...new Set(recordIds)];
-    const failure = (error: unknown): RemoteLookup => ({
-      ok: false,
-      message: error instanceof Error ? error.message : 'Unknown error',
-    });
 
     if (!this.provider.fetchRecords) {
-      for (const id of ids) {
-        try {
-          lookups.set(id, { ok: true, remote: await this.provider.fetchRecord(id) });
-        } catch (error) {
-          lookups.set(id, failure(error));
-        }
-      }
+      await this.lookupEach(ids, lookups);
       return lookups;
     }
 
@@ -784,10 +778,25 @@ export class SyncOrchestrator {
         const byId = new Map(notes.map(n => [n.id, n]));
         for (const id of chunk) lookups.set(id, { ok: true, remote: byId.get(id) ?? null });
       } catch (error) {
-        for (const id of chunk) lookups.set(id, failure(error));
+        if (this.settings.debugMode) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: Batch fetch failed, retrying ${chunk.length} record(s) one by one: ${message}`);
+        }
+        await this.lookupEach(chunk, lookups);
       }
     }
     return lookups;
+  }
+
+  /** One `fetchRecord()` per id; a rejection fails only that id. */
+  private async lookupEach(ids: string[], lookups: Map<string, RemoteLookup>): Promise<void> {
+    for (const id of ids) {
+      try {
+        lookups.set(id, { ok: true, remote: await this.provider.fetchRecord(id) });
+      } catch (error) {
+        lookups.set(id, { ok: false, message: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    }
   }
 
   /**

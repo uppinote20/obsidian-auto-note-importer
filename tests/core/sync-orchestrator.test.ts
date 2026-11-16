@@ -928,17 +928,23 @@ describe('SyncOrchestrator', () => {
       expect(provider.fetchRecords!.mock.calls).toEqual([[['recA']]]);
     });
 
-    it('fails only the ids of a rejected chunk', async () => {
+    it('retries a rejected chunk one id at a time, failing only the bad id', async () => {
       const provider = batchingProvider(2);
-      provider.fetchRecords!.mockRejectedValueOnce(new Error('boom'));
+      provider.fetchRecords!.mockRejectedValueOnce(new Error('invalid input syntax for type uuid'));
+      provider.fetchRecord.mockImplementation(async (id: string) => {
+        if (id === 'recA') throw new Error('invalid input syntax for type uuid');
+        return { id, primaryField: id, fields: { Title: 'same' } };
+      });
       setupPushFiles(['recA', 'recB', 'recC']);
 
       await orchestrator.processSyncRequest('push', 'all');
 
+      expect(provider.fetchRecord.mock.calls).toEqual([['recA'], ['recB']]);
+      expect(provider.fetchRecords!).toHaveBeenCalledTimes(2);
       expect(syncState.getRecord('recA')).toBeUndefined();
-      expect(syncState.getRecord('recB')).toBeUndefined();
+      expect(syncState.getRecord('recB')).toBeDefined();
       expect(syncState.getRecord('recC')).toBeDefined();
-      expect(noticeTexts()).toContain('Auto Note Importer: 0 synced, 2 errors');
+      expect(noticeTexts()).toContain('Auto Note Importer: 0 synced, 1 errors');
     });
 
     it('treats an id missing from the batch result as not found', async () => {

@@ -129,7 +129,8 @@ export interface DatabaseProvider {
    *   representation would surface as a spurious remote edit.
    * - Ids absent from the result are "not found" (same as `fetchRecord()`
    *   returning `null`); malformed ids are simply never matched.
-   * - A failed request rejects — callers treat every id of that call as failed.
+   * - A failed request rejects; callers then retry those ids one
+   *   `fetchRecord()` at a time, so one bad id doesn't fail its whole chunk.
    * - Callers never pass more than `capabilities.batchFetchMaxSize` ids.
    */
   fetchRecords?(recordIds: string[]): Promise<RemoteNote[]>;
