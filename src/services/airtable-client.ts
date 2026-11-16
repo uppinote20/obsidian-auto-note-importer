@@ -42,6 +42,15 @@ const AIRTABLE_CAPABILITIES: ProviderCapabilities = {
  */
 const AIRTABLE_RECORD_ID_PATTERN = /^rec[A-Za-z0-9]+$/;
 
+interface AirtableRecord {
+  id: string;
+  fields: Record<string, unknown>;
+}
+
+function toRemoteNote(record: AirtableRecord): RemoteNote {
+  return { id: record.id, primaryField: record.id, fields: record.fields };
+}
+
 /**
  * Client for interacting with the Airtable API.
  */
@@ -165,16 +174,7 @@ export class AirtableClient implements DatabaseProvider {
 
       const json = response.json;
 
-      const notesFromPage: RemoteNote[] = json.records.map((record: {
-        id: string;
-        fields: Record<string, unknown>;
-      }) => ({
-        id: record.id,
-        primaryField: record.id,
-        fields: record.fields
-      }));
-
-      allNotes.push(...notesFromPage);
+      allNotes.push(...(json.records as AirtableRecord[]).map(toRemoteNote));
       offset = json.offset;
     } while (offset);
 
@@ -207,12 +207,7 @@ export class AirtableClient implements DatabaseProvider {
       throw new Error(`Failed to fetch record ${recordId}: ${errorDetails}`);
     }
 
-    const json = response.json;
-    return {
-      id: json.id,
-      primaryField: json.id,
-      fields: json.fields
-    };
+    return toRemoteNote(response.json as AirtableRecord);
   }
 
   /**
@@ -253,10 +248,8 @@ export class AirtableClient implements DatabaseProvider {
         throw new Error(`Failed to fetch Airtable records: ${extractApiErrorDetails(response)}`);
       }
 
-      const json = response.json as { records?: { id: string; fields: Record<string, unknown> }[]; offset?: string };
-      for (const record of json.records ?? []) {
-        notes.push({ id: record.id, primaryField: record.id, fields: record.fields });
-      }
+      const json = response.json as { records?: AirtableRecord[]; offset?: string };
+      notes.push(...(json.records ?? []).map(toRemoteNote));
       offset = json.offset;
     } while (offset);
 

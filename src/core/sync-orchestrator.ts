@@ -669,12 +669,12 @@ export class SyncOrchestrator {
     const lookups = await this.lookupRemoteRecords(readable.map(r => r.recordId));
 
     for (const { file, recordId, local } of readable) {
-      const lookup = lookups.get(recordId);
-      if (!lookup || !lookup.ok) {
+      // Every readable id is looked up; the fallback only satisfies the type.
+      const lookup: RemoteLookup = lookups.get(recordId) ?? { ok: false, message: 'Not looked up' };
+      if (!lookup.ok) {
         errorCount++;
         if (this.settings.debugMode) {
-          const message = lookup?.ok === false ? lookup.message : 'Unknown error';
-          new Notice(`Auto Note Importer: Remote fetch failed for ${file.name}: ${message}`);
+          new Notice(`Auto Note Importer: Remote fetch failed for ${file.name}: ${lookup.message}`);
         }
         continue;
       }
@@ -750,15 +750,11 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Fetches the current remote state of `recordIds` (deduplicated) for push
-   * judgement. Uses `provider.fetchRecords()` in `batchFetchMaxSize` chunks
-   * when available, else one `fetchRecord()` per id. Ids missing from a batch
-   * result are "not found" (`remote: null`).
-   *
-   * A rejected chunk is retried one `fetchRecord()` per id, so a single id the
-   * remote refuses (e.g. a malformed UUID failing a whole Supabase `in.()`
-   * query) fails alone instead of taking up to `batchFetchMaxSize` healthy
-   * records with it — the same blast radius as before batching.
+   * Remote state of `recordIds` (deduplicated) for push judgement:
+   * `fetchRecords()` in `batchFetchMaxSize` chunks when available, else one
+   * `fetchRecord()` per id. A rejected chunk is retried per id so one bad id
+   * (e.g. a malformed UUID failing a whole `in.()` query) fails alone — see
+   * `DatabaseProvider.fetchRecords`.
    */
   private async lookupRemoteRecords(recordIds: string[]): Promise<Map<string, RemoteLookup>> {
     const lookups = new Map<string, RemoteLookup>();
