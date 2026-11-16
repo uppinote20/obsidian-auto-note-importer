@@ -85,6 +85,11 @@ export interface ProviderCapabilities {
    * path. Absent means the provider has no body concept.
    */
   bodySync?: 'pull';
+  /**
+   * Maximum record ids per `fetchRecords()` call. Present exactly when the
+   * provider implements `fetchRecords()`; callers chunk to this size.
+   */
+  batchFetchMaxSize?: number;
 }
 
 /**
@@ -112,6 +117,22 @@ export interface DatabaseProvider {
 
   fetchNotes(): Promise<RemoteNote[]>;
   fetchRecord(recordId: string): Promise<RemoteNote | null>;
+  /**
+   * Fetches several records by id in as few requests as the API allows.
+   * Optional — only providers with a native "by id list" query implement it
+   * (and set `capabilities.batchFetchMaxSize`); callers fall back to
+   * per-id `fetchRecord()` otherwise.
+   *
+   * Contract:
+   * - Each returned note MUST have the same shape `fetchRecord()` returns for
+   *   that id — push judges it against the sync snapshot, so a differing
+   *   representation would surface as a spurious remote edit.
+   * - Ids absent from the result are "not found" (same as `fetchRecord()`
+   *   returning `null`); malformed ids are simply never matched.
+   * - A failed request rejects — callers treat every id of that call as failed.
+   * - Callers never pass more than `capabilities.batchFetchMaxSize` ids.
+   */
+  fetchRecords?(recordIds: string[]): Promise<RemoteNote[]>;
   updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult>;
   /**
    * Updates multiple records in a single batch.

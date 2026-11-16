@@ -11,6 +11,7 @@ export type MockDatabaseProvider = {
   fieldTypeMapper: FieldTypeMapper;
   fetchNotes: ReturnType<typeof vi.fn>;
   fetchRecord: ReturnType<typeof vi.fn>;
+  fetchRecords?: ReturnType<typeof vi.fn>;
   fetchFieldMetadata: ReturnType<typeof vi.fn>;
   updateRecord: ReturnType<typeof vi.fn>;
   batchUpdate: ReturnType<typeof vi.fn>;

@@ -66,6 +66,11 @@ interface JudgedPush extends JudgedRecord {
   plan: PushPlan;
 }
 
+/** Remote state looked up for push judgement: found / not found (`null`) / failed. */
+type RemoteLookup =
+  | { ok: true; remote: RemoteNote | null }
+  | { ok: false; message: string };
+
 export class SyncOrchestrator {
   private app: App;
   private settings: LegacySettings;
@@ -630,6 +635,7 @@ export class SyncOrchestrator {
     let syncedCount = 0;
     let errorCount = 0;
     const toSend: JudgedPush[] = [];
+    const readable: { file: TFile; recordId: string; local: Record<string, unknown> }[] = [];
 
     for (const file of files) {
       // Local values come from the file's own text (the same source as the
@@ -655,18 +661,24 @@ export class SyncOrchestrator {
         }
         continue;
       }
+      readable.push({ file, recordId, local });
+    }
 
-      let remote: RemoteNote | null;
-      try {
-        remote = await this.provider.fetchRecord(recordId);
-      } catch (error) {
+    // One lookup pass for every record before judging (#26): batched where
+    // the provider supports it, per-id otherwise.
+    const lookups = await this.lookupRemoteRecords(readable.map(r => r.recordId));
+
+    for (const { file, recordId, local } of readable) {
+      const lookup = lookups.get(recordId);
+      if (!lookup || !lookup.ok) {
         errorCount++;
         if (this.settings.debugMode) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
+          const message = lookup?.ok === false ? lookup.message : 'Unknown error';
           new Notice(`Auto Note Importer: Remote fetch failed for ${file.name}: ${message}`);
         }
         continue;
       }
+      const remote = lookup.remote;
       if (!remote) {
         errorCount++;
         if (this.settings.debugMode) {
@@ -735,6 +747,47 @@ export class SyncOrchestrator {
     this.fileWatcher.clearPending();
 
     return newConflicts;
+  }
+
+  /**
+   * Fetches the current remote state of `recordIds` (deduplicated) for push
+   * judgement. Uses `provider.fetchRecords()` in `batchFetchMaxSize` chunks
+   * when available, else one `fetchRecord()` per id. A failed request marks
+   * only the ids it covered as failed; ids missing from a batch result are
+   * "not found" (`remote: null`).
+   */
+  private async lookupRemoteRecords(recordIds: string[]): Promise<Map<string, RemoteLookup>> {
+    const lookups = new Map<string, RemoteLookup>();
+    const ids = [...new Set(recordIds)];
+    const failure = (error: unknown): RemoteLookup => ({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    if (!this.provider.fetchRecords) {
+      for (const id of ids) {
+        try {
+          lookups.set(id, { ok: true, remote: await this.provider.fetchRecord(id) });
+        } catch (error) {
+          lookups.set(id, failure(error));
+        }
+      }
+      return lookups;
+    }
+
+    // Guard against a misimplemented provider reporting 0 / omitting the size.
+    const chunkSize = Math.max(1, this.provider.capabilities.batchFetchMaxSize ?? 1);
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      try {
+        const notes = await this.provider.fetchRecords(chunk);
+        const byId = new Map(notes.map(n => [n.id, n]));
+        for (const id of chunk) lookups.set(id, { ok: true, remote: byId.get(id) ?? null });
+      } catch (error) {
+        for (const id of chunk) lookups.set(id, failure(error));
+      }
+    }
+    return lookups;
   }
 
   /**
