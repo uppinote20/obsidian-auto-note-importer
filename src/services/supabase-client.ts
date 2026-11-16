@@ -262,6 +262,25 @@ export class SupabaseClient implements DatabaseProvider {
     return headers;
   }
 
+  /** GET one `Range` page (items `start`–`end`) through the rate limiter. */
+  private requestRange(url: string, start: number, end: number) {
+    return this.rateLimiter.execute(() =>
+      this.request({
+        url,
+        method: 'GET',
+        headers: { ...this.buildHeaders(), 'Range-Unit': 'items', 'Range': `${start}-${end}` },
+      }),
+    );
+  }
+
+  /** Row → RemoteNote keyed by the configured PK; `null` when the row has no PK value. */
+  private rowToNote(row: Record<string, unknown>): RemoteNote | null {
+    const idValue = row[this.config.primaryKeyColumn];
+    if (idValue === undefined || idValue === null) return null;
+    const idString = String(idValue);
+    return { id: idString, primaryField: idString, fields: row };
+  }
+
   async fetchNotes(): Promise<RemoteNote[]> {
     this.validateConfig();
     const projectUrl = this.getProjectUrl();
@@ -275,18 +294,7 @@ export class SupabaseClient implements DatabaseProvider {
     let rawRowsFetched = 0;   // counts every server-returned row, including PK-null skips
     let start = 0;
     while (allNotes.length < MAX_FETCH_ROWS) {
-      const end = start + SUPABASE_PAGE_SIZE - 1;
-      const response = await this.rateLimiter.execute(() =>
-        this.request({
-          url,
-          method: 'GET',
-          headers: {
-            ...this.buildHeaders(),
-            'Range-Unit': 'items',
-            'Range': `${start}-${end}`,
-          },
-        }),
-      );
+      const response = await this.requestRange(url, start, start + SUPABASE_PAGE_SIZE - 1);
 
       // 416 Range Not Satisfiable past EOF is normal once we've accumulated
       // rows — PostgREST 11+ returns it when the requested range starts
@@ -316,10 +324,8 @@ export class SupabaseClient implements DatabaseProvider {
         );
       }
       for (const row of rows) {
-        const idValue = row[pk];
-        if (idValue === undefined || idValue === null) continue;
-        const idString = String(idValue);
-        allNotes.push({ id: idString, primaryField: idString, fields: row });
+        const note = this.rowToNote(row);
+        if (note) allNotes.push(note);
       }
 
       const contentRange = (response.headers?.['content-range'] ?? response.headers?.['Content-Range']) as string | undefined;
@@ -365,12 +371,7 @@ export class SupabaseClient implements DatabaseProvider {
       throw new Error(`Failed to fetch Supabase record ${recordId}: ${extractApiErrorDetails(response)}`);
     }
     const rows = (response.json as Record<string, unknown>[] | undefined) ?? [];
-    if (rows.length === 0) return null;
-    const row = rows[0];
-    const idValue = row[pk];
-    if (idValue === undefined || idValue === null) return null;
-    const idString = String(idValue);
-    return { id: idString, primaryField: idString, fields: row };
+    return rows.length > 0 ? this.rowToNote(rows[0]) : null;
   }
 
   /**
@@ -393,21 +394,33 @@ export class SupabaseClient implements DatabaseProvider {
     const url = `${this.getProjectUrl()}/rest/v1/${encodeURIComponent(this.config.tableId)}` +
       `?${encodeURIComponent(pk)}=in.${encodeURIComponent(`(${list})`)}`;
 
-    const response = await this.rateLimiter.execute(() =>
-      this.request({ url, method: 'GET', headers: this.buildHeaders() }),
-    );
-
-    if (response.status === 404) return [];
-    if (response.status !== 200) {
-      throw new Error(`Failed to fetch Supabase records: ${extractApiErrorDetails(response)}`);
-    }
-    const rows = (response.json as Record<string, unknown>[] | undefined) ?? [];
+    // Range-paged like fetchNotes(): a self-hosted max-rows cap below the
+    // batch size truncates each response. PK uniqueness bounds matches to
+    // ids.length, so the all-found case needs no trailing request.
     const notes: RemoteNote[] = [];
-    for (const row of rows) {
-      const idValue = row[pk];
-      if (idValue === undefined || idValue === null) continue;
-      const idString = String(idValue);
-      notes.push({ id: idString, primaryField: idString, fields: row });
+    let rawRowsFetched = 0;
+    while (rawRowsFetched < ids.length) {
+      const start = rawRowsFetched;
+      const response = await this.requestRange(url, start, ids.length - 1);
+
+      if (response.status === 404 && start === 0) return [];
+      // 416 = requested range starts past the last match: done.
+      if (response.status === 416 && start > 0) return notes;
+      if (response.status !== 200 && response.status !== 206) {
+        throw new Error(`Failed to fetch Supabase records: ${extractApiErrorDetails(response)}`);
+      }
+
+      const rows = (response.json as Record<string, unknown>[] | undefined) ?? [];
+      for (const row of rows) {
+        const note = this.rowToNote(row);
+        if (note) notes.push(note);
+      }
+      rawRowsFetched += rows.length;
+
+      const contentRange = (response.headers?.['content-range'] ?? response.headers?.['Content-Range']) as string | undefined;
+      const total = parseContentRangeTotal(contentRange);
+      if (rows.length === 0) return notes;
+      if (total !== null && rawRowsFetched >= total) return notes;
     }
     return notes;
   }

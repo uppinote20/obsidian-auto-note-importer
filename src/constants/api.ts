@@ -112,8 +112,8 @@ export const SUPABASE_DEFAULT_BATCH_SIZE = 100;
 
 /**
  * Maximum record ids per Supabase `fetchRecords()` call (`pk=in.(...)`).
- * Bounded by URL length (UUID keys ≈ 40 encoded chars each), well below
- * PostgREST's max-rows response cap.
+ * Bounded by URL length (UUID keys ≈ 40 encoded chars each). Responses are
+ * Range-paged, so a server max-rows cap below this size still works.
  */
 export const SUPABASE_FETCH_BATCH_SIZE = 100;
 

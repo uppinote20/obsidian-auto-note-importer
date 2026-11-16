@@ -246,6 +246,30 @@ describe('SupabaseClient.fetchRecords', () => {
     await expect(client().fetchRecords(['r1'])).rejects.toThrow(/Failed to fetch Supabase records/);
   });
 
+  it('keeps paging when a server row cap truncates the batch (self-hosted max-rows)', async () => {
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 206, json: [{ id: 'r1' }], headers: { 'content-range': '0-0/*' } })
+      .mockResolvedValueOnce({ status: 206, json: [{ id: 'r3' }], headers: { 'content-range': '1-1/*' } })
+      .mockResolvedValueOnce({ status: 200, json: [], headers: {} });
+
+    const notes = await client().fetchRecords(['r1', 'r2', 'r3']);
+
+    expect(notes.map(n => n.id)).toEqual(['r1', 'r3']);
+    expect(mockRequestUrl.mock.calls.map(c => c[0].headers.Range)).toEqual(['0-2', '1-2', '2-2']);
+  });
+
+  it('stops when Content-Range reports every match fetched, and on 416 past the end', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 206, json: [{ id: 'r1' }], headers: { 'content-range': '0-0/1' } });
+    expect((await client().fetchRecords(['r1', 'r2'])).map(n => n.id)).toEqual(['r1']);
+    expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+
+    mockRequestUrl.mockReset();
+    mockRequestUrl
+      .mockResolvedValueOnce({ status: 206, json: [{ id: 'r1' }], headers: {} })
+      .mockResolvedValueOnce({ status: 416, json: {}, headers: {} });
+    expect((await client().fetchRecords(['r1', 'r2'])).map(n => n.id)).toEqual(['r1']);
+  });
+
   it('advertises batchFetchMaxSize and rejects larger inputs', async () => {
     const c = client();
     const max = c.capabilities.batchFetchMaxSize!;
