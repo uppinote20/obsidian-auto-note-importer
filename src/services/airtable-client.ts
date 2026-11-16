@@ -10,7 +10,7 @@
  */
 
 import { Notice, requestUrl } from "obsidian";
-import { AIRTABLE_API_BASE_URL, AIRTABLE_BATCH_SIZE } from '../constants';
+import { AIRTABLE_API_BASE_URL, AIRTABLE_BATCH_SIZE, AIRTABLE_FETCH_BATCH_SIZE } from '../constants';
 import type {
   LegacySettings,
   RemoteNote,
@@ -33,7 +33,14 @@ const AIRTABLE_CAPABILITIES: ProviderCapabilities = {
   bidirectional: true,
   hasComputedFields: true,
   batchUpdateMaxSize: AIRTABLE_BATCH_SIZE,
+  batchFetchMaxSize: AIRTABLE_FETCH_BATCH_SIZE,
 };
+
+/**
+ * Record ids safe to interpolate into a `filterByFormula` string literal —
+ * Airtable ids are `rec` + alphanumerics, so no quote/backslash can appear.
+ */
+const AIRTABLE_RECORD_ID_PATTERN = /^rec[A-Za-z0-9]+$/;
 
 /**
  * Client for interacting with the Airtable API.
@@ -206,6 +213,54 @@ export class AirtableClient implements DatabaseProvider {
       primaryField: json.id,
       fields: json.fields
     };
+  }
+
+  /**
+   * Fetches several records in one list request filtered by
+   * `OR(RECORD_ID()='rec…', …)` (#26). No `view` param: like `fetchRecord()`,
+   * a record hidden by the configured view must still be found so push can
+   * judge it. Malformed ids are dropped (never matched → "not found").
+   */
+  async fetchRecords(recordIds: string[]): Promise<RemoteNote[]> {
+    this.validateSettings();
+
+    const ids = recordIds.filter(id => AIRTABLE_RECORD_ID_PATTERN.test(id));
+    if (ids.length === 0) return [];
+    if (ids.length > AIRTABLE_FETCH_BATCH_SIZE) {
+      throw new Error(`Airtable fetchRecords accepts at most ${AIRTABLE_FETCH_BATCH_SIZE} ids (got ${ids.length}).`);
+    }
+
+    const formula = `OR(${ids.map(id => `RECORD_ID()='${id}'`).join(',')})`;
+    const baseUrl = this.getBaseUrl();
+    const notes: RemoteNote[] = [];
+    let offset: string | undefined;
+
+    do {
+      const params = new URLSearchParams();
+      params.set('filterByFormula', formula);
+      params.set('pageSize', String(AIRTABLE_FETCH_BATCH_SIZE));
+      if (offset) params.set('offset', offset);
+      const url = `${baseUrl}?${params.toString()}`;
+      const response = await this.rateLimiter.execute(() =>
+        requestUrl({
+          url,
+          method: "GET",
+          headers: this.getHeaders(),
+        })
+      );
+
+      if (response.status !== 200) {
+        throw new Error(`Failed to fetch Airtable records: ${extractApiErrorDetails(response)}`);
+      }
+
+      const json = response.json as { records?: { id: string; fields: Record<string, unknown> }[]; offset?: string };
+      for (const record of json.records ?? []) {
+        notes.push({ id: record.id, primaryField: record.id, fields: record.fields });
+      }
+      offset = json.offset;
+    } while (offset);
+
+    return notes;
   }
 
   /**

@@ -16,6 +16,7 @@
 import { Notice, requestUrl, type RequestUrlParam } from 'obsidian';
 import {
   SUPABASE_DEFAULT_BATCH_SIZE,
+  SUPABASE_FETCH_BATCH_SIZE,
   SUPABASE_DEFAULT_SCHEMA,
   SUPABASE_PAGE_SIZE,
 } from '../constants';
@@ -42,6 +43,7 @@ const SUPABASE_CAPABILITIES: ProviderCapabilities = {
   bidirectional: true,
   hasComputedFields: true,
   batchUpdateMaxSize: SUPABASE_DEFAULT_BATCH_SIZE,
+  batchFetchMaxSize: SUPABASE_FETCH_BATCH_SIZE,
 };
 
 const MAX_FETCH_ROWS = 1_000_000;
@@ -369,6 +371,45 @@ export class SupabaseClient implements DatabaseProvider {
     if (idValue === undefined || idValue === null) return null;
     const idString = String(idValue);
     return { id: idString, primaryField: idString, fields: row };
+  }
+
+  /**
+   * Fetches several rows in one request with `pk=in.("…","…")` (#26).
+   * Mirrors `fetchRecord()`: base table (not the view), same row shape, rows
+   * without a PK value skipped. Every value is double-quoted (with `\` and
+   * `"` escaped) so ids containing commas or parentheses can't split the list.
+   */
+  async fetchRecords(recordIds: string[]): Promise<RemoteNote[]> {
+    this.validateConfig();
+
+    const ids = recordIds.filter(id => id !== '');
+    if (ids.length === 0) return [];
+    if (ids.length > SUPABASE_FETCH_BATCH_SIZE) {
+      throw new Error(`Supabase fetchRecords accepts at most ${SUPABASE_FETCH_BATCH_SIZE} ids (got ${ids.length}).`);
+    }
+
+    const pk = this.config.primaryKeyColumn;
+    const list = ids.map(id => `"${id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',');
+    const url = `${this.getProjectUrl()}/rest/v1/${encodeURIComponent(this.config.tableId)}` +
+      `?${encodeURIComponent(pk)}=in.${encodeURIComponent(`(${list})`)}`;
+
+    const response = await this.rateLimiter.execute(() =>
+      this.request({ url, method: 'GET', headers: this.buildHeaders() }),
+    );
+
+    if (response.status === 404) return [];
+    if (response.status !== 200) {
+      throw new Error(`Failed to fetch Supabase records: ${extractApiErrorDetails(response)}`);
+    }
+    const rows = (response.json as Record<string, unknown>[] | undefined) ?? [];
+    const notes: RemoteNote[] = [];
+    for (const row of rows) {
+      const idValue = row[pk];
+      if (idValue === undefined || idValue === null) continue;
+      const idString = String(idValue);
+      notes.push({ id: idString, primaryField: idString, fields: row });
+    }
+    return notes;
   }
 
   async updateRecord(recordId: string, fields: Record<string, unknown>): Promise<SyncResult> {

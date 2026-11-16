@@ -204,6 +204,56 @@ describe('SupabaseClient.fetchRecord', () => {
   });
 });
 
+describe('SupabaseClient.fetchRecords', () => {
+  const client = () => new SupabaseClient(cred, makeConfig({ viewId: 'notes_view' }), new RateLimiter(), new SupabaseMetadataCache());
+
+  it('queries the base table with pk=in.(quoted ids)', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 'r1', title: 'A' }, { id: 'r2', title: 'B' }], headers: {} });
+
+    const notes = await client().fetchRecords(['r1', 'r2']);
+
+    expect(notes).toEqual([
+      { id: 'r1', primaryField: 'r1', fields: { id: 'r1', title: 'A' } },
+      { id: 'r2', primaryField: 'r2', fields: { id: 'r2', title: 'B' } },
+    ]);
+    const url = new URL(mockRequestUrl.mock.calls[0][0].url);
+    expect(url.pathname).toBe('/rest/v1/notes');
+    expect(url.searchParams.get('id')).toBe('in.("r1","r2")');
+  });
+
+  it('escapes quotes and backslashes so commas/parens stay inside one value', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [], headers: {} });
+    await client().fetchRecords(['a,b)', 'q"x\\y']);
+    const url = new URL(mockRequestUrl.mock.calls[0][0].url);
+    expect(url.searchParams.get('id')).toBe('in.("a,b)","q\\"x\\\\y")');
+  });
+
+  it('stringifies numeric keys and skips rows without a PK value', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [{ id: 5, title: 'A' }, { id: null, title: 'B' }], headers: {} });
+    const notes = await client().fetchRecords(['5']);
+    expect(notes).toEqual([{ id: '5', primaryField: '5', fields: { id: 5, title: 'A' } }]);
+  });
+
+  it('returns [] without a request for no ids, and [] on 404', async () => {
+    expect(await client().fetchRecords([''])).toEqual([]);
+    expect(mockRequestUrl).not.toHaveBeenCalled();
+    mockRequestUrl.mockResolvedValueOnce({ status: 404, json: {}, headers: {} });
+    expect(await client().fetchRecords(['r1'])).toEqual([]);
+  });
+
+  it('rejects on other non-200 responses', async () => {
+    mockRequestUrl.mockResolvedValueOnce({ status: 401, json: { message: 'JWT expired' }, headers: {} });
+    await expect(client().fetchRecords(['r1'])).rejects.toThrow(/Failed to fetch Supabase records/);
+  });
+
+  it('advertises batchFetchMaxSize and rejects larger inputs', async () => {
+    const c = client();
+    const max = c.capabilities.batchFetchMaxSize!;
+    expect(max).toBeGreaterThan(0);
+    await expect(c.fetchRecords(Array.from({ length: max + 1 }, (_, i) => `r${i}`))).rejects.toThrow(/at most/);
+  });
+});
+
 describe('SupabaseClient.batchUpdate (upsert)', () => {
   it('returns empty array for empty input', async () => {
     const c = new SupabaseClient(cred, makeConfig(), new RateLimiter(), defaultSpecCache());

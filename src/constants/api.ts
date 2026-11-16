@@ -11,6 +11,14 @@ import type { CredentialType } from '../types/credential.types';
 export const AIRTABLE_BATCH_SIZE = 10;
 
 /**
+ * Maximum record ids per Airtable `fetchRecords()` call — one list request
+ * with `filterByFormula=OR(RECORD_ID()=...)`. Matches the list endpoint's max
+ * `pageSize` so a chunk fits one page; ~32 formula chars per id keeps the URL
+ * well under Airtable's 16k limit.
+ */
+export const AIRTABLE_FETCH_BATCH_SIZE = 100;
+
+/**
  * Minimum interval between API requests (in milliseconds).
  */
 export const RATE_LIMIT_INTERVAL_MS = 200;
@@ -101,6 +109,13 @@ export const SUPABASE_DEFAULT_SCHEMA = 'public';
  * PostgREST itself accepts more; we cap to keep single transactions short.
  */
 export const SUPABASE_DEFAULT_BATCH_SIZE = 100;
+
+/**
+ * Maximum record ids per Supabase `fetchRecords()` call (`pk=in.(...)`).
+ * Bounded by URL length (UUID keys ≈ 40 encoded chars each), well below
+ * PostgREST's max-rows response cap.
+ */
+export const SUPABASE_FETCH_BATCH_SIZE = 100;
 
 /**
  * Default page size for fetchNotes Range-header pagination.
