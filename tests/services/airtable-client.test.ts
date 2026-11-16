@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AirtableClient } from '../../src/services/airtable-client';
 import type { LegacySettings, AirtableCredential, ConfigEntry, Credential } from '../../src/types';
 import { DEFAULT_LEGACY_SETTINGS, DEFAULT_CONFIG_ENTRY } from '../../src/types';
-import { AIRTABLE_BATCH_SIZE } from '../../src/constants';
+import { AIRTABLE_BATCH_SIZE, AIRTABLE_FETCH_BATCH_SIZE } from '../../src/constants';
 import { RateLimiter } from '../../src/services/rate-limiter';
 import { formatBatchLimitError } from '../../src/utils/api-errors';
 import { requestUrl } from 'obsidian';
@@ -127,6 +127,53 @@ describe('AirtableClient', () => {
     });
   });
 
+  describe('fetchRecords', () => {
+    it('lists the ids with an OR(RECORD_ID()=...) formula and no view', async () => {
+      client = new AirtableClient(createSettings({ viewId: 'viwHidden' }), rateLimiter);
+      mockRequestUrl.mockResolvedValueOnce(mockResponse({
+        records: [{ id: 'rec1', fields: { Name: 'A' } }, { id: 'rec2', fields: { Name: 'B' } }],
+      }));
+
+      const notes = await client.fetchRecords(['rec1', 'rec2']);
+
+      expect(notes).toEqual([
+        { id: 'rec1', primaryField: 'rec1', fields: { Name: 'A' } },
+        { id: 'rec2', primaryField: 'rec2', fields: { Name: 'B' } },
+      ]);
+      const url = new URL(mockRequestUrl.mock.calls[0][0].url);
+      expect(url.searchParams.get('filterByFormula')).toBe("OR(RECORD_ID()='rec1',RECORD_ID()='rec2')");
+      expect(url.searchParams.get('pageSize')).toBe('100');
+      expect(url.searchParams.has('view')).toBe(false);
+    });
+
+    it('follows offset pagination', async () => {
+      mockRequestUrl
+        .mockResolvedValueOnce(mockResponse({ records: [{ id: 'rec1', fields: {} }], offset: 'p2' }))
+        .mockResolvedValueOnce(mockResponse({ records: [{ id: 'rec2', fields: {} }] }));
+
+      const notes = await client.fetchRecords(['rec1', 'rec2']);
+
+      expect(notes.map(n => n.id)).toEqual(['rec1', 'rec2']);
+      expect(new URL(mockRequestUrl.mock.calls[1][0].url).searchParams.get('offset')).toBe('p2');
+    });
+
+    it('drops malformed ids from the formula without a request when none remain', async () => {
+      await expect(client.fetchRecords(["rec1') ,TRUE(", ''])).resolves.toEqual([]);
+      expect(mockRequestUrl).not.toHaveBeenCalled();
+    });
+
+    it('rejects on a non-200 response', async () => {
+      mockRequestUrl.mockResolvedValueOnce(mockResponse({ error: { message: 'Not authorized' } }, 401));
+      await expect(client.fetchRecords(['rec1'])).rejects.toThrow('Failed to fetch Airtable records');
+    });
+
+    it('rejects more ids than batchFetchMaxSize', async () => {
+      const ids = Array.from({ length: AIRTABLE_FETCH_BATCH_SIZE + 1 }, (_, i) => `rec${i}`);
+      await expect(client.fetchRecords(ids)).rejects.toThrow(/at most/);
+      expect(client.capabilities.batchFetchMaxSize).toBe(AIRTABLE_FETCH_BATCH_SIZE);
+    });
+  });
+
   describe('updateRecord', () => {
     it('should return success result on 200', async () => {
       mockRequestUrl.mockResolvedValueOnce(mockResponse({
@@ -243,6 +290,7 @@ describe('AirtableClient', () => {
         bidirectional: true,
         hasComputedFields: true,
         batchUpdateMaxSize: AIRTABLE_BATCH_SIZE,
+        batchFetchMaxSize: AIRTABLE_FETCH_BATCH_SIZE,
       });
     });
   });

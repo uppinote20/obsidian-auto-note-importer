@@ -889,6 +889,88 @@ describe('SyncOrchestrator', () => {
     });
   });
 
+  describe('processSyncRequest — push: batched remote lookup (#26)', () => {
+    /** One note per record id (`Sync/<id>.md`, `Title: same`), all under the sync folder. */
+    function setupPushFiles(ids: string[]): void {
+      const files = ids.map(id => createMockTFile(`Sync/${id}.md`));
+      const folder = createMockTFolder('Sync', files);
+      mockApp.vault.getAbstractFileByPath.mockImplementation((path: string) => (path === 'Sync' ? folder : null));
+      for (const id of ids) mockApp._files.set(`Sync/${id}.md`, noteContent({ primaryField: id, Title: 'same' }));
+    }
+
+    function batchingProvider(maxSize: number) {
+      const provider = createMockDatabaseProvider({
+        capabilities: { bidirectional: true, hasComputedFields: true, batchUpdateMaxSize: 10, batchFetchMaxSize: maxSize },
+        fetchRecords: vi.fn(async (ids: string[]) => ids.map(id => ({ id, primaryField: id, fields: { Title: 'same' } }))),
+      });
+      rebuildOrchestrator(provider);
+      return provider;
+    }
+
+    it('fetches all records through fetchRecords in batchFetchMaxSize chunks', async () => {
+      const provider = batchingProvider(2);
+      setupPushFiles(['recA', 'recB', 'recC']);
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(provider.fetchRecords!.mock.calls).toEqual([[['recA', 'recB']], [['recC']]]);
+      expect(provider.fetchRecord).not.toHaveBeenCalled();
+      for (const id of ['recA', 'recB', 'recC']) expect(syncState.getRecord(id)).toBeDefined();
+    });
+
+    it('requests a record id once even when two notes point at it', async () => {
+      const provider = batchingProvider(10);
+      setupPushFiles(['recA', 'recB']);
+      mockApp._files.set('Sync/recB.md', noteContent({ primaryField: 'recA', Title: 'same' }));
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(provider.fetchRecords!.mock.calls).toEqual([[['recA']]]);
+    });
+
+    it('retries a rejected chunk one id at a time, failing only the bad id', async () => {
+      const provider = batchingProvider(2);
+      provider.fetchRecords!.mockRejectedValueOnce(new Error('invalid input syntax for type uuid'));
+      provider.fetchRecord.mockImplementation(async (id: string) => {
+        if (id === 'recA') throw new Error('invalid input syntax for type uuid');
+        return { id, primaryField: id, fields: { Title: 'same' } };
+      });
+      setupPushFiles(['recA', 'recB', 'recC']);
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(provider.fetchRecord.mock.calls).toEqual([['recA'], ['recB']]);
+      expect(provider.fetchRecords!).toHaveBeenCalledTimes(2);
+      expect(syncState.getRecord('recA')).toBeUndefined();
+      expect(syncState.getRecord('recB')).toBeDefined();
+      expect(syncState.getRecord('recC')).toBeDefined();
+      expect(noticeTexts()).toContain('Auto Note Importer: 0 synced, 1 errors');
+    });
+
+    it('treats an id missing from the batch result as not found', async () => {
+      const provider = batchingProvider(10);
+      provider.fetchRecords!.mockResolvedValueOnce([{ id: 'recA', primaryField: 'recA', fields: { Title: 'same' } }]);
+      setupPushFiles(['recA', 'recB']);
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(syncState.getRecord('recA')).toBeDefined();
+      expect(syncState.getRecord('recB')).toBeUndefined();
+      expect(mockProvider.batchUpdate).not.toHaveBeenCalled();
+      expect(noticeTexts()).toContain('Auto Note Importer: 0 synced, 1 errors');
+    });
+
+    it('falls back to one fetchRecord per id without fetchRecords', async () => {
+      setupPushFiles(['recA', 'recB']);
+      mockProvider.fetchRecord.mockImplementation(async (id: string) => ({ id, primaryField: id, fields: { Title: 'same' } }));
+
+      await orchestrator.processSyncRequest('push', 'all');
+
+      expect(mockProvider.fetchRecord.mock.calls).toEqual([['recA'], ['recB']]);
+      expect(syncState.getRecord('recB')).toBeDefined();
+    });
+  });
+
   /**
    * Pull fixtures: the vault holds `Sync/<id>.md` for every id in `local`
    * (as file content; metadataCache serves `cached`, default the same), and the remote returns one

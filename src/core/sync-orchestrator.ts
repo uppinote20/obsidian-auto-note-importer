@@ -66,6 +66,11 @@ interface JudgedPush extends JudgedRecord {
   plan: PushPlan;
 }
 
+/** Remote state looked up for push judgement: found / not found (`null`) / failed. */
+type RemoteLookup =
+  | { ok: true; remote: RemoteNote | null }
+  | { ok: false; message: string };
+
 export class SyncOrchestrator {
   private app: App;
   private settings: LegacySettings;
@@ -630,6 +635,7 @@ export class SyncOrchestrator {
     let syncedCount = 0;
     let errorCount = 0;
     const toSend: JudgedPush[] = [];
+    const readable: { file: TFile; recordId: string; local: Record<string, unknown> }[] = [];
 
     for (const file of files) {
       // Local values come from the file's own text (the same source as the
@@ -655,18 +661,24 @@ export class SyncOrchestrator {
         }
         continue;
       }
+      readable.push({ file, recordId, local });
+    }
 
-      let remote: RemoteNote | null;
-      try {
-        remote = await this.provider.fetchRecord(recordId);
-      } catch (error) {
+    // One lookup pass for every record before judging (#26): batched where
+    // the provider supports it, per-id otherwise.
+    const lookups = await this.lookupRemoteRecords(readable.map(r => r.recordId));
+
+    for (const { file, recordId, local } of readable) {
+      // Every readable id is looked up; the fallback only satisfies the type.
+      const lookup: RemoteLookup = lookups.get(recordId) ?? { ok: false, message: 'Not looked up' };
+      if (!lookup.ok) {
         errorCount++;
         if (this.settings.debugMode) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
-          new Notice(`Auto Note Importer: Remote fetch failed for ${file.name}: ${message}`);
+          new Notice(`Auto Note Importer: Remote fetch failed for ${file.name}: ${lookup.message}`);
         }
         continue;
       }
+      const remote = lookup.remote;
       if (!remote) {
         errorCount++;
         if (this.settings.debugMode) {
@@ -735,6 +747,52 @@ export class SyncOrchestrator {
     this.fileWatcher.clearPending();
 
     return newConflicts;
+  }
+
+  /**
+   * Remote state of `recordIds` (deduplicated) for push judgement:
+   * `fetchRecords()` in `batchFetchMaxSize` chunks when available, else one
+   * `fetchRecord()` per id. A rejected chunk is retried per id so one bad id
+   * (e.g. a malformed UUID failing a whole `in.()` query) fails alone — see
+   * `DatabaseProvider.fetchRecords`.
+   */
+  private async lookupRemoteRecords(recordIds: string[]): Promise<Map<string, RemoteLookup>> {
+    const lookups = new Map<string, RemoteLookup>();
+    const ids = [...new Set(recordIds)];
+
+    if (!this.provider.fetchRecords) {
+      await this.lookupEach(ids, lookups);
+      return lookups;
+    }
+
+    // Guard against a misimplemented provider reporting 0 / omitting the size.
+    const chunkSize = Math.max(1, this.provider.capabilities.batchFetchMaxSize ?? 1);
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      try {
+        const notes = await this.provider.fetchRecords(chunk);
+        const byId = new Map(notes.map(n => [n.id, n]));
+        for (const id of chunk) lookups.set(id, { ok: true, remote: byId.get(id) ?? null });
+      } catch (error) {
+        if (this.settings.debugMode) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          new Notice(`Auto Note Importer: Batch fetch failed, retrying ${chunk.length} record(s) one by one: ${message}`);
+        }
+        await this.lookupEach(chunk, lookups);
+      }
+    }
+    return lookups;
+  }
+
+  /** One `fetchRecord()` per id; a rejection fails only that id. */
+  private async lookupEach(ids: string[], lookups: Map<string, RemoteLookup>): Promise<void> {
+    for (const id of ids) {
+      try {
+        lookups.set(id, { ok: true, remote: await this.provider.fetchRecord(id) });
+      } catch (error) {
+        lookups.set(id, { ok: false, message: error instanceof Error ? error.message : 'Unknown error' });
+      }
+    }
   }
 
   /**
