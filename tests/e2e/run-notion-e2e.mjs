@@ -150,22 +150,24 @@ async function ensureObjectProperties() {
   }
 }
 
-// Remote Files (as comparable URLs) and Related (page ids) of a page.
+// Remote Files (as comparable URLs), Related (page ids) and Score of a page.
 async function readObjectProps(pageId) {
-  const page = await notionApi(`/pages/${pageId}`);
-  const files = page.properties?.[OBJECT_PROPS.files]?.files ?? null;
-  const relation = page.properties?.[OBJECT_PROPS.relation]?.relation ?? null;
+  const { properties: props } = await notionApi(`/pages/${pageId}`);
+  const files = props?.[OBJECT_PROPS.files]?.files ?? null;
+  const relation = props?.[OBJECT_PROPS.relation]?.relation ?? null;
   return {
     files: files && files.map(f => f.external?.url ?? f.file?.url ?? null),
     related: relation && relation.map(r => r.id.replace(/-/g, '')).sort(),
+    score: props?.Score?.number,
   };
 }
 
-async function setObjectProps(pageId, files, relatedIds) {
+async function setObjectProps(pageId, files, relatedIds, score) {
   await notionApi(`/pages/${pageId}`, 'PATCH', {
     properties: {
       [OBJECT_PROPS.files]: { files },
       [OBJECT_PROPS.relation]: { relation: relatedIds.map(id => ({ id })) },
+      Score: { number: score },
     },
   });
 }
@@ -370,40 +372,41 @@ async function cleanup() {
     // files / relation are arrays of objects; pull flattens them (file name
     // or URL, page ids) for the note, so a push must never send them back.
 
-    const objectProps = targetNotePath ? await ensureObjectProperties() : { ok: false, reason: 'no target note' };
+    // Runs on a temporary page (trashed afterwards) so an existing page's own
+    // Files / Related values are never touched.
+    const OBJECT_PAGE_TITLE = 'E2E Object Props';
+    const objectProps = await ensureObjectProperties();
     log(objectProps.ok
       ? `Object properties ready (added: [${objectProps.added.join(', ') || 'none'}])`
       : `⚠️  Object properties unavailable (${objectProps.reason}) — object cases will skip`);
     let objectPageId = null;
-    if (objectProps.ok) {
-      const pid = await run(`(async () => {
-        const file = app.vault.getAbstractFileByPath(${JSON.stringify(targetNotePath)});
-        return JSON.stringify(app.metadataCache.getFileCache(file)?.frontmatter?.primaryField ?? null);
-      })()`, 10000);
-      objectPageId = typeof pid === 'string' ? pid.replace(/-/g, '') : null;
-    }
+    let objectNotePath = null;
     const seedFileUrls = FILE_SEED.map(f => f.external.url);
 
-    // Seed Files + a self-relation on the target page, then pull it into the note.
+    // (Re)seed Files + a self-relation and Score on the temp page, then pull it
+    // into its note (remote-wins, so the note matches the seed exactly).
     async function seedObjectProps() {
-      await setObjectProps(objectPageId, FILE_SEED, [objectPageId]);
-      await run(`(async () => {
+      await setObjectProps(objectPageId, FILE_SEED, [objectPageId], 1);
+      const path = await run(`(async () => {
         ${HELPERS}
         setMode('remote-wins');
         await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 6000));
         setMode('manual');
-        return JSON.stringify({ ok: true });
+        const file = targetFolderFiles().find(f => f.basename === ${JSON.stringify(OBJECT_PAGE_TITLE)});
+        return JSON.stringify(file ? file.path : null);
       })()`, 25000);
+      objectNotePath = path;
+      if (!objectNotePath) throw new Error('note for the temp object page not found after pull');
     }
 
-    // Push the target note under obsidian-wins after `edits` (frontmatter
-    // writes run inside Obsidian), then read the remote object properties.
+    // Push the temp note under obsidian-wins after `edits` (frontmatter writes
+    // run inside Obsidian), then read the remote object properties + Score.
     async function pushAndReadObjects(edits) {
       await run(`(async () => {
         ${HELPERS}
         setMode('obsidian-wins');
-        const file = app.vault.getAbstractFileByPath(${JSON.stringify(targetNotePath)});
+        const file = app.vault.getAbstractFileByPath(${JSON.stringify(objectNotePath)});
         ${edits}
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 6000));
@@ -415,38 +418,48 @@ async function cleanup() {
 
     const objectsIntact = r => JSON.stringify(r.files) === JSON.stringify(seedFileUrls)
       && JSON.stringify(r.related) === JSON.stringify([objectPageId]);
+    const objectDetail = r => `files=${JSON.stringify(r.files)} related=${JSON.stringify(r.related)} score=${r.score}`;
 
     try {
+      if (objectProps.ok) {
+        const created = await notionApi('/pages', 'POST', {
+          parent: { type: 'data_source_id', data_source_id: ENV.dataSourceId },
+          properties: { Name: { title: [{ text: { content: OBJECT_PAGE_TITLE } }] } },
+        });
+        objectPageId = created.id.replace(/-/g, '');
+      }
+
       await test('push / files + relation survive an unrelated edit (obsidian-wins)', async () => {
-        if (!objectPageId) return { skip: true, detail: objectProps.reason || 'no target page' };
+        if (!objectPageId) return { skip: true, detail: objectProps.reason || 'no temp page' };
         await seedObjectProps();
         const r = await pushAndReadObjects(`await modifyField(file, 'Score', 5151);`);
-        const score = (await notionApi(`/pages/${objectPageId}`)).properties?.Score?.number;
-        return { pass: objectsIntact(r) && score === 5151, detail: `files=${JSON.stringify(r.files)} related=${JSON.stringify(r.related)} score=${score}` };
+        return { pass: objectsIntact(r) && r.score === 5151, detail: objectDetail(r) };
       });
 
+      // Score changes in the same push: if the clobbered values were sent and
+      // Notion rejected the update, Score would stay 1 and the case fails —
+      // unchanged objects alone can't prove they were never sent.
       await test('push / local edits to files + relation are never sent', async () => {
-        if (!objectPageId) return { skip: true, detail: objectProps.reason || 'no target page' };
+        if (!objectPageId) return { skip: true, detail: objectProps.reason || 'no temp page' };
         await seedObjectProps();
         const r = await pushAndReadObjects(`
           await setFrontmatterValue(file, ${JSON.stringify(OBJECT_PROPS.files)}, 'clobbered');
           await setFrontmatterValue(file, ${JSON.stringify(OBJECT_PROPS.relation)}, 'clobbered');
+          await modifyField(file, 'Score', 6262);
         `);
-        return { pass: objectsIntact(r), detail: `files=${JSON.stringify(r.files)} related=${JSON.stringify(r.related)}` };
+        return { pass: objectsIntact(r) && r.score === 6262, detail: objectDetail(r) };
       });
     } finally {
-      // Clear the seeded values and pull the note back from remote so later
-      // cases (and reruns) start from the page's own state.
       if (objectPageId) {
-        await setObjectProps(objectPageId, [], []).catch(e => log(`⚠️  object cleanup failed: ${e.message}`));
+        await notionApi(`/pages/${objectPageId}`, 'PATCH', { in_trash: true })
+          .catch(e => log(`⚠️  temp page cleanup failed: ${e.message}`));
+      }
+      if (objectNotePath) {
         await run(`(async () => {
-          ${HELPERS}
-          setMode('remote-wins');
-          await enqueueSync('pull', 'all');
-          await new Promise(r => setTimeout(r, 6000));
-          setMode('manual');
+          const file = app.vault.getAbstractFileByPath(${JSON.stringify(objectNotePath)});
+          if (file) await app.vault.delete(file);
           return JSON.stringify({ ok: true });
-        })()`, 25000).catch(e => log(`⚠️  object cleanup pull failed: ${e.message}`));
+        })()`, 10000).catch(e => log(`⚠️  temp note cleanup failed: ${e.message}`));
       }
     }
 
@@ -536,13 +549,15 @@ async function cleanup() {
     log('     Notion E2E TEST SUMMARY');
     log('========================================');
     let passCount = 0;
+    let skipCount = 0;
     for (const r of results) {
-      const icon = r.pass ? 'PASS' : 'FAIL';
+      const icon = r.skip ? 'SKIP' : (r.pass ? 'PASS' : 'FAIL');
       log(`${icon} | ${r.test}`);
+      if (r.skip) { log(`       ${r.detail}`); skipCount++; continue; }
       if (!r.pass) log(`       ${r.detail}`);
       if (r.pass) passCount++;
     }
-    log(`\nTotal: ${passCount}/${results.length} passed`);
+    log(`\nTotal: ${passCount} passed, ${skipCount} skipped, ${results.length - passCount - skipCount} failed`);
 
     if (process.argv.includes('--cleanup')) {
       await cleanup();
@@ -550,7 +565,7 @@ async function cleanup() {
       log('\nLocal config left in place. Run with --cleanup to remove it.');
     }
 
-    process.exit(passCount === results.length ? 0 : 1);
+    process.exit(passCount + skipCount === results.length ? 0 : 1);
   } catch (e) {
     console.error('FATAL:', e.message);
     process.exit(1);

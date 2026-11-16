@@ -946,7 +946,14 @@ async function cleanupMultiConfig() {
         await new Promise(r => setTimeout(r, 5000));
         setMode('manual', false);
         return JSON.stringify(await fetchRecord(id));
-      })()`, 30000);
+      })()`, 30000).then(rec => {
+        // Airtable ingests the URL asynchronously; an unreachable seed URL
+        // leaves the field empty — fail with that cause, not a confusing diff.
+        if (objectFields.attachment && !(rec[ATTACHMENT_FIELD]?.length > 0)) {
+          throw new Error(`attachment seed not ingested from ${ATTACHMENT_SEED_URL}`);
+        }
+        return rec;
+      });
     }
 
     const attachmentIds = v => (Array.isArray(v) ? v.map(a => a?.id) : v);
@@ -987,14 +994,17 @@ async function cleanupMultiConfig() {
         const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-Push-Test.md');
         await setFrontmatterValue(file, ${JSON.stringify(ATTACHMENT_FIELD)}, 'clobbered');
+        // Writable field in the same push — see the SeaTable suite's note.
+        await modifyCount(file, 888);
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 5000));
         const rec = await fetchRecord(${JSON.stringify(testRecordIds[1])});
         setMode('manual');
         return JSON.stringify(rec);
       })()`, 30000);
-      const pass = JSON.stringify(attachmentIds(r[ATTACHMENT_FIELD])) === JSON.stringify(attachmentIds(seeded[ATTACHMENT_FIELD]));
-      return { pass, detail: `attachments=${JSON.stringify(attachmentIds(r[ATTACHMENT_FIELD]))} (seeded ${JSON.stringify(attachmentIds(seeded[ATTACHMENT_FIELD]))})` };
+      const pass = r.E2ECount === 888
+        && JSON.stringify(attachmentIds(r[ATTACHMENT_FIELD])) === JSON.stringify(attachmentIds(seeded[ATTACHMENT_FIELD]));
+      return { pass, detail: `E2ECount=${r.E2ECount} attachments=${JSON.stringify(attachmentIds(r[ATTACHMENT_FIELD]))} (seeded ${JSON.stringify(attachmentIds(seeded[ATTACHMENT_FIELD]))})` };
     });
 
     // Restore the push record and note so later cases start clean: clear the
@@ -1013,12 +1023,11 @@ async function cleanupMultiConfig() {
           headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
           body: JSON.stringify({ fields }),
         });
-        const h = getPlugin().syncState.forConfig(cfg.id);
-        for (const c of h.pendingConflicts().filter(c => c.recordId === id)) h.removeConflict(c.recordId, c.field);
+        clearPendingFor(id);
         setMode('remote-wins', false);
         await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 5000));
-        for (const c of h.pendingConflicts().filter(c => c.recordId === id)) h.removeConflict(c.recordId, c.field);
+        clearPendingFor(id);
         setMode('manual', false);
         return JSON.stringify({ ok: true });
       })()`, 30000);

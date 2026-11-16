@@ -181,29 +181,15 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_CFG
   // instead of failing when the base refuses the column.
   async function ensureSelfLinkColumn(name) {
     const cfg = getConfig();
-    const findLink = (meta) => {
-      const tbl = meta.metadata.tables.find(t => t._id === cfg.tableId);
-      const col = tbl?.columns.find(c => c.name === name);
-      return { tbl, col };
-    };
-    let { tbl, col } = findLink(await fetchMetadata());
+    const tbl = (await fetchMetadata()).metadata.tables.find(t => t._id === cfg.tableId);
     if (!tbl) return { ok: false, reason: 'table not found' };
-    if (!col) {
-      const tok = await exchangeBaseToken();
-      const r = await fetch(buildBaseUrl(tok, 'columns/'), {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + tok.access_token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          table_id: cfg.tableId, column_name: name, column_type: 'link',
-          column_data: { table: tbl.name, other_table: tbl.name },
-        }),
-      });
-      if (!r.ok) {
-        const j = await r.json().catch(() => null);
-        return { ok: false, reason: 'create HTTP ' + r.status + ' ' + (j?.error_msg || j?.error_message || '') };
-      }
-      ({ col } = findLink(await fetchMetadata()));
+    try {
+      await ensureColumns([{ name, type: 'link', column_data: { table: tbl.name, other_table: tbl.name } }]);
+    } catch (e) {
+      return { ok: false, reason: e.message };
     }
+    const col = (await fetchMetadata()).metadata.tables
+      .find(t => t._id === cfg.tableId)?.columns.find(c => c.name === name);
     if (col?.type !== 'link' || !col.data?.link_id) return { ok: false, reason: 'column ' + name + ' is not a link column' };
     return { ok: true, linkId: col.data.link_id };
   }
@@ -268,18 +254,6 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_CFG
       body: JSON.stringify({ table_id: cfg.tableId, updates: [{ row_id: rowId, row }] }),
     });
     if (!r.ok) throw new Error('updateRemoteRow failed: HTTP ' + r.status);
-  }
-
-  // Pending conflicts for one record, read from the plugin's snapshot store
-  // (private field, visible at runtime).
-  function pendingFor(recordId) {
-    return getPlugin().syncState.forConfig('${E2E_CFG_ID}').pendingConflicts()
-      .filter(c => c.recordId === recordId);
-  }
-
-  function clearPendingFor(recordId) {
-    const h = getPlugin().syncState.forConfig('${E2E_CFG_ID}');
-    for (const c of pendingFor(recordId)) h.removeConflict(c.recordId, c.field);
   }
 
   async function resetRowsToInitial(rowIds, initial) {
@@ -708,123 +682,98 @@ async function cleanup() {
     //
     // file / link values are arrays of objects that a push must never
     // overwrite (the plugin's isPushable gate drops them); image values are
-    // URL-string arrays and do round-trip.
+    // URL-string arrays and do round-trip. The "never sent" case also edits
+    // Count in the same push: if a clobbered value were sent and SeaTable
+    // rejected the update, Count would not change — unchanged objects alone
+    // can't prove nothing was sent.
 
-    // Seed the object columns on the push row, then pull so the note holds them.
-    function seedObjectsExpr() {
-      return `(async () => {
+    const pushRowId = testRowIds[1];
+    const seededLinks = [testRowIds[0], testRowIds[2]].sort();
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const linkMatches = v => !linkColumn.ok || same(Array.isArray(v) ? v.map(l => l?.row_id).sort() : v, seededLinks);
+    const filesIntact = row => same(row?.Files, OBJECT_SEED.Files);
+
+    // Reset every row, seed the object columns (+ links) on the push row,
+    // then one remote-wins pull so the note matches the remote exactly
+    // (also wiping local edits a previous case left behind).
+    async function seedObjects() {
+      return run(`(async () => {
         ${HELPERS}
-        const rowId = ${JSON.stringify(testRowIds[1])};
-        await updateRemoteRow(rowId, ${JSON.stringify(OBJECT_SEED)});
-        ${linkColumn.ok ? `await setSelfLinks(${JSON.stringify(linkColumn.linkId)}, rowId, ${JSON.stringify([testRowIds[0], testRowIds[2]])});` : ''}
-        setMode('manual', false);
+        await resetRowsToInitial(${JSON.stringify(testRowIds)}, ${JSON.stringify(TEST_ROWS.map(r => ({ ...r, Files: [], Images: [] })))});
+        await updateRemoteRow(${JSON.stringify(pushRowId)}, ${JSON.stringify(OBJECT_SEED)});
+        ${linkColumn.ok ? `await setSelfLinks(${JSON.stringify(linkColumn.linkId)}, ${JSON.stringify(pushRowId)}, ${JSON.stringify(seededLinks)});` : ''}
+        clearPendingFor(${JSON.stringify(pushRowId)});
+        setMode('remote-wins', false);
         await enqueueSync('pull', 'all');
         await new Promise(r => setTimeout(r, 6000));
+        setMode('manual', false);
         const cfg = getConfig();
         const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
         const fm = app.metadataCache.getFileCache(file)?.frontmatter || {};
         return JSON.stringify({ files: fm.Files, images: fm.Images, related: fm[${JSON.stringify(LINK_COLUMN)}] });
-      })()`;
+      })()`, 30000);
     }
 
-    const linkIds = v => (Array.isArray(v) ? v.map(l => l?.row_id).sort() : v);
-    const seededLinks = [testRowIds[0], testRowIds[2]].sort();
+    // Seed, apply `edits` to the push note (obsidian-wins), push, return the remote row.
+    async function pushAndReadRow(edits) {
+      await seedObjects();
+      return run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+        ${edits}
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        setMode('manual');
+        return JSON.stringify(await fetchRowFromSeaTable(${JSON.stringify(pushRowId)}));
+      })()`, 30000);
+    }
+    const rowDetail = row => `Count=${row?.Count} files=${JSON.stringify(row?.Files)} images=${JSON.stringify(row?.Images)} related=${JSON.stringify(row?.[LINK_COLUMN])}`;
 
     // Pull flattens object values for the note: file → URL list, link →
     // display values. Pushing those back verbatim would clobber the remote
     // objects — which is exactly what the cases below guard against.
     await test('push / object fields: pull flattens file and link values into frontmatter', async () => {
-      await doReset();
-      const fm = await run(seedObjectsExpr(), 30000);
-      const filesOk = JSON.stringify(fm.files) === JSON.stringify(OBJECT_SEED.Files.map(f => f.url));
-      const imagesOk = JSON.stringify(fm.images) === JSON.stringify(OBJECT_SEED.Images);
-      const linkOk = !linkColumn.ok
-        || JSON.stringify([...(fm.related || [])].sort()) === JSON.stringify(['E2E-ST-Bidir', 'E2E-ST-Pull']);
-      return {
-        pass: filesOk && imagesOk && linkOk,
-        detail: `files=${JSON.stringify(fm.files)} images=${JSON.stringify(fm.images)} related=${JSON.stringify(fm.related)}`,
-      };
+      const fm = await seedObjects();
+      const pass = same(fm.files, OBJECT_SEED.Files.map(f => f.url))
+        && same(fm.images, OBJECT_SEED.Images)
+        && (!linkColumn.ok || same([...(fm.related || [])].sort(), ['E2E-ST-Bidir', 'E2E-ST-Pull']));
+      return { pass, detail: `files=${JSON.stringify(fm.files)} images=${JSON.stringify(fm.images)} related=${JSON.stringify(fm.related)}` };
     });
 
     await test('push / object fields survive an unrelated edit (obsidian-wins)', async () => {
-      await doReset();
-      await run(seedObjectsExpr(), 30000);
-      const r = await run(`(async () => {
-        ${HELPERS}
-        setMode('obsidian-wins');
-        const cfg = getConfig();
-        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
-        await modifyField(file, 'Count', 777);
-        await enqueueSync('push', 'all');
-        await new Promise(r => setTimeout(r, 6000));
-        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
-        setMode('manual');
-        return JSON.stringify({ count: row?.Count, files: row?.Files, images: row?.Images, related: row?.[${JSON.stringify(LINK_COLUMN)}] });
-      })()`, 30000);
-      const filesOk = JSON.stringify(r.files) === JSON.stringify(OBJECT_SEED.Files);
-      const imagesOk = JSON.stringify(r.images) === JSON.stringify(OBJECT_SEED.Images);
-      const linkOk = !linkColumn.ok || JSON.stringify(linkIds(r.related)) === JSON.stringify(seededLinks);
-      return {
-        pass: r.count === 777 && filesOk && imagesOk && linkOk,
-        detail: `Count=${r.count} files=${JSON.stringify(r.files)} images=${JSON.stringify(r.images)} related=${JSON.stringify(r.related)}`,
-      };
+      const row = await pushAndReadRow(`await modifyField(file, 'Count', 777);`);
+      const pass = row?.Count === 777 && filesIntact(row) && same(row?.Images, OBJECT_SEED.Images) && linkMatches(row?.[LINK_COLUMN]);
+      return { pass, detail: rowDetail(row) };
     });
 
     await test('push / local edits to file and link fields are never sent', async () => {
-      await doReset();
-      await run(seedObjectsExpr(), 30000);
-      const r = await run(`(async () => {
-        ${HELPERS}
-        setMode('obsidian-wins');
-        const cfg = getConfig();
-        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
+      const row = await pushAndReadRow(`
         await setFrontmatterValue(file, 'Files', 'clobbered');
         ${linkColumn.ok ? `await setFrontmatterValue(file, ${JSON.stringify(LINK_COLUMN)}, 'clobbered');` : ''}
-        await enqueueSync('push', 'all');
-        await new Promise(r => setTimeout(r, 6000));
-        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
-        setMode('manual');
-        return JSON.stringify({ files: row?.Files, related: row?.[${JSON.stringify(LINK_COLUMN)}] });
-      })()`, 30000);
-      const filesOk = JSON.stringify(r.files) === JSON.stringify(OBJECT_SEED.Files);
-      const linkOk = !linkColumn.ok || JSON.stringify(linkIds(r.related)) === JSON.stringify(seededLinks);
-      return { pass: filesOk && linkOk, detail: `files=${JSON.stringify(r.files)} related=${JSON.stringify(r.related)}` };
+        await modifyField(file, 'Count', 888);
+      `);
+      const pass = row?.Count === 888 && filesIntact(row) && linkMatches(row?.[LINK_COLUMN]);
+      return { pass, detail: rowDetail(row) };
     });
 
     await test('push / image column round-trips as a URL list', async () => {
-      await doReset();
-      await run(seedObjectsExpr(), 30000);
       const next = ['https://example.com/e2e-a.png', 'https://example.com/e2e-b.png'];
-      const r = await run(`(async () => {
-        ${HELPERS}
-        setMode('obsidian-wins');
-        const cfg = getConfig();
-        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-ST-Push.md');
-        await setFrontmatterValue(file, 'Images', ${JSON.stringify(next)});
-        await enqueueSync('push', 'all');
-        await new Promise(r => setTimeout(r, 6000));
-        const row = await fetchRowFromSeaTable(${JSON.stringify(testRowIds[1])});
-        setMode('manual');
-        return JSON.stringify({ images: row?.Images, files: row?.Files });
-      })()`, 30000);
-      const pass = JSON.stringify(r.images) === JSON.stringify(next)
-        && JSON.stringify(r.files) === JSON.stringify(OBJECT_SEED.Files);
-      return { pass, detail: `images=${JSON.stringify(r.images)} files=${JSON.stringify(r.files)}` };
+      const row = await pushAndReadRow(`await setFrontmatterValue(file, 'Images', ${JSON.stringify(next)});`);
+      return { pass: same(row?.Images, next) && filesIntact(row), detail: rowDetail(row) };
     });
 
-    // The cases above leave local-only edits (clobbered Files / Related) and,
-    // after the next reset, queued conflicts on the push row. Restore the note
-    // from remote and drop the queue so later cases start clean.
-    await doReset();
+    // Restore: reset rows, drop the links and queued conflicts, pull remote-wins.
     await run(`(async () => {
       ${HELPERS}
-      const rid = ${JSON.stringify(testRowIds[1])};
-      ${linkColumn.ok ? `await setSelfLinks(${JSON.stringify(linkColumn.linkId)}, rid, []);` : ''}
-      clearPendingFor(rid);
+      await resetRowsToInitial(${JSON.stringify(testRowIds)}, ${JSON.stringify(TEST_ROWS.map(r => ({ ...r, Files: [], Images: [] })))});
+      ${linkColumn.ok ? `await setSelfLinks(${JSON.stringify(linkColumn.linkId)}, ${JSON.stringify(pushRowId)}, []);` : ''}
+      clearPendingFor(${JSON.stringify(pushRowId)});
       setMode('remote-wins', false);
       await enqueueSync('pull', 'all');
       await new Promise(r => setTimeout(r, 6000));
-      clearPendingFor(rid);
+      clearPendingFor(${JSON.stringify(pushRowId)});
       setMode('manual', false);
       return JSON.stringify({ ok: true });
     })()`, 30000);
