@@ -54,7 +54,7 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.mapToStandardType('formula')).toBe('computed');
       expect(airtableFieldMapper.mapToStandardType('rollup')).toBe('computed');
       expect(airtableFieldMapper.mapToStandardType('count')).toBe('computed');
-      expect(airtableFieldMapper.mapToStandardType('lookup')).toBe('computed');
+      expect(airtableFieldMapper.mapToStandardType('multipleLookupValues')).toBe('computed');
       expect(airtableFieldMapper.mapToStandardType('externalSyncSource')).toBe('computed');
       expect(airtableFieldMapper.mapToStandardType('aiText')).toBe('computed');
       expect(airtableFieldMapper.mapToStandardType('button')).toBe('computed');
@@ -79,7 +79,7 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.isReadOnly('formula')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('rollup')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('count')).toBe(true);
-      expect(airtableFieldMapper.isReadOnly('lookup')).toBe(true);
+      expect(airtableFieldMapper.isReadOnly('multipleLookupValues')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('externalSyncSource')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('aiText')).toBe(true);
       expect(airtableFieldMapper.isReadOnly('button')).toBe(true);
@@ -181,7 +181,7 @@ describe('airtableFieldMapper', () => {
     // [object Object] / record-id JSON — produces garbage folder names.
     it('should return true for stringifiable known types (text / number / date / select / formula / system)', () => {
       // Excludes OBJECT_SHAPED_TYPES (collaborator / barcode / button / aiText /
-      // externalSyncSource / lookup / multipleAttachments) — covered by a
+      // externalSyncSource / multipleLookupValues / multipleAttachments) — covered by a
       // separate test below.
       const stringifiable = [
         'singleLineText', 'multilineText', 'richText', 'email', 'phoneNumber', 'url',
@@ -206,14 +206,14 @@ describe('airtableFieldMapper', () => {
     // objects, NOT a stringifiable scalar. The standard-type filter
     // (attachment/link/unknown) misses these — explicit OBJECT_SHAPED_TYPES
     // exclusion needed.
-    it('should return false for object-shaped types (collaborator / barcode / button / aiText / externalSyncSource / lookup)', () => {
+    it('should return false for object-shaped types (collaborator / barcode / button / aiText / externalSyncSource / multipleLookupValues)', () => {
       expect(airtableFieldMapper.isSubfolderSafe('singleCollaborator')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('multipleCollaborators')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('barcode')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('button')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('aiText')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('externalSyncSource')).toBe(false);
-      expect(airtableFieldMapper.isSubfolderSafe('lookup')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('multipleLookupValues')).toBe(false);
     });
 
     it('should return false for unknown types (fail-closed)', () => {
@@ -314,12 +314,28 @@ describe('airtableFieldMapper', () => {
     });
   });
 
+  // #142: Airtable reports Lookup fields as `multipleLookupValues` (field
+  // model docs); a bare `lookup` key never matched a real field, so lookups
+  // fell through to "unknown".
+  describe('Lookup field type name (#142)', () => {
+    it('classifies multipleLookupValues as a read-only, object-shaped computed type', () => {
+      expect(airtableFieldMapper.mapToStandardType('multipleLookupValues')).toBe('computed');
+      expect(airtableFieldMapper.isReadOnly('multipleLookupValues')).toBe(true);
+      expect(airtableFieldMapper.isPushable('multipleLookupValues')).toBe(false);
+      expect(airtableFieldMapper.isSubfolderSafe('multipleLookupValues')).toBe(false);
+    });
+
+    it('does not treat the non-API name "lookup" as a known type', () => {
+      expect(airtableFieldMapper.mapToStandardType('lookup')).toBe('unknown');
+    });
+  });
+
   describe('getReadOnlyTypes', () => {
     it('should return all 12 read-only types (9 legacy + 3 newer)', () => {
       const types = airtableFieldMapper.getReadOnlyTypes();
       expect(types).toHaveLength(12);
       expect(types).toEqual(expect.arrayContaining([
-        'formula', 'rollup', 'count', 'lookup',
+        'formula', 'rollup', 'count', 'multipleLookupValues',
         'createdTime', 'lastModifiedTime',
         'createdBy', 'lastModifiedBy',
         'autoNumber',
