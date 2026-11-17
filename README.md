@@ -122,7 +122,7 @@ Every command is labeled with the active config's provider (Ctrl/Cmd + P):
 
 Each provider's native types map to a normalized taxonomy (`text` / `number` / `date` / `boolean` / `single-select` / `multi-select` / `attachment` / `link` / `computed` / `system`). Read-only and object-shaped types are excluded from pushes automatically — fail-closed for anything unknown.
 
-**Airtable** — filename-safe: `singleLineText`, `singleSelect`, `number`, `formula` · read-only: `formula`, `rollup`, `count`, `lookup`, `externalSyncSource`, `aiText`, `button`, `createdTime`, `lastModifiedTime`, `createdBy`, `lastModifiedBy`, `autoNumber` · [full reference →](examples/airtable-field-types.md)
+**Airtable** — filename-safe: `singleLineText`, `singleSelect`, `number`, `formula` · read-only: `formula`, `rollup`, `count`, `multipleLookupValues` (Lookup), `externalSyncSource`, `aiText`, `button`, `createdTime`, `lastModifiedTime`, `createdBy`, `lastModifiedBy`, `autoNumber` · [full reference →](examples/airtable-field-types.md)
 
 **SeaTable** — filename-safe: `text`, `single-select`, `number`, `auto-number`, `formula` · read-only: `formula`, `link-formula`, `button`, `ctime`, `mtime`, `creator`, `last-modifier`, `auto-number` · never pushed (object-shaped): `collaborator`, `geolocation`, `file`, `digital-sign`, `link`
 
