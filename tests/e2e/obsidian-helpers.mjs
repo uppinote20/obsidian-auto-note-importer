@@ -108,6 +108,34 @@ export function buildSyncHarnessHelpers({ pluginId, e2eCfgId }) {
       await app.vault.modify(file, content);
       await waitForCache(file, key, value);
     }
+
+    // Pending conflicts for one record in the e2e config's queue (the plugin's
+    // snapshot store is a private field, reachable at runtime).
+    function pendingFor(recordId) {
+      return getPlugin().syncState.forConfig('${e2eCfgId}').pendingConflicts()
+        .filter(c => c.recordId === recordId);
+    }
+
+    function clearPendingFor(recordId) {
+      const h = getPlugin().syncState.forConfig('${e2eCfgId}');
+      for (const c of pendingFor(recordId)) h.removeConflict(c.recordId, c.field);
+    }
+
+    // Structured frontmatter write (arrays / objects span several YAML lines,
+    // which modifyField's single-line regex would corrupt). Waits until the
+    // metadata cache holds the same JSON value.
+    async function setFrontmatterValue(file, key, value, maxWait = 5000) {
+      await app.fileManager.processFrontMatter(file, fm => { fm[key] = value; });
+      const want = JSON.stringify(value);
+      const start = Date.now();
+      while (JSON.stringify(app.metadataCache.getFileCache(file)?.frontmatter?.[key]) !== want) {
+        if (Date.now() - start > maxWait) {
+          const seen = JSON.stringify(app.metadataCache.getFileCache(file)?.frontmatter?.[key]);
+          throw new Error('setFrontmatterValue timeout: ' + key + ' expected=' + want + ' seen=' + seen);
+        }
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
   `;
 }
 

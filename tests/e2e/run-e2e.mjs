@@ -8,6 +8,8 @@
  * @covers src/core/config-instance.ts
  * @covers src/core/conflict-resolver.ts
  * @covers src/services/airtable-client.ts
+ * @covers src/services/airtable-field-mapper.ts
+ * @covers src/file-operations/frontmatter-parser.ts
  * @covers src/builders/bases-file-generator.ts
  * @covers src/main.ts
  *
@@ -24,6 +26,11 @@
  *      the fields manually.
  *   4. For multi-config tests: a second table 'E2E-MultiConfig' (tblZO35AeSdSmI3rr)
  *      with fields: Name (text), Value (number), Tag (singleSelect)
+ *   5. Object-field push protection (#123): `Attachments` (multipleAttachments)
+ *      and `Related` (link to the same table) are added automatically with
+ *      the same scope; the cases skip if they can't be. The lookup spot-check
+ *      needs `RelatedName` (Lookup of Name through Related) added in the UI —
+ *      the Meta API can't create lookups.
  *
  * Usage:
  *   node tests/e2e/run-e2e.mjs                          # auto-detect CDP target
@@ -90,6 +97,20 @@ const ENSURED_FIELDS = [
   { name: 'DueDate',     type: 'date', options: { dateFormat: { name: 'iso', format: 'YYYY-MM-DD' } } },
   { name: 'Done',        type: 'checkbox', options: { icon: 'check', color: 'greenBright' } },
 ];
+
+// Object-shaped fields for push protection (#123). `Attachments` is never
+// pushed; `Related` (links to records of the same table) is a record-id list
+// and stays pushable; `RelatedName` is an optional lookup of Name through
+// `Related` — the Meta API can't create lookups, so add it in the Airtable UI
+// (type Lookup, field Related → Name) to enable the lookup spot-check.
+const ATTACHMENT_FIELD = 'Attachments';
+const LINK_FIELD = 'Related';
+const LOOKUP_FIELD = 'RelatedName';
+// Airtable downloads attachment URLs itself; the record keeps its own copy,
+// so cases compare attachment ids, not URLs.
+const ATTACHMENT_SEED_URL = 'https://www.gstatic.com/images/branding/product/1x/drive_2020q4_48dp.png';
+// Set in setup(): which of the object fields exist on the target table.
+let objectFields = { attachment: false, link: false, lookup: false };
 
 const CALCULATION_FIELD = 'Calculation';
 const CALCULATION_SOURCE = 'Single line text';
@@ -312,6 +333,33 @@ async function setup() {
     return JSON.stringify(r);
   })()`, 30000);
   log(`Fields added: [${ensured.added.join(', ') || 'none'}]; reused: [${ensured.skipped.join(', ') || 'none'}]; unsupported: [${(ensured.unsupported || []).join(', ') || 'none'}]`);
+
+  log('=== Setup: Ensure object-shaped fields (#123) ===');
+  objectFields = await run(`(async () => {
+    ${HELPERS}
+    const cfg = getConfig();
+    let failure = null;
+    try {
+      await ensureFields([
+        { name: ${JSON.stringify(ATTACHMENT_FIELD)}, type: 'multipleAttachments' },
+        { name: ${JSON.stringify(LINK_FIELD)}, type: 'multipleRecordLinks', options: { linkedTableId: cfg.tableId } },
+      ]);
+    } catch (e) { failure = e.message; }
+    const cred = getCredential();
+    const meta = await fetch('https://api.airtable.com/v0/meta/bases/' + cfg.baseId + '/tables', {
+      headers: { 'Authorization': 'Bearer ' + cred.apiKey },
+    }).then(r => r.json());
+    const tbl = (meta.tables || []).find(t => t.id === cfg.tableId);
+    const type = name => tbl?.fields?.find(f => f.name === name)?.type;
+    return JSON.stringify({
+      attachment: type(${JSON.stringify(ATTACHMENT_FIELD)}) === 'multipleAttachments',
+      link: type(${JSON.stringify(LINK_FIELD)}) === 'multipleRecordLinks',
+      lookup: type(${JSON.stringify(LOOKUP_FIELD)}) === 'multipleLookupValues',
+      failure,
+    });
+  })()`, 30000);
+  log(`Object fields: attachment=${objectFields.attachment} link=${objectFields.link} lookup=${objectFields.lookup}`
+    + (objectFields.failure ? ` (ensure failed: ${objectFields.failure})` : ''));
 
   // Detect Demo's stock 'Calculation' formula field. Airtable's Meta
   // API can't create formula fields, so we rely on the seeded one.
@@ -869,6 +917,121 @@ async function cleanupMultiConfig() {
     });
 
     // -- Bidirectional tests --
+
+    // ── Object-shaped field protection (#123) ───────────────────────
+    //
+    // Attachment / lookup values are arrays of objects (pull keeps them in
+    // the note as-is); a push must never send them back.
+
+    // Seed an attachment + a link on the push record, wait for Airtable to
+    // ingest the attachment, then pull so the note holds the values.
+    async function seedObjectFields() {
+      return run(`(async () => {
+        ${HELPERS}
+        const cfg = getConfig();
+        const cred = getCredential();
+        const id = ${JSON.stringify(testRecordIds[1])};
+        const fields = {};
+        ${objectFields.attachment ? `fields[${JSON.stringify(ATTACHMENT_FIELD)}] = [{ url: ${JSON.stringify(ATTACHMENT_SEED_URL)} }];` : ''}
+        ${objectFields.link ? `fields[${JSON.stringify(LINK_FIELD)}] = [${JSON.stringify(testRecordIds[0])}];` : ''}
+        const res = await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '/' + id, {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields }),
+        });
+        if (!res.ok) throw new Error('seed PATCH failed: HTTP ' + res.status);
+        await new Promise(r => setTimeout(r, 3000));
+        setMode('remote-wins', false);
+        await enqueueSync('pull', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        setMode('manual', false);
+        return JSON.stringify(await fetchRecord(id));
+      })()`, 30000).then(rec => {
+        // Airtable ingests the URL asynchronously; an unreachable seed URL
+        // leaves the field empty — fail with that cause, not a confusing diff.
+        if (objectFields.attachment && !(rec[ATTACHMENT_FIELD]?.length > 0)) {
+          throw new Error(`attachment seed not ingested from ${ATTACHMENT_SEED_URL}`);
+        }
+        return rec;
+      });
+    }
+
+    const attachmentIds = v => (Array.isArray(v) ? v.map(a => a?.id) : v);
+
+    await test('push / attachment + lookup survive an unrelated edit (obsidian-wins)', async () => {
+      if (!objectFields.attachment) return { skip: true, detail: `'${ATTACHMENT_FIELD}' field unavailable` };
+      await doReset();
+      const seeded = await seedObjectFields();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-Push-Test.md');
+        await modifyCount(file, 777);
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const rec = await fetchRecord(${JSON.stringify(testRecordIds[1])});
+        setMode('manual');
+        return JSON.stringify(rec);
+      })()`, 30000);
+      const attachOk = JSON.stringify(attachmentIds(r[ATTACHMENT_FIELD])) === JSON.stringify(attachmentIds(seeded[ATTACHMENT_FIELD]))
+        && (seeded[ATTACHMENT_FIELD] || []).length === 1;
+      const lookupOk = !objectFields.lookup
+        || JSON.stringify(r[LOOKUP_FIELD]) === JSON.stringify(seeded[LOOKUP_FIELD]);
+      return {
+        pass: r.E2ECount === 777 && attachOk && lookupOk,
+        detail: `E2ECount=${r.E2ECount} attachments=${JSON.stringify(attachmentIds(r[ATTACHMENT_FIELD]))} (seeded ${JSON.stringify(attachmentIds(seeded[ATTACHMENT_FIELD]))}) lookup=${objectFields.lookup ? JSON.stringify(r[LOOKUP_FIELD]) : 'n/a'}`,
+      };
+    });
+
+    await test('push / local edit to an attachment field is never sent', async () => {
+      if (!objectFields.attachment) return { skip: true, detail: `'${ATTACHMENT_FIELD}' field unavailable` };
+      await doReset();
+      const seeded = await seedObjectFields();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const cfg = getConfig();
+        const file = app.vault.getAbstractFileByPath(cfg.folderPath + '/E2E-Push-Test.md');
+        await setFrontmatterValue(file, ${JSON.stringify(ATTACHMENT_FIELD)}, 'clobbered');
+        // Writable field in the same push — see the SeaTable suite's note.
+        await modifyCount(file, 888);
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const rec = await fetchRecord(${JSON.stringify(testRecordIds[1])});
+        setMode('manual');
+        return JSON.stringify(rec);
+      })()`, 30000);
+      const pass = r.E2ECount === 888
+        && JSON.stringify(attachmentIds(r[ATTACHMENT_FIELD])) === JSON.stringify(attachmentIds(seeded[ATTACHMENT_FIELD]));
+      return { pass, detail: `E2ECount=${r.E2ECount} attachments=${JSON.stringify(attachmentIds(r[ATTACHMENT_FIELD]))} (seeded ${JSON.stringify(attachmentIds(seeded[ATTACHMENT_FIELD]))})` };
+    });
+
+    // Restore the push record and note so later cases start clean: clear the
+    // object fields remotely, drop queued conflicts, pull remote-wins.
+    if (objectFields.attachment || objectFields.link) {
+      await run(`(async () => {
+        ${HELPERS}
+        const cfg = getConfig();
+        const cred = getCredential();
+        const id = ${JSON.stringify(testRecordIds[1])};
+        const fields = {};
+        ${objectFields.attachment ? `fields[${JSON.stringify(ATTACHMENT_FIELD)}] = [];` : ''}
+        ${objectFields.link ? `fields[${JSON.stringify(LINK_FIELD)}] = [];` : ''}
+        await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '/' + id, {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields }),
+        });
+        clearPendingFor(id);
+        setMode('remote-wins', false);
+        await enqueueSync('pull', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        clearPendingFor(id);
+        setMode('manual', false);
+        return JSON.stringify({ ok: true });
+      })()`, 30000);
+    }
 
     await test('bidirectional / all / autoSyncComputedFields=true', async () => {
       if (!hasCalField) return { skip: true, detail: 'Calculation formula field not present — see setup notes' };

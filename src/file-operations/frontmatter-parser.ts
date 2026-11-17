@@ -3,6 +3,9 @@
  *
  * @handbook 7.3-read-only-field-protection
  * @tested tests/file-operations/frontmatter-parser.test.ts
+ * @tested e2e:tests/e2e/run-e2e.mjs
+ * @tested e2e:tests/e2e/run-seatable-e2e.mjs
+ * @tested e2e:tests/e2e/run-notion-e2e.mjs
  */
 
 import type { App } from "obsidian";

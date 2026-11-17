@@ -6,6 +6,7 @@
  *
  * @covers src/services/notion-client.ts
  * @covers src/services/notion-field-mapper.ts
+ * @covers src/file-operations/frontmatter-parser.ts
  * @covers src/services/notion-value-converter.ts
  * @covers src/services/notion-schema-cache.ts
  * @covers src/services/notion-block-converter.ts
@@ -28,6 +29,9 @@
  *        Done      checkbox
  *        Link      url
  *        Doubled   formula  =  prop("Score") * 2
+ *      The harness adds `Files` (files) and `Related` (relation to the same
+ *      data source) when missing, for the #123 push-protection cases; they
+ *      skip if the integration can't edit the schema.
  *      The data source must already contain at least one row/page — this
  *      harness does not seed rows (unlike run-supabase-e2e.mjs). It reads
  *      and mutates whatever the integration can see, and asserts
@@ -111,12 +115,62 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_CFG
 // ---------------------------------------------------------------------------
 
 let targetId;
-const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId });
+const { results, log, run, test } = createTestHarness({ getTargetId: () => targetId, skipSupported: true });
 
 // The .md path exercised by the round-trip / read-only tests, discovered
 // from the first pull rather than seeded — the data source's prior
 // contents are arbitrary (see file header).
 let targetNotePath = null;
+
+// Object-shaped properties for push protection (#123). Added to the data
+// source by ensureObjectProperties() when missing; `Related` is a relation
+// back to the same data source.
+const OBJECT_PROPS = { files: 'Files', relation: 'Related' };
+const FILE_SEED = [{ name: 'e2e-seed.png', type: 'external', external: { url: 'https://example.com/e2e-seed.png' } }];
+
+// Adds the missing object-shaped properties. Returns { ok } or
+// { ok: false, reason } so the cases skip when the integration lacks
+// permission to edit the schema.
+async function ensureObjectProperties() {
+  try {
+    const ds = await notionApi(`/data_sources/${ENV.dataSourceId}`);
+    const props = {};
+    if (!ds.properties?.[OBJECT_PROPS.files]) props[OBJECT_PROPS.files] = { files: {} };
+    if (!ds.properties?.[OBJECT_PROPS.relation]) {
+      props[OBJECT_PROPS.relation] = {
+        relation: { data_source_id: ENV.dataSourceId, type: 'single_property', single_property: {} },
+      };
+    }
+    if (Object.keys(props).length > 0) {
+      await notionApi(`/data_sources/${ENV.dataSourceId}`, 'PATCH', { properties: props });
+    }
+    return { ok: true, added: Object.keys(props) };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+}
+
+// Remote Files (as comparable URLs), Related (page ids) and Score of a page.
+async function readObjectProps(pageId) {
+  const { properties: props } = await notionApi(`/pages/${pageId}`);
+  const files = props?.[OBJECT_PROPS.files]?.files ?? null;
+  const relation = props?.[OBJECT_PROPS.relation]?.relation ?? null;
+  return {
+    files: files && files.map(f => f.external?.url ?? f.file?.url ?? null),
+    related: relation && relation.map(r => r.id.replace(/-/g, '')).sort(),
+    score: props?.Score?.number,
+  };
+}
+
+async function setObjectProps(pageId, files, relatedIds, score) {
+  await notionApi(`/pages/${pageId}`, 'PATCH', {
+    properties: {
+      [OBJECT_PROPS.files]: { files },
+      [OBJECT_PROPS.relation]: { relation: relatedIds.map(id => ({ id })) },
+      Score: { number: score },
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Setup / teardown
@@ -313,6 +367,102 @@ async function cleanup() {
       };
     });
 
+    // ── Object-shaped field protection (#123) ────────────────────────
+    //
+    // files / relation are arrays of objects; pull flattens them (file name
+    // or URL, page ids) for the note, so a push must never send them back.
+
+    // Runs on a temporary page (trashed afterwards) so an existing page's own
+    // Files / Related values are never touched.
+    const OBJECT_PAGE_TITLE = 'E2E Object Props';
+    const objectProps = await ensureObjectProperties();
+    log(objectProps.ok
+      ? `Object properties ready (added: [${objectProps.added.join(', ') || 'none'}])`
+      : `⚠️  Object properties unavailable (${objectProps.reason}) — object cases will skip`);
+    let objectPageId = null;
+    let objectNotePath = null;
+    const seedFileUrls = FILE_SEED.map(f => f.external.url);
+
+    // (Re)seed Files + a self-relation and Score on the temp page, then pull it
+    // into its note (remote-wins, so the note matches the seed exactly).
+    async function seedObjectProps() {
+      await setObjectProps(objectPageId, FILE_SEED, [objectPageId], 1);
+      const path = await run(`(async () => {
+        ${HELPERS}
+        setMode('remote-wins');
+        await enqueueSync('pull', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        setMode('manual');
+        const file = targetFolderFiles().find(f => f.basename === ${JSON.stringify(OBJECT_PAGE_TITLE)});
+        return JSON.stringify(file ? file.path : null);
+      })()`, 25000);
+      objectNotePath = path;
+      if (!objectNotePath) throw new Error('note for the temp object page not found after pull');
+    }
+
+    // Push the temp note under obsidian-wins after `edits` (frontmatter writes
+    // run inside Obsidian), then read the remote object properties + Score.
+    async function pushAndReadObjects(edits) {
+      await run(`(async () => {
+        ${HELPERS}
+        setMode('obsidian-wins');
+        const file = app.vault.getAbstractFileByPath(${JSON.stringify(objectNotePath)});
+        ${edits}
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 6000));
+        setMode('manual');
+        return JSON.stringify({ ok: true });
+      })()`, 30000);
+      return readObjectProps(objectPageId);
+    }
+
+    const objectsIntact = r => JSON.stringify(r.files) === JSON.stringify(seedFileUrls)
+      && JSON.stringify(r.related) === JSON.stringify([objectPageId]);
+    const objectDetail = r => `files=${JSON.stringify(r.files)} related=${JSON.stringify(r.related)} score=${r.score}`;
+
+    try {
+      if (objectProps.ok) {
+        const created = await notionApi('/pages', 'POST', {
+          parent: { type: 'data_source_id', data_source_id: ENV.dataSourceId },
+          properties: { Name: { title: [{ text: { content: OBJECT_PAGE_TITLE } }] } },
+        });
+        objectPageId = created.id.replace(/-/g, '');
+      }
+
+      await test('push / files + relation survive an unrelated edit (obsidian-wins)', async () => {
+        if (!objectPageId) return { skip: true, detail: objectProps.reason || 'no temp page' };
+        await seedObjectProps();
+        const r = await pushAndReadObjects(`await modifyField(file, 'Score', 5151);`);
+        return { pass: objectsIntact(r) && r.score === 5151, detail: objectDetail(r) };
+      });
+
+      // Score changes in the same push: if the clobbered values were sent and
+      // Notion rejected the update, Score would stay 1 and the case fails —
+      // unchanged objects alone can't prove they were never sent.
+      await test('push / local edits to files + relation are never sent', async () => {
+        if (!objectPageId) return { skip: true, detail: objectProps.reason || 'no temp page' };
+        await seedObjectProps();
+        const r = await pushAndReadObjects(`
+          await setFrontmatterValue(file, ${JSON.stringify(OBJECT_PROPS.files)}, 'clobbered');
+          await setFrontmatterValue(file, ${JSON.stringify(OBJECT_PROPS.relation)}, 'clobbered');
+          await modifyField(file, 'Score', 6262);
+        `);
+        return { pass: objectsIntact(r) && r.score === 6262, detail: objectDetail(r) };
+      });
+    } finally {
+      if (objectPageId) {
+        await notionApi(`/pages/${objectPageId}`, 'PATCH', { in_trash: true })
+          .catch(e => log(`⚠️  temp page cleanup failed: ${e.message}`));
+      }
+      if (objectNotePath) {
+        await run(`(async () => {
+          const file = app.vault.getAbstractFileByPath(${JSON.stringify(objectNotePath)});
+          if (file) await app.vault.delete(file);
+          return JSON.stringify({ ok: true });
+        })()`, 10000).catch(e => log(`⚠️  temp note cleanup failed: ${e.message}`));
+      }
+    }
+
     // ── Body sync ────────────────────────────────────────────────────
 
     await test('body / pull converts page blocks to markdown (syncPageBody on)', async () => {
@@ -399,13 +549,15 @@ async function cleanup() {
     log('     Notion E2E TEST SUMMARY');
     log('========================================');
     let passCount = 0;
+    let skipCount = 0;
     for (const r of results) {
-      const icon = r.pass ? 'PASS' : 'FAIL';
+      const icon = r.skip ? 'SKIP' : (r.pass ? 'PASS' : 'FAIL');
       log(`${icon} | ${r.test}`);
+      if (r.skip) { log(`       ${r.detail}`); skipCount++; continue; }
       if (!r.pass) log(`       ${r.detail}`);
       if (r.pass) passCount++;
     }
-    log(`\nTotal: ${passCount}/${results.length} passed`);
+    log(`\nTotal: ${passCount} passed, ${skipCount} skipped, ${results.length - passCount - skipCount} failed`);
 
     if (process.argv.includes('--cleanup')) {
       await cleanup();
@@ -413,7 +565,7 @@ async function cleanup() {
       log('\nLocal config left in place. Run with --cleanup to remove it.');
     }
 
-    process.exit(passCount === results.length ? 0 : 1);
+    process.exit(passCount + skipCount === results.length ? 0 : 1);
   } catch (e) {
     console.error('FATAL:', e.message);
     process.exit(1);
