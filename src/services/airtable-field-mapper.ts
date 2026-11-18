@@ -28,7 +28,7 @@ const READ_ONLY_TYPES = [
   'formula',
   'rollup',
   'count',
-  'lookup',
+  'multipleLookupValues', // Lookup — the API never reports a bare `lookup`
   'createdTime',
   'lastModifiedTime',
   'createdBy',
@@ -72,7 +72,7 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
   formula: 'computed',
   rollup: 'computed',
   count: 'computed',
-  lookup: 'computed',
+  multipleLookupValues: 'computed',
   externalSyncSource: 'computed',
   aiText: 'computed',
   button: 'computed',
@@ -89,7 +89,7 @@ const TYPE_TO_STANDARD: Record<string, StandardFieldType> = {
 // select' / 'computed' / 'text' / 'system', String(value) produces
 // '[object Object],…' garbage for these. Manual exclusion list — must be
 // kept in sync with TYPE_TO_STANDARD when new object-shaped types arrive.
-// `button` / `aiText` / `externalSyncSource` / `lookup` also appear in
+// `button` / `aiText` / `externalSyncSource` / `multipleLookupValues` also appear in
 // READ_ONLY_TYPES — `isPushable` already rejects them via `isReadOnly`, so
 // their entry here is belt-and-suspenders that also documents the object
 // shape for the subfolder filter.
@@ -100,7 +100,7 @@ const OBJECT_SHAPED_TYPES: ReadonlySet<string> = new Set([
   'button',           // { label, url }
   'aiText',           // { state, value, … }
   'externalSyncSource', // { id, name }
-  'lookup',           // array of any shape (depends on rolled-up field)
+  'multipleLookupValues', // array of any shape (depends on the looked-up field)
   'multipleAttachments', // array of { id, url, filename, size, type }
 ]);
 
