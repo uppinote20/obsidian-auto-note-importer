@@ -323,6 +323,7 @@ describe('airtableFieldMapper', () => {
       expect(airtableFieldMapper.isReadOnly('multipleLookupValues')).toBe(true);
       expect(airtableFieldMapper.isPushable('multipleLookupValues')).toBe(false);
       expect(airtableFieldMapper.isSubfolderSafe('multipleLookupValues')).toBe(false);
+      expect(airtableFieldMapper.isFilenameSafe('multipleLookupValues')).toBe(false);
     });
 
     it('does not treat the non-API name "lookup" as a known type', () => {
