@@ -205,6 +205,40 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_AT_
     return { added, skipped, unsupported };
   }
 
+  // Airtable writes go through Obsidian's requestUrl, not the renderer's
+  // fetch(): a fetch() DELETE to Airtable can be applied server-side yet never
+  // resolve (#144), stalling setup / cleanup past their eval timeout.
+  async function deleteRecords(tableId, ids) {
+    const { requestUrl } = require('obsidian');
+    const cfg = getConfig();
+    const cred = getCredential();
+    for (let i = 0; i < ids.length; i += 10) {
+      const params = ids.slice(i, i + 10).map(id => 'records[]=' + id).join('&');
+      const r = await requestUrl({
+        url: 'https://api.airtable.com/v0/' + cfg.baseId + '/' + tableId + '?' + params,
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer ' + cred.apiKey },
+        throw: false,
+      });
+      if (r.status !== 200) throw new Error('deleteRecords failed: HTTP ' + r.status + ' ' + (r.text || ''));
+    }
+  }
+
+  // Edit one record on the remote side (simulates a concurrent remote edit).
+  async function updateRemoteRecord(recordId, fields) {
+    const { requestUrl } = require('obsidian');
+    const cfg = getConfig();
+    const cred = getCredential();
+    const r = await requestUrl({
+      url: 'https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '/' + recordId,
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer ' + cred.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+      throw: false,
+    });
+    if (r.status !== 200) throw new Error('updateRemoteRecord failed: HTTP ' + r.status + ' ' + (r.text || ''));
+  }
+
   // Airtable-specific: single-record GET against the data API.
   async function fetchRecord(recordId, config) {
     const cfg = config || getConfig();
@@ -304,15 +338,7 @@ async function setup() {
         + (offset ? '?offset=' + encodeURIComponent(offset) : '');
       const r = await fetch(listUrl, { headers: { Authorization: 'Bearer ' + cred.apiKey } });
       const j = await r.json();
-      const ids = (j.records || []).map(rec => rec.id);
-      while (ids.length > 0) {
-        const chunk = ids.splice(0, 10);
-        const params = chunk.map(id => 'records[]=' + id).join('&');
-        await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '?' + params, {
-          method: 'DELETE',
-          headers: { Authorization: 'Bearer ' + cred.apiKey },
-        });
-      }
+      await deleteRecords(cfg.tableId, (j.records || []).map(rec => rec.id));
       offset = j.offset;
     } while (offset);
 
@@ -483,13 +509,7 @@ async function cleanup() {
     const ids = ${JSON.stringify(testRecordIds)};
 
     // Delete from Airtable
-    if (cfg && cred && ids.length > 0) {
-      const params = ids.map(id => 'records[]=' + id).join('&');
-      await fetch('https://api.airtable.com/v0/' + cfg.baseId + '/' + cfg.tableId + '?' + params, {
-        method: 'DELETE',
-        headers: { 'Authorization': 'Bearer ' + cred.apiKey }
-      });
-    }
+    if (cfg && cred && ids.length > 0) await deleteRecords(cfg.tableId, ids);
 
     // Delete local files
     if (cfg) {
@@ -532,13 +552,7 @@ async function cleanupMultiConfig() {
     const mcIds = ${JSON.stringify(multiConfigRecordIds)};
 
     // Delete records from second table
-    if (mcIds.length > 0) {
-      const params = mcIds.map(id => 'records[]=' + id).join('&');
-      await fetch('https://api.airtable.com/v0/' + getConfig().baseId + '/${MULTI_CONFIG_TABLE_ID}?' + params, {
-        method: 'DELETE',
-        headers: { 'Authorization': 'Bearer ' + cred.apiKey }
-      });
-    }
+    if (mcIds.length > 0) await deleteRecords('${MULTI_CONFIG_TABLE_ID}', mcIds);
 
     // Delete files in E2E-Multi/ folder
     const mcFiles = app.vault.getFiles().filter(f => f.path.startsWith('${MULTI_CONFIG_FOLDER}/'));
@@ -784,50 +798,87 @@ async function cleanupMultiConfig() {
       return { pass: r.pass, detail: `E2ECount=${r.count}` };
     });
 
-    await test('push / all / remote-wins', async () => {
+    // Since #82 push judges each field three-way against the sync snapshot: a
+    // local-only edit is sent in every mode, and the mode decides only a true
+    // conflict (both sides changed). The cases below edit the remote too.
+
+    await test('push / all / remote-wins sends a local-only edit', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
+        const rid = '${testRecordIds[0]}';
+        clearPendingFor(rid);
         setMode('remote-wins');
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
         await modifyCount(file, 9999);
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 5000));
-        const fields = await fetchRecord('${testRecordIds[0]}');
+        const fields = await fetchRecord(rid);
         setMode('manual');
-        return JSON.stringify({ pass: fields.E2ECount === 100, count: fields.E2ECount });
+        clearPendingFor(rid);
+        return JSON.stringify({ count: fields.E2ECount });
       })()`, 25000);
-      return { pass: r.pass, detail: `E2ECount=${r.count} (expected 100)` };
+      return { pass: r.count === 9999, detail: `E2ECount=${r.count} (expected 9999)` };
     });
 
-    await test('push / current / remote-wins', async () => {
+    await test('push / all / remote-wins keeps remote value on a true conflict', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
+        const rid = '${testRecordIds[0]}';
+        clearPendingFor(rid);
+        setMode('remote-wins');
+        const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
+        await modifyCount(file, 9999);
+        await updateRemoteRecord(rid, { E2ECount: 150 });
+        await enqueueSync('push', 'all');
+        await new Promise(r => setTimeout(r, 5000));
+        const fields = await fetchRecord(rid);
+        setMode('manual');
+        clearPendingFor(rid);
+        return JSON.stringify({ count: fields.E2ECount });
+      })()`, 30000);
+      return { pass: r.count === 150, detail: `E2ECount=${r.count} (expected 150)` };
+    });
+
+    await test('push / current / remote-wins keeps remote value on a true conflict', async () => {
+      await doReset();
+      const r = await run(`(async () => {
+        ${HELPERS}
+        const rid = '${testRecordIds[1]}';
+        clearPendingFor(rid);
         setMode('remote-wins');
         const file = await openAndActivate(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 7777);
+        await updateRemoteRecord(rid, { E2ECount: 250 });
         await enqueueSync('push', 'current');
         await new Promise(r => setTimeout(r, 5000));
-        const fields = await fetchRecord('${testRecordIds[1]}');
+        const fields = await fetchRecord(rid);
         setMode('manual');
-        return JSON.stringify({ pass: fields.E2ECount === 200, count: fields.E2ECount });
-      })()`, 25000);
-      return { pass: r.pass, detail: `E2ECount=${r.count} (expected 200)` };
+        clearPendingFor(rid);
+        return JSON.stringify({ count: fields.E2ECount });
+      })()`, 30000);
+      return { pass: r.count === 250, detail: `E2ECount=${r.count} (expected 250)` };
     });
 
-    await test('push / all / manual (conflict blocks)', async () => {
+    await test('push / all / manual blocks a true conflict and queues it', async () => {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
+        const rid = '${testRecordIds[1]}';
+        clearPendingFor(rid);
         setMode('manual');
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Push-Test.md');
         await modifyCount(file, 7777);
+        await updateRemoteRecord(rid, { E2ECount: 250 });
         await enqueueSync('push', 'all');
-        const fields = await fetchRecord('${testRecordIds[1]}');
-        return JSON.stringify({ pass: fields.E2ECount === 200, count: fields.E2ECount });
-      })()`, 60000);
-      return { pass: r.pass, detail: `E2ECount=${r.count} (expected 200)` };
+        await new Promise(r => setTimeout(r, 5000));
+        const fields = await fetchRecord(rid);
+        const pending = pendingFor(rid).filter(c => c.field === 'E2ECount').length;
+        clearPendingFor(rid);
+        return JSON.stringify({ count: fields.E2ECount, pending });
+      })()`, 30000);
+      return { pass: r.count === 250 && r.pending === 1, detail: `E2ECount=${r.count} pending=${r.pending} (expected 250, 1)` };
     });
 
     // -- Per-column-type push tests --
@@ -1333,7 +1384,8 @@ async function cleanupMultiConfig() {
       log('\nTest records left in Airtable. Run with --cleanup to remove them.');
     }
 
-    process.exit(passCount === results.length ? 0 : 1);
+    // Skips (missing optional fixtures) are not failures.
+    process.exit(passCount + skipCount === results.length ? 0 : 1);
 
   } catch (e) {
     console.error('FATAL:', e.message);
