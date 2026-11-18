@@ -220,7 +220,7 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_AT_
         headers: { Authorization: 'Bearer ' + cred.apiKey },
         throw: false,
       });
-      if (r.status !== 200) throw new Error('deleteRecords failed: HTTP ' + r.status);
+      if (r.status !== 200) throw new Error('deleteRecords failed: HTTP ' + r.status + ' ' + (r.text || ''));
     }
   }
 
@@ -236,7 +236,7 @@ const HELPERS = buildSyncHarnessHelpers({ pluginId: PLUGIN_ID, e2eCfgId: E2E_AT_
       body: JSON.stringify({ fields }),
       throw: false,
     });
-    if (r.status !== 200) throw new Error('updateRemoteRecord failed: HTTP ' + r.status);
+    if (r.status !== 200) throw new Error('updateRemoteRecord failed: HTTP ' + r.status + ' ' + (r.text || ''));
   }
 
   // Airtable-specific: single-record GET against the data API.
@@ -806,13 +806,16 @@ async function cleanupMultiConfig() {
       await doReset();
       const r = await run(`(async () => {
         ${HELPERS}
+        const rid = '${testRecordIds[0]}';
+        clearPendingFor(rid);
         setMode('remote-wins');
         const file = app.vault.getAbstractFileByPath(getConfig().folderPath + '/E2E-Pull-Test.md');
         await modifyCount(file, 9999);
         await enqueueSync('push', 'all');
         await new Promise(r => setTimeout(r, 5000));
-        const fields = await fetchRecord('${testRecordIds[0]}');
+        const fields = await fetchRecord(rid);
         setMode('manual');
+        clearPendingFor(rid);
         return JSON.stringify({ count: fields.E2ECount });
       })()`, 25000);
       return { pass: r.count === 9999, detail: `E2ECount=${r.count} (expected 9999)` };
